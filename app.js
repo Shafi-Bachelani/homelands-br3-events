@@ -303,12 +303,13 @@
     loading(el);
     await sb.rpc("expire_unpaid");
     const now = new Date();
-    const [games, fs, posts, ledger] = await Promise.all([
-      q(sb.from("events").select("*").eq("kind", "football").order("day")),
+    const [allGames, fs, posts, ledger] = await Promise.all([
+      q(sb.from("events").select("*").eq("kind", "football").not("day", "is", null).order("day")),
       q(sb.from("fund_state").select("*").single()),
       q(sb.from("accounts_posts").select("*").order("created_at", { ascending: false }).limit(1)),
       q(sb.from("ledger").select("*").order("id", { ascending: false }).limit(15)),
     ]);
+    const games = allGames.filter((g) => g.day);
     // the game to show: the next one not yet finished, else the last one still awaiting accounts
     const ev = games.find((g) => eventEnd(g) > now) || [...games].reverse().find((g) => !g.accounts_posted) || null;
     const awaiting = games.filter((g) => !g.accounts_posted && eventEnd(g) <= now);
