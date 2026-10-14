@@ -3,13 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#23786a">
+  <meta name="theme-color" content="#0f1714">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Creating Our Homelands</title>
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="images/logo.png">
   <link rel="apple-touch-icon" href="images/logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Public+Sans:wght@400;500;600;700&display=swap">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -17,9 +20,10 @@
     <button id="backBtn" class="icon-btn" aria-label="Back" hidden>
       <svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>
     </button>
+    <a id="brand" href="#about"><img src="images/logo.png" alt=""><span><small>Al Ansaar · BR3</small>Creating Our Homelands</span></a>
     <span class="spacer"></span>
     <button class="icon-btn" data-go="messages" aria-label="Messages">
-      <svg viewBox="0 0 24 24" class="fill"><path d="M12 3C6.5 3 2 6.9 2 11.6c0 2.4 1.2 4.6 3.1 6.1L4.5 21l3.9-1.9c1.1.3 2.3.5 3.6.5 5.5 0 10-3.9 10-8.6S17.5 3 12 3z"/><circle cx="8" cy="11.6" r="1.2" fill="#23786a"/><circle cx="12" cy="11.6" r="1.2" fill="#23786a"/><circle cx="16" cy="11.6" r="1.2" fill="#23786a"/></svg>
+      <svg viewBox="0 0 24 24" class="fill"><path d="M12 3C6.5 3 2 6.9 2 11.6c0 2.4 1.2 4.6 3.1 6.1L4.5 21l3.9-1.9c1.1.3 2.3.5 3.6.5 5.5 0 10-3.9 10-8.6S17.5 3 12 3z"/><circle cx="8" cy="11.6" r="1.2" fill="#0f1714"/><circle cx="12" cy="11.6" r="1.2" fill="#0f1714"/><circle cx="16" cy="11.6" r="1.2" fill="#0f1714"/></svg>
     </button>
     <button class="icon-btn" data-go="notifications" aria-label="Notifications">
       <svg viewBox="0 0 24 24" class="fill"><path d="M12 22a2.5 2.5 0 0 0 2.4-2h-4.8a2.5 2.5 0 0 0 2.4 2zm7-6V11a7 7 0 0 0-5.5-6.8V3.5a1.5 1.5 0 0 0-3 0v.7A7 7 0 0 0 5 11v5l-2 2v1h18v-1l-2-2z"/></svg>
@@ -33,10 +37,10 @@
   <main id="view"></main>
 
   <nav id="tabbar">
-    <button data-tab="home"><svg viewBox="0 0 24 24"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Home</button>
     <button data-tab="events"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>Events</button>
-    <button data-tab="groups"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><circle cx="16" cy="9" r="3"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6M14 14.2c3.6-.6 7.5 1.4 7.5 5.8"/></svg>Groups</button>
+    <button data-tab="groups"><svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.6A8 8 0 1 1 21 12z"/><path d="M8.5 11h.01M12 11h.01M15.5 11h.01"/></svg>Chats</button>
     <button data-tab="schedule"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4"/><path class="dots" d="M8 12h.01M12 12h.01M16 12h.01M8 16h.01M12 16h.01M16 16h.01"/></svg>Schedule</button>
+    <button data-tab="about"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/></svg>About us</button>
     <button data-tab="more"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg>More</button>
   </nav>
 

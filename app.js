@@ -116,21 +116,20 @@
   };
 
   // ---------- router ----------
-  const TABS = ["home", "events", "groups", "schedule", "more"];
-  const ROUTES = { home, events, groups, grouplist, schedule, more, services, counselling, messages, notifications, account, football, admin };
+  const TABS = ["events", "groups", "schedule", "about", "more"];
+  const ROUTES = { about, home: about, events, groups, grouplist, schedule, more, services, counselling, messages, notifications, account, football, admin };
   const PARENT = { grouplist: "groups", services: "more", counselling: "more", football: "events", account: null, admin: "more", messages: null, notifications: null };
-  let lastTab = "home", seq = 0;
+  let lastTab = "events", seq = 0;
 
   function go(route) { if (location.hash.slice(1) === route) render(); else location.hash = route; }
   async function render() {
-    const route = (location.hash.slice(1) || "home");
-    const fn = ROUTES[route] || home;
+    const route = (location.hash.slice(1) || "events");
+    const fn = ROUTES[route] || events;
     if (TABS.includes(route)) lastTab = route;
     const active = TABS.includes(route) ? route : (PARENT[route] || lastTab);
     document.querySelectorAll("#tabbar button").forEach((b) => b.classList.toggle("active", b.dataset.tab === active));
-    $("#backBtn").hidden = TABS.includes(route);
-    $("#topbar").classList.toggle("clear", route === "home");
-    view.classList.toggle("no-top", route === "home");
+    $("#backBtn").hidden = TABS.includes(route) || route === "home";
+    $("#brand").hidden = !$("#backBtn").hidden;
     $("#bellDot").hidden = state.seenNotes >= D.announcements.length;
     const token = ++seq, alive = () => token === seq;
     view.innerHTML = "";
@@ -142,10 +141,10 @@
   window.addEventListener("hashchange", render);
   document.querySelectorAll("#tabbar button").forEach((b) => b.addEventListener("click", () => go(b.dataset.tab)));
   document.addEventListener("click", (e) => { const g = e.target.closest("[data-go]"); if (g) { e.preventDefault(); go(g.dataset.go); } });
-  $("#backBtn").addEventListener("click", () => (history.length > 1 ? history.back() : go("home")));
+  $("#backBtn").addEventListener("click", () => (history.length > 1 ? history.back() : go("events")));
 
-  // ---------- HOME ----------
-  function home(el) {
+  // ---------- ABOUT US ----------
+  function about(el) {
     const socials = Object.entries(C.socials).filter(([, url]) => url)
       .map(([k, url]) => `<a href="${esc(url)}" target="_blank" rel="noopener" aria-label="${k}">${SOCIAL[k] || ""}</a>`).join("");
     const notes = D.announcements.map((a) => `
@@ -156,11 +155,9 @@
       </div>`).join("");
 
     el.innerHTML = `
-      <div class="hero"></div>
-      <div class="hero-card">
-        <div class="logo"></div>
-        <h1>${esc(C.name)}</h1>
-        <div>${esc(C.tagline)}</div>
+      <div class="about-head"><img src="images/logo.png" alt="">
+        <div><h1>${esc(C.name)}</h1><div class="muted">${esc(C.tagline)}</div></div></div>
+      <div class="about-body">
         <div class="meta">
           <div class="avatar" style="width:26px;height:26px;font-size:11px">${me ? esc(initials(me.name)) : "👤"}</div>
           <a href="#account">${me ? `Signed in as ${esc(me.name)}` : "Sign in or join"} ›</a><span class="sep">|</span>
@@ -168,7 +165,7 @@
         </div>
         <div class="actions">
           <button class="btn" id="invite">${ICON.share} Invite</button>
-          <a class="btn solid" href="${esc(C.website)}" target="_blank" rel="noopener">Open URL</a>
+          <a class="btn solid" href="${esc(C.website)}" target="_blank" rel="noopener">Our website</a>
         </div>
         <p class="desc">${esc(C.description)}</p>
         <a class="list-row" href="#football" style="color:inherit">
@@ -204,11 +201,9 @@
     const taken = Object.fromEntries(places.map((p) => [p.event_id, Number(p.taken)]));
     const myBk = Object.fromEntries(mine.map((b) => [b.event_id, b]));
     const now = new Date();
-    list.sort((a, b) => {
-      const pa = eventEnd(a) < now, pb = eventEnd(b) < now;
-      if (pa !== pb) return pa ? 1 : -1;
-      return pa ? eventStart(b) - eventStart(a) : eventStart(a) - eventStart(b);
-    });
+    // Upcoming first (soonest first), then dates to be confirmed, then past events (latest first).
+    const rank = (e) => (!e.day ? 1 : eventEnd(e) < now ? 2 : 0);
+    list.sort((a, b) => rank(a) - rank(b) || (rank(a) === 1 ? a.title.localeCompare(b.title) : rank(a) === 2 ? eventStart(b) - eventStart(a) : eventStart(a) - eventStart(b)));
     el.innerHTML = `<div class="events">
       ${isOrg() ? `<a class="btn block" href="#admin">${ICON.tools} Add or manage events</a>` : ""}
       ${list.map((ev) => eventCard(ev, taken[ev.id] || 0, myBk[ev.id])).join("") || '<div class="empty"><h2>No events yet</h2></div>'}</div>`;
@@ -222,8 +217,16 @@
       modal(`<h2>${esc(ev.title)}</h2><p class="muted">${fmtEvent(ev)}<br>${esc(ev.location)}</p><p style="line-height:1.5;white-space:pre-wrap">${esc(ev.details || "")}</p>`);
     }));
   }
-  function fmtEvent(ev) { const d = parseDay(ev.day); return `${DAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()} | ${hhmm(ev.time).replace(/^0(\d)/, "$1")}`; }
+  function fmtEvent(ev) { if (!ev.day) return "Date to be confirmed"; const d = parseDay(ev.day); return `${DAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()} | ${hhmm(ev.time).replace(/^0(\d)/, "$1")}`; }
   function eventCard(ev, taken, mine) {
+    if (!ev.day) return `<article class="card">
+      <div class="event-body" data-event="${ev.id}" style="cursor:pointer">
+        <div class="event-date tbc"><div class="d">TBC</div><div class="m">Date</div></div>
+        <div><h2>${esc(ev.title)}</h2><p>Date to be confirmed</p>${ev.location ? `<p>${esc(ev.location)}</p>` : ""}
+          <div class="pills"><span class="tag">${Number(ev.price) > 0 ? money(ev.price) : "Free"}</span><span class="tag">${ev.access === "public" ? "Open to invited guests" : "Members only"}</span></div></div>
+      </div>
+      <div class="event-foot"><button data-invite="${ev.id}">${ICON.share.replace("viewBox", 'style="width:20px;height:20px" viewBox')} Share</button><button class="off" disabled>Booking opens soon</button></div>
+    </article>`;
     const d = parseDay(ev.day), past = eventEnd(ev) < new Date(), left = Math.max(0, ev.capacity - taken);
     const fb = ev.kind === "football";
     const pills = `<div class="pills"><span class="tag">${fb ? "£6 or kitty" : Number(ev.price) > 0 ? money(ev.price) : "Free"}</span>
@@ -496,7 +499,7 @@
     groupCache = gs;
     const shown = posts.filter((p) => !filter || (p.body + groupName(p.group_id)).toLowerCase().includes(filter.toLowerCase()));
     el.innerHTML = `
-      <div class="subhead"><h2>Groups feed</h2><a href="#grouplist">Group list</a>
+      <div class="subhead"><h2>Chats</h2><a href="#grouplist">Group list</a>
         <span style="width:1px;height:28px;background:var(--line)"></span>
         <button id="searchBtn" style="color:var(--green)">${ICON.search}</button></div>
       ${filter ? `<div class="pad" style="padding-top:10px">Results for “${esc(filter)}” · <a href="#" id="clear">clear</a></div>` : ""}
@@ -742,7 +745,7 @@
       q(sb.from("fund_state").select("*").single()),
     ]);
     if (!alive()) return;
-    const upcoming = bks.filter((b) => b.events && eventEnd(b.events) > new Date());
+    const upcoming = bks.filter((b) => b.events && b.events.day && eventEnd(b.events) > new Date());
     const ROLE = { member: "Member", organiser: "Organiser", admin: "Admin" };
     el.innerHTML = `<div class="pad" style="padding-top:24px">
       <h1>${esc(me.name)}</h1>
@@ -771,7 +774,7 @@
       const name = $("#nm", el).value.trim(); if (!name) return;
       try { await q(sb.from("profiles").update({ name }).eq("id", me.id)); await loadMe(); toast("Saved"); refresh(); } catch (e) { fail(e); }
     };
-    $("#out", el).onclick = async () => { await sb.auth.signOut(); me = null; go("home"); };
+    $("#out", el).onclick = async () => { await sb.auth.signOut(); me = null; go("events"); };
   }
 
   function signInScreen(el) {
@@ -808,7 +811,7 @@
         } else {
           await q(sb.auth.signInWithPassword({ email, password }));
         }
-        await loadMe(); toast(`Welcome, ${me?.name || ""}`); go("home");
+        await loadMe(); toast(`Welcome, ${me?.name || ""}`); go("events");
       } catch (e) { $("#go", el).disabled = false; fail(e); }
     };
     $("#forgot", el).onclick = async (e) => {
@@ -838,7 +841,7 @@
       <div class="row"><input id="ci" placeholder="Ticket code, e.g. AA-7K2QX" style="text-transform:uppercase"><button class="btn small" id="ciGo">Check in</button></div>
       <h2 style="margin-top:28px">Add an event</h2>
       <label>Event name</label><input id="t">
-      <div class="grid2"><div><label>Date</label><input id="d" type="date"></div><div><label>Start time</label><input id="tm" type="time" value="19:00"></div></div>
+      <div class="grid2"><div><label>Date (leave empty if not decided)</label><input id="d" type="date"></div><div><label>Start time</label><input id="tm" type="time" value="19:00"></div></div>
       <label>Where</label><input id="loc">
       <div class="grid2"><div><label>Price per place (£, 0 = free)</label><input id="pr" type="number" min="0" step="0.5" value="0"></div><div><label>Places</label><input id="cap" type="number" min="1" value="30"></div></div>
       <label>Who can book</label><select id="acc"><option value="members">Members only</option><option value="public">Members and invited guests</option></select>
@@ -847,10 +850,13 @@
       <h2 style="margin-top:28px">Events and bookings</h2>
       ${evs.map((e) => {
         const list = bks.filter((b) => b.event_id === e.id);
-        return `<details class="card adm"><summary><b>${esc(e.title)}</b> <span class="muted">${short(parseDay(e.day))} · ${list.reduce((t, b) => t + (b.status === "booked" ? b.places : 0), 0)}/${e.capacity}</span></summary>
+        return `<details class="card adm"><summary><b>${esc(e.title)}</b> <span class="muted">${e.day ? short(parseDay(e.day)) : "Date TBC"} · ${list.reduce((t, b) => t + (b.status === "booked" ? b.places : 0), 0)}/${e.capacity}</span></summary>
           <div class="scroll"><table><thead><tr><th>Name</th><th>Who</th><th>Places</th><th>Status</th><th>Code</th></tr></thead><tbody>
           ${list.map((b) => `<tr><td>${esc(b.display_name)}</td><td>${g[b.id] ? `Guest, age ${g[b.id].age}, ${esc(g[b.id].email)}, invited by ${esc(g[b.id].profiles?.name || "?")}` : "Member"}</td><td>${b.places}</td><td>${b.status}${b.checked_in ? ", in" : ""}${b.paid ? "" : ", unpaid"}</td><td class="mono">${b.code}</td></tr>`).join("") || '<tr><td colspan="5" class="muted">No bookings yet.</td></tr>'}
           </tbody></table></div>
+          ${e.kind === "event" ? `<div class="grid2" data-edit="${e.id}"><div><label>Date</label><input data-f="day" type="date" value="${e.day || ""}"></div><div><label>Start time</label><input data-f="time" type="time" value="${hhmm(e.time)}"></div>
+            <div><label>Price (£)</label><input data-f="price" type="number" min="0" step="0.5" value="${Number(e.price)}"></div><div><label>Places</label><input data-f="capacity" type="number" min="1" value="${e.capacity}"></div></div>
+            <div class="row" style="margin:12px 0"><button class="btn small" data-upd="${e.id}">Save changes</button></div>` : ""}
           <button class="btn small danger" data-del="${e.id}">Remove event</button></details>`;
       }).join("")}
       <h2 style="margin-top:28px">Members</h2>
@@ -872,9 +878,15 @@
     $("#add", el).onclick = async () => {
       const ev = { kind: "event", title: $("#t", el).value.trim(), day: $("#d", el).value, time: $("#tm", el).value, location: $("#loc", el).value.trim(),
         price: Number($("#pr", el).value) || 0, capacity: Number($("#cap", el).value) || 1, access: $("#acc", el).value, details: $("#det", el).value.trim() };
-      if (!ev.title || !ev.day || !ev.time || !ev.location) return toast("Fill in the name, date, time and place");
+      if (!ev.title || !ev.time) return toast("Fill in at least the name and start time");
+      if (!ev.day) ev.day = null; // date to be confirmed
       try { await q(sb.from("events").insert(ev)); toast("Event added"); refresh(); } catch (e) { fail(e); }
     };
+    el.querySelectorAll("[data-upd]").forEach((b) => (b.onclick = async () => {
+      const box = $(`[data-edit="${b.dataset.upd}"]`, el), f = (k) => $(`[data-f="${k}"]`, box).value;
+      const upd = { day: f("day") || null, time: f("time"), price: Number(f("price")) || 0, capacity: Number(f("capacity")) || 1 };
+      try { await q(sb.from("events").update(upd).eq("id", b.dataset.upd)); toast(upd.day ? "Saved" : "Saved, date still to be confirmed"); refresh(); } catch (e) { fail(e); }
+    }));
     el.querySelectorAll("[data-del]").forEach((b) => (b.onclick = async () => {
       if (b.dataset.sure !== "1") { b.dataset.sure = "1"; b.textContent = "Tap again to remove it and its bookings"; return; }
       try { await q(sb.from("events").delete().eq("id", b.dataset.del)); toast("Event removed"); refresh(); } catch (e) { fail(e); }
@@ -899,7 +911,7 @@
   function messages(el) {
     el.innerHTML = `<div class="pad" style="padding-top:24px"><h1>Messages</h1>
       <p class="muted">Chat with ${esc(C.contactName)}.</p>
-      <div id="thread">${state.messages.map((m) => `<div class="comment" style="margin-left:40px;background:#cfe3dd">${esc(m)}</div>`).join("")}</div>
+      <div id="thread">${state.messages.map((m) => `<div class="comment" style="margin-left:40px;background:var(--green-soft)">${esc(m)}</div>`).join("")}</div>
       <textarea id="t" placeholder="Type a message..." style="min-height:80px;margin-top:12px"></textarea>
       <div class="form-actions" style="display:grid;gap:10px">
         <button class="btn solid block" id="send">Send on WhatsApp</button>
@@ -923,7 +935,7 @@
     if (event === "PASSWORD_RECOVERY") {
       modal(`<h2>Choose a new password</h2><input id="np" type="password" minlength="6" autocomplete="new-password"><div class="form-actions"><button class="btn solid block" id="ok">Save password</button></div>`, (m) => {
         $("#ok", m).onclick = async () => {
-          try { await q(sb.auth.updateUser({ password: $("#np", m).value })); closeModal(); toast("Password changed"); await loadMe(); go("home"); } catch (e) { fail(e); }
+          try { await q(sb.auth.updateUser({ password: $("#np", m).value })); closeModal(); toast("Password changed"); await loadMe(); go("events"); } catch (e) { fail(e); }
         };
       });
     }
