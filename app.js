@@ -854,11 +854,12 @@
           <button class="btn small danger" data-del="${e.id}">Remove event</button></details>`;
       }).join("")}
       <h2 style="margin-top:28px">Members</h2>
-      <p class="muted">Family members pay by transfer and never by card.${isAdmin() ? " Only you, as admin, can change roles." : ""}</p>
+      <p class="muted">Family members pay by transfer and never by card. Tick Kitty for anyone who has already paid £15 for the current kitty.${isAdmin() ? " Only you, as admin, can change roles." : ""}</p>
       ${members.map((m) => `<div class="member-row" data-mid="${m.id}"><b>${esc(m.name)}</b>
         <div class="row" style="flex-wrap:wrap;gap:8px">
           <select data-f="role" ${isAdmin() ? "" : "disabled"}>${ROLES.map((r) => `<option ${m.role === r ? "selected" : ""}>${r}</option>`).join("")}</select>
           <label class="check"><input type="checkbox" data-f="family" ${m.family ? "checked" : ""}> Family</label>
+          <label class="check"><input type="checkbox" data-f="kitty" ${m.kitty_session === fs.session_no ? "checked" : ""}> Kitty ${fs.session_no}</label>
           <label class="check">Credit £<input data-f="credit" type="number" step="1" min="0" value="${Number(m.credit)}" style="width:70px"></label>
           <button class="btn small" data-save="${m.id}">Save</button></div></div>`).join("")}
       ${isAdmin() ? `<h2 style="margin-top:28px">Starting funds</h2>
@@ -882,6 +883,8 @@
       const row = b.closest("[data-mid]"), f = (k) => $(`[data-f="${k}"]`, row);
       try {
         await q(sb.rpc("update_member", { p_id: b.dataset.save, p_role: isAdmin() ? f("role").value : null, p_family: f("family").checked, p_credit: Number(f("credit").value) || 0 }));
+        const m = members.find((x) => x.id === b.dataset.save);
+        if (f("kitty").checked !== (m.kitty_session === fs.session_no)) await q(sb.rpc("set_kitty", { p_id: m.id, p_on: f("kitty").checked }));
         if (b.dataset.save === me.id) await loadMe();
         toast("Saved");
       } catch (e) { fail(e); }
