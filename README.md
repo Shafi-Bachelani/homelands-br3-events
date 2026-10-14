@@ -13,3 +13,12 @@ It's a plain HTML/CSS/JavaScript web app with no build step, and Netlify publish
 - `vendor/`: copies of supabase-js and qrcodejs, so the app doesn't depend on a CDN.
 
 The first person to sign up becomes the admin.
+
+## Card payments (Square)
+
+`netlify/functions/pay.mjs` creates a Square checkout for a booking and confirms it when the person comes back. `square-webhook.mjs` marks payments made by people who closed the page early. Run `supabase/add-square.sql` once. Set these in Netlify under Project configuration, then Environment variables, never in the code:
+
+- `SQUARE_ACCESS_TOKEN`: from the Square developer app (use the Sandbox token while testing)
+- `SQUARE_ENVIRONMENT`: `sandbox` while testing, `production` for real payments
+- `SUPABASE_SECRET_KEY`: Supabase, then Project Settings, API Keys, then the secret key
+- `SQUARE_WEBHOOK_SIGNATURE_KEY` (optional): from the Square webhook subscription for `payment.updated`

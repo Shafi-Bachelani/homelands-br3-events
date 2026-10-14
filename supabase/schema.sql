@@ -57,7 +57,9 @@ create table public.bookings (
   status text not null default 'booked' check (status in ('booked', 'waitlist', 'cancelled')),
   code text not null unique,
   checked_in boolean not null default false,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  square_order_id text,                           -- Square checkout order, for card payments
+  card_fee numeric(8,2) not null default 0          -- what Square kept from a card payment
 );
 create unique index bookings_one_per_member on public.bookings (event_id, user_id)
   where user_id is not null and status <> 'cancelled';
@@ -329,9 +331,9 @@ $$;
 
 -- Guests see their own ticket by code.
 create function public.ticket(p_code text) returns table (code text, status text, display_name text, places int,
-  title text, day date, "time" time, location text, checked_in boolean)
+  title text, day date, "time" time, location text, checked_in boolean, paid boolean, amount numeric)
 language sql stable security definer set search_path = public as $$
-  select b.code, b.status, b.display_name, b.places, e.title, e.day, e.time, e.location, b.checked_in
+  select b.code, b.status, b.display_name, b.places, e.title, e.day, e.time, e.location, b.checked_in, b.paid, b.amount
   from bookings b join events e on e.id = b.event_id where b.code = upper(trim(p_code))
 $$;
 

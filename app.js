@@ -292,6 +292,7 @@
           <div class="code">${esc(t.code)}</div>
           <div>${esc(t.display_name)} · ${t.places} place${t.places > 1 ? "s" : ""}</div>
         </div>
+        ${!t.paid && Number(t.amount) > 0 && t.status === "booked" ? `<p class="note">${money(t.amount)} still to pay.</p><button class="btn solid block" data-pay="${esc(t.code)}">Pay ${money(t.amount)} by card</button>` : ""}
         <p class="muted" style="font-size:14px">Show this at the door. A screenshot works too.</p>`, (m) => { if (t.status !== "waitlist") qr($("#qr", m), t.code); });
     } catch (e) { fail(e); }
   }
@@ -338,7 +339,8 @@
       if (mine) {
         const st = mine.charge === "covered" ? "Booked, covered by your kitty" : mine.paid ? (mine.method === "credit" ? "Booked, paid with credit" : "Booked and paid") : "Booked, not paid yet";
         body = `<p><b>${st}.</b> You're number ${bookings.indexOf(mine) + 1} on the list.</p>
-          ${!mine.paid ? `<p class="note">Please pay <b>${money(mine.amount)}</b> to the organiser by bank transfer before <b>Thursday 11pm</b>, or your place is released. Card payments are coming soon.</p>` : ""}
+          ${!mine.paid ? `<p class="note">Please pay <b>${money(mine.amount)}</b> before <b>Thursday 11pm</b>, or your place is released.${me.family ? " Pay the organiser by bank transfer." : " Pay by card here, or by bank transfer to the organiser."}</p>
+            ${me.family ? "" : `<button class="btn solid" data-pay="${esc(mine.code)}" style="margin-bottom:10px">Pay ${money(mine.amount)} by card</button>`}` : ""}
           ${mine.charge === "payg" && mine.paid ? `<p class="muted">${now < creditUntil ? "Remove yourself before Friday 6pm and your £6 becomes credit for your next game." : "It's after Friday 6pm, so removing yourself now won't give credit."}</p>` : ""}
           <button class="btn" id="cancel">Remove me</button>`;
       } else if (phase === "closed") body = `<p>Booking for this game opens <b>Wednesday at 1pm</b>.</p>`;
@@ -415,7 +417,7 @@
         <div class="grid2">
           <div><label>Game format</label><input id="fmt" value="3 team sudden death games"></div>
           <div><label>Pitch hire (£)</label><input id="hire" type="number" step="0.01" value="${bookings.length >= 30 ? "124.00" : "62.00"}"></div>
-          <div><label>Card fees (£)</label><input id="fees" type="number" step="0.01" value="0.00"></div>
+          <div><label>Card fees (£)</label><input id="fees" type="number" step="0.01" value="${bookings.reduce((t, b) => t + Number(b.card_fee || 0), 0).toFixed(2)}"></div>
         </div>
         <div class="form-actions"><button class="btn solid block" id="draft">Draft accounts</button></div>
         <div id="draftBox" hidden><label>Accounts (edit freely)</label><textarea id="acc" rows="18" class="mono"></textarea>
@@ -941,6 +943,32 @@
     }
   });
 
-  loadMe().catch(() => {}).finally(render);
+  // Card payments: "Pay by card" opens Square's checkout, which sends people back here with ?paid=CODE.
+  document.addEventListener("click", async (e) => {
+    const b = e.target.closest("[data-pay]"); if (!b) return;
+    e.preventDefault(); b.disabled = true; const label = b.textContent; b.textContent = "Opening secure payment…";
+    try {
+      const r = await payApi({ code: b.dataset.pay });
+      if (r.url) { location.href = r.url; return; }
+      if (r.paid) { toast("Already paid, thank you"); closeModal(); refresh(); }
+    } catch (err) { fail(err); }
+    b.disabled = false; b.textContent = label;
+  });
+  async function payApi(body) {
+    const res = await fetch("/.netlify/functions/pay", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const r = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(r.error || "Card payments aren't available right now. Please pay the organiser by bank transfer.");
+    return r;
+  }
+  async function confirmReturn() {
+    const code = new URLSearchParams(location.search).get("paid"); if (!code) return;
+    history.replaceState(null, "", location.pathname + location.hash);
+    try {
+      const r = await payApi({ code, confirm: true });
+      toast(r.paid ? "Payment received, thank you!" : "We haven't had confirmation from Square yet. It'll update shortly.");
+    } catch (err) { fail(err); }
+  }
+
+  loadMe().catch(() => {}).then(confirmReturn).finally(render);
   if ("serviceWorker" in navigator && location.protocol.startsWith("http")) navigator.serviceWorker.register("sw.js").catch(() => {});
 })();
