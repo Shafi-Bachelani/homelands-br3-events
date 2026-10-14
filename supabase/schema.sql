@@ -416,7 +416,7 @@ begin
     fs.session_no := fs.session_no + 1; fs.games_played := 0;
   end if;
 
-  update fund_state set kitty = fs.kitty, events = fs.events, session_no = fs.session_no, games_played = fs.games_played;
+  update fund_state set kitty = fs.kitty, events = fs.events, session_no = fs.session_no, games_played = fs.games_played where id = 1;
   update events set accounts_posted = true where id = p_event;
   insert into accounts_posts (event_id, body, created_by) values (p_event, p_body, auth.uid());
   return fs;
@@ -427,7 +427,7 @@ create function public.set_funds(p_kitty numeric, p_events numeric, p_session in
 language plpgsql security definer set search_path = public as $$
 begin
   if not is_admin() then raise exception 'Only the admin can set the funds.'; end if;
-  update fund_state set kitty = p_kitty, events = p_events, session_no = p_session, games_played = p_games;
+  update fund_state set kitty = p_kitty, events = p_events, session_no = p_session, games_played = p_games where id = 1;
   insert into ledger (fund, what, amount, balance) values
     ('kitty', 'Opening balance', p_kitty, p_kitty), ('events', 'Opening balance', p_events, p_events);
 end $$;
