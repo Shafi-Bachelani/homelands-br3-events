@@ -316,6 +316,7 @@
     const ev = games.find((g) => eventEnd(g) > now) || [...games].reverse().find((g) => !g.accounts_posted) || null;
     const awaiting = games.filter((g) => !g.accounts_posted && eventEnd(g) <= now);
     const bookings = ev ? await q(sb.from("bookings").select("*").eq("event_id", ev.id).neq("status", "cancelled").order("created_at")) : [];
+    const removed = ev ? (await q(sb.from("football_removed").select("event_id").eq("event_id", ev.id).eq("user_id", me.id)).catch(() => [])).length > 0 : false;
     if (!alive()) return;
     await loadMe();
     const kitty = me.kitty_session === fs.session_no;
@@ -343,17 +344,19 @@
       if (mine) {
         const st = mine.charge === "covered" ? "Booked, covered by your kitty" : mine.paid ? (mine.method === "credit" ? "Booked, paid with credit" : mine.method === "card" ? "Booked and paid by card" : "Booked and paid") : "Booked, not paid yet";
         body = `<p><b>${st}.</b> You're number ${bookings.indexOf(mine) + 1} on the list.</p>
-          ${!mine.paid ? `<p class="note">Please pay <b>${money(mine.amount)}</b> before <b>Thursday 11pm</b>, or your place is released.${me.family ? " Pay the organiser by bank transfer." : " Pay by card here, or by bank transfer to the organiser."}</p>
+          ${!mine.paid ? `<p class="note">Please pay <b>${money(mine.amount)}</b> ${new Date(mine.created_at) > payBy ? "within <b>30 minutes</b> of booking" : "before <b>Thursday 11pm</b>"}, or your place is released and you can't rebook this game.${me.family ? " Pay the organiser by bank transfer." : " Pay by card here, or by bank transfer to the organiser."}</p>
             ${me.family ? "" : `<button class="btn solid" data-pay="${esc(mine.code)}" style="margin-bottom:10px">Pay ${money(mine.amount)} by card</button>`}` : ""}
           ${mine.charge === "payg" && mine.paid ? `<p class="muted">${now < creditUntil ? "Remove yourself before Friday 6pm and your £6 becomes credit for your next game." : "It's after Friday 6pm, so removing yourself now won't give credit."}</p>` : ""}
           <button class="btn" id="cancel">Remove me</button>`;
-      } else if (phase === "closed") body = `<p>Booking for this game opens <b>Wednesday at 1pm</b>.</p>`;
+      } else if (removed) body = `<p class="note">Your place was released because it wasn't paid in time, so you can't rebook this game. Message the organiser if something went wrong.</p>`;
+      else if (phase === "closed") body = `<p>Booking for this game opens <b>Wednesday at 1pm</b>.</p>`;
       else if (phase === "played") body = `<p>This game has been played.</p>`;
       else if (bookings.length >= ev.capacity) body = `<p>All ${ev.capacity} places are taken.</p>`;
       else if (kitty) body = `<p class="muted">Your kitty membership covers this game.</p><button class="btn solid" data-choice="payg">Book my place</button>`;
       else {
         const six = Number(me.credit) >= 6 ? "Use my £6 credit" : me.family ? "£6 by transfer" : "Pay as you play · £6";
-        body = `<p class="muted">How do you want to pay for this game?${!me.family && Number(me.credit) < 6 && phase === "open" ? " Pay by Thursday 11pm or your place is released." : ""}</p>
+        const due = !me.family && Number(me.credit) < 6;
+        body = `<p class="muted">How do you want to pay for this game?${due && phase === "open" ? " Pay by Thursday 11pm or your place is released, and you won't be able to rebook." : due ? " The pay deadline has passed, so pay by card straight away: unpaid places are released after 30 minutes." : ""}</p>
           <div class="choices">
             <div><b>£6 · this game</b><span class="muted">Pay as you play, just this Friday.</span><button class="btn solid small" data-choice="payg">${six}</button></div>
             <div><b>£15 · kitty</b><span class="muted">Every game until the kitty resets. This is week ${week} of up to 5.</span><button class="btn small" id="kittyAsk">Choose the kitty</button></div>

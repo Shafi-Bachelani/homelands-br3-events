@@ -184,24 +184,43 @@ create trigger on_auth_user_created after insert on auth.users
 
 -- ---------- football ----------
 
--- Removes football bookings that weren't paid by Thursday 11pm. Anyone may call it; it is idempotent.
-create function public.expire_unpaid() returns int
+-- People whose football place was released for not paying in time; they can't rebook that game.
+create table if not exists public.football_removed (
+  event_id uuid not null references public.events(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  removed_at timestamptz not null default now(),
+  primary key (event_id, user_id)
+);
+alter table public.football_removed enable row level security;
+drop policy if exists "see own removals" on public.football_removed;
+create policy "see own removals" on public.football_removed for select to authenticated using (user_id = auth.uid() or is_organiser());
+drop policy if exists "organisers lift removals" on public.football_removed;
+create policy "organisers lift removals" on public.football_removed for delete to authenticated using (is_organiser());
+grant select, delete on public.football_removed to authenticated;
+
+-- Removes football bookings that weren't paid in time, and remembers who was removed so they can't rebook
+-- that game. "In time" is Thursday 11pm, or 30 minutes after booking for anyone who books after that.
+-- Anyone may call it; it is idempotent.
+create or replace function public.expire_unpaid() returns int
 language plpgsql security definer set search_path = public as $$
 declare n int; s int;
 begin
   select session_no into s from fund_state;
-  update profiles p set kitty_session = null
-    from bookings b join events e on e.id = b.event_id
-   where b.user_id = p.id and e.kind = 'football' and b.charge = 'kitty'
-     and not b.paid and b.status = 'booked' and now() > fb_pay_by(e.day) and p.kitty_session = s;
-  delete from bookings b using events e
-   where e.id = b.event_id and e.kind = 'football' and not b.paid and b.status = 'booked'
-     and now() > fb_pay_by(e.day) and not e.accounts_posted;
+  with x as (
+    select b.id, b.event_id, b.user_id, b.charge from bookings b join events e on e.id = b.event_id
+     where e.kind = 'football' and not b.paid and b.status = 'booked' and not e.accounts_posted
+       and now() > greatest(fb_pay_by(e.day), b.created_at + interval '30 minutes')
+  ), k as (
+    update profiles p set kitty_session = null from x where x.user_id = p.id and x.charge = 'kitty' and p.kitty_session = s
+  ), r as (
+    insert into football_removed (event_id, user_id) select event_id, user_id from x where user_id is not null on conflict do nothing
+  )
+  delete from bookings where id in (select id from x);
   get diagnostics n = row_count;
   return n;
 end $$;
 
-create function public.book_football(p_event uuid, p_choice text) returns public.bookings
+create or replace function public.book_football(p_event uuid, p_choice text) returns public.bookings
 language plpgsql security definer set search_path = public as $$
 declare
   uid uuid := auth.uid();
@@ -216,6 +235,9 @@ begin
   perform expire_unpaid();
   if exists (select 1 from bookings where event_id = p_event and user_id = uid and status <> 'cancelled') then
     raise exception 'You are already booked for this game.';
+  end if;
+  if exists (select 1 from football_removed where event_id = p_event and user_id = uid) then
+    raise exception 'Your place was released because it wasn''t paid in time, so you can''t rebook this game.';
   end if;
   select coalesce(sum(places), 0) into taken from bookings where event_id = p_event and status = 'booked';
   if taken >= e.capacity then raise exception 'All % places are taken.', e.capacity; end if;
@@ -235,9 +257,6 @@ begin
     end if;
   end if;
 
-  if not v_paid and now() > fb_pay_by(e.day) then
-    raise exception 'The payment deadline (Thursday 11pm) has passed. Message the organiser to be added.';
-  end if;
   if v_charge = 'kitty' then update profiles set kitty_session = fs.session_no where id = uid; end if;
 
   insert into bookings (event_id, user_id, display_name, charge, amount, paid, method, code)
