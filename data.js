@@ -5,7 +5,7 @@
 
 const APP_DATA = {
   "community": {
-    "name": "BR3 Men's",
+    "name": "Creating Our Homelands",
     "tagline": "An Al Ansaar Community Endeavour",
     "description": "Connecting Community Through Engaging Events",
     "members": 1,
