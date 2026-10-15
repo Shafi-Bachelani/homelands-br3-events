@@ -862,7 +862,8 @@
       <label>Your name (or leave blank to stay anonymous)</label><input id="n">
       <label>Anything you'd like us to know (optional)</label><textarea id="t"></textarea>
       <div class="form-actions"><button class="btn solid block" id="ok">Send request on WhatsApp</button></div>
-      <p class="muted" style="font-size:14px">Prefer to talk now? Call <a href="tel:${esc(C.phone)}">${esc(C.phone)}</a>.</p></div>`;
+      <p class="muted" style="font-size:14px">Prefer to talk now? Call <a href="tel:${esc(C.phone)}">${esc(C.phone)}</a>.</p>
+      ${D.counselling.disclaimer ? `<p class="note" style="margin-top:20px">${esc(D.counselling.disclaimer)}</p>` : ""}</div>`;
     $("#ok", el).onclick = () => {
       const name = $("#n", el).value.trim(), note = $("#t", el).value.trim();
       window.open(`https://wa.me/${C.whatsapp}?text=${encodeURIComponent(`Counselling request${name ? ` from ${name}` : ""}.${note ? `\n${note}` : ""}`)}`, "_blank");
