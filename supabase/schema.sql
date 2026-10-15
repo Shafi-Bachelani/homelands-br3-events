@@ -390,7 +390,7 @@ end $$;
 
 -- Confirms a football game's accounts: records how each player paid, moves the money,
 -- and restarts the kitty when the fund drops below £150 or after 5 games.
-create function public.post_accounts(p_event uuid, p_body text, p_hire numeric, p_fees numeric,
+create or replace function public.post_accounts(p_event uuid, p_body text, p_hire numeric, p_fees numeric,
   p_methods jsonb, p_cleared uuid[]) returns public.fund_state
 language plpgsql security definer set search_path = public as $$
 declare
@@ -400,6 +400,9 @@ begin
   select * into e from events where id = p_event and kind = 'football' for update;
   if not found then raise exception 'That game no longer exists.'; end if;
   if e.accounts_posted then raise exception 'Accounts for this game were already posted.'; end if;
+  if not exists (select 1 from bookings where event_id = p_event and status = 'booked' and checked_in) then
+    raise exception 'Tick who turned up under "Who''s turned up" before posting the accounts.';
+  end if;
   d := to_char(e.day, 'FMDD Mon');
 
   for k, v in select * from jsonb_each_text(coalesce(p_methods, '{}')) loop
@@ -407,15 +410,27 @@ begin
      where id = k::uuid and event_id = p_event and method is distinct from 'credit';
   end loop;
 
+  -- Money received: kitty payments, and pay-and-play only for people who played (credit included).
   select coalesce(sum(amount), 0) into income from bookings
-   where event_id = p_event and paid and method in ('card', 'transfer', 'cash');
+   where event_id = p_event and status = 'booked' and paid
+     and method in ('card', 'transfer', 'cash', 'credit')
+     and (charge = 'kitty' or checked_in);
+  -- Paid but didn't turn up: the money becomes credit on their account instead.
+  update profiles p set credit = p.credit + s.amt
+    from (select user_id, sum(amount) amt from bookings
+           where event_id = p_event and status = 'booked' and charge = 'payg' and paid and not checked_in
+             and method in ('card', 'transfer', 'cash', 'credit') and user_id is not null
+           group by user_id) s
+   where p.id = s.user_id;
+  -- Only people who played (or joined the kitty) can owe.
   insert into debts (user_id, amount, reason, on_date)
     select user_id, amount, 'Football ' || d, e.day from bookings
-     where event_id = p_event and method = 'owes' and user_id is not null;
+     where event_id = p_event and status = 'booked' and method = 'owes' and user_id is not null
+       and (charge = 'kitty' or checked_in);
   select coalesce(sum(amount), 0) into v_cleared from debts where id = any(coalesce(p_cleared, '{}')) and not debts.cleared;
   update debts set cleared = true where id = any(coalesce(p_cleared, '{}'));
 
-  select * into fs from fund_state for update;
+  select * into fs from fund_state where id = 1 for update;
   fs.kitty := fs.kitty + income;
   insert into ledger (on_date, fund, what, amount, balance) values (e.day, 'kitty', 'Football ' || d || ': money received', income, fs.kitty);
   fs.kitty := fs.kitty - coalesce(p_hire, 0);
@@ -687,3 +702,44 @@ The bigger deeds are the contemplation and the bringing into action within your 
 from public.profiles p
 where p.role = 'admin' and not exists (select 1 from public.posts where group_id = 'quran')
 order by p.created_at limit 1;
+
+-- ---------- walk-ins on the day (same as add-attendance-accounts.sql) ----------
+-- Add someone on the day who wasn't on the list: marked as here, £6 pay and play
+-- (or covered if they're in the current kitty). Pass a member's id, or just a name for a non-member.
+create or replace function public.add_walkin(p_event uuid, p_user uuid, p_name text, p_method text) returns public.bookings
+language plpgsql security definer set search_path = public as $$
+declare e events; p profiles; b bookings; fs fund_state;
+begin
+  if not is_organiser() then raise exception 'Only organisers can add players.'; end if;
+  select * into e from events where id = p_event and kind = 'football';
+  if not found then raise exception 'That game no longer exists.'; end if;
+  if e.accounts_posted then raise exception 'Accounts for this game are already posted.'; end if;
+  if p_method not in ('card', 'transfer', 'cash', 'owes', 'credit') then raise exception 'Choose how they paid.'; end if;
+  if p_user is not null then
+    select * into p from profiles where id = p_user for update;
+    if not found then raise exception 'Member not found.'; end if;
+    select * into b from bookings where event_id = p_event and user_id = p_user and status <> 'cancelled';
+    if found then
+      update bookings set checked_in = true, status = 'booked' where id = b.id returning * into b;
+      return b;
+    end if;
+    select * into fs from fund_state where id = 1;
+    if p.kitty_session = fs.session_no then
+      insert into bookings (event_id, user_id, display_name, charge, amount, paid, checked_in, code)
+      values (p_event, p_user, p.name, 'covered', 0, true, true, new_code('AA-')) returning * into b;
+      return b;
+    end if;
+    if p_method = 'credit' then
+      if p.credit < 6 then raise exception '% doesn''t have £6 of credit.', p.name; end if;
+      update profiles set credit = credit - 6 where id = p_user;
+    end if;
+  elsif coalesce(trim(p_name), '') = '' then raise exception 'Choose a member or type their name.';
+  elsif p_method = 'credit' then raise exception 'Only members can pay with credit.';
+  end if;
+  insert into bookings (event_id, user_id, display_name, charge, amount, paid, method, checked_in, code)
+  values (p_event, p_user, coalesce(p.name, trim(p_name)), 'payg', 6, p_method <> 'owes', p_method, true, new_code('AA-'))
+  returning * into b;
+  return b;
+end $$;
+revoke execute on function public.add_walkin(uuid, uuid, text, text) from public, anon;
+grant execute on function public.add_walkin(uuid, uuid, text, text) to authenticated;
