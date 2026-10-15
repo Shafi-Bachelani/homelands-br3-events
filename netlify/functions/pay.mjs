@@ -30,7 +30,10 @@ export default async (req) => {
       body: JSON.stringify({
         idempotency_key: crypto.randomUUID(),
         quick_pay: { name: name.slice(0, 255), price_money: { amount: pence, currency: "GBP" }, location_id: await getLocationId() },
-        checkout_options: { redirect_url: `${origin}/?paid=${encodeURIComponent(booking.code)}#${back}` },
+        checkout_options: {
+          redirect_url: `${origin}/?paid=${encodeURIComponent(booking.code)}#${back}`,
+          accepted_payment_methods: { apple_pay: true, google_pay: true },
+        },
         payment_note: `${booking.display_name} · booking ${booking.code}`,
       }),
     });
