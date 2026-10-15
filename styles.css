@@ -146,7 +146,7 @@ h2 { font-size: 20px; margin: 0; }
 .poll-opt span { position: relative; }
 .search { display: flex; align-items: center; gap: 14px; padding: 18px 20px; }
 .search input { flex: 1; border: 0; background: transparent; color: var(--text); font-size: 19px; outline: none; }
-.group-row { display: flex; gap: 14px; align-items: center; padding: 14px 20px; border-bottom: 1px solid var(--line); }
+.group-row { display: flex; gap: 14px; align-items: center; padding: 14px 20px; border-bottom: 1px solid var(--line); color: inherit; text-decoration: none; }
 
 /* ---------- schedule ---------- */
 .cal { padding: 16px 12px 10px; border-bottom: 1px solid var(--line); }
