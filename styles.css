@@ -263,3 +263,6 @@ details.past summary { cursor: pointer; color: var(--muted); font-weight: 700; p
 .card.who h2 { margin: 0 0 10px; }
 .card.who p { line-height: 1.55; margin: 0 0 10px; }
 .card.who p:last-child { margin-bottom: 0; }
+.news { padding: 14px 20px 6px; border-bottom: 8px solid #0a100e; background: linear-gradient(180deg, rgba(227,165,72,.08), transparent); }
+.news h2 { font-size: 18px; margin: 0; }
+.news .post { padding-left: 0; padding-right: 0; }
