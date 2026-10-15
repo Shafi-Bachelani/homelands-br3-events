@@ -266,3 +266,5 @@ details.past summary { cursor: pointer; color: var(--muted); font-weight: 700; p
 .news { padding: 14px 20px 6px; border-bottom: 8px solid #0a100e; background: linear-gradient(180deg, rgba(227,165,72,.08), transparent); }
 .news h2 { font-size: 18px; margin: 0; }
 .news .post { padding-left: 0; padding-right: 0; }
+.news.club { background: linear-gradient(180deg, rgba(63,185,140,.08), transparent); }
+.news.club .btn.solid { margin-bottom: 12px; }

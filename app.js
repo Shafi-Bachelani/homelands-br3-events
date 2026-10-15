@@ -180,14 +180,32 @@
   const initials = (n) => String(n || "?").split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
 
   // ---------- EVENTS ----------
+  // Weekly events are stored once; show the next date that hasn't finished yet.
+  function nextWeekly(ev) {
+    if (!ev.weekly || !ev.day) return;
+    const d = parseDay(ev.day);
+    while (eventEnd({ ...ev, day: dayKey(d) }) < new Date()) d.setDate(d.getDate() + 7);
+    ev.day = dayKey(d);
+  }
+  // Groups the signed-in member has signed up to (members-only chats).
+  let joined = [];
+  async function myGroups() {
+    if (!me) return [];
+    try { return (await q(sb.from("group_members").select("group_id").eq("user_id", me.id))).map((r) => r.group_id); } catch { return []; }
+  }
+  async function joinGroup(id) {
+    try { await q(sb.from("group_members").insert({ group_id: id, user_id: me.id })); toast("You're signed up ✓"); go("groups"); } catch (e) { fail(e); }
+  }
   async function events(el, alive) {
     loading(el);
     const [list, places, mine] = await Promise.all([
       q(sb.from("events").select("*")),
       q(sb.rpc("event_places")),
       me ? q(sb.from("bookings").select("id,event_id,status,code").eq("user_id", me.id).neq("status", "cancelled")) : [],
-    ]);
+      myGroups(),
+    ]).then(([l, p, m, g]) => { joined = g; return [l, p, m]; });
     if (!alive()) return;
+    list.forEach(nextWeekly);
     const taken = Object.fromEntries(places.map((p) => [p.event_id, Number(p.taken)]));
     const myBk = Object.fromEntries(mine.map((b) => [b.event_id, b]));
     const now = new Date();
@@ -202,6 +220,7 @@
     }));
     el.querySelectorAll("[data-book]").forEach((b) => (b.onclick = () => bookSheet(list.find((x) => x.id === b.dataset.book), taken[b.dataset.book] || 0)));
     el.querySelectorAll("[data-ticket]").forEach((b) => (b.onclick = () => showTicket(b.dataset.ticket)));
+    el.querySelectorAll("[data-join]").forEach((b) => (b.onclick = () => joinGroup(b.dataset.join)));
     el.querySelectorAll("[data-event]").forEach((b) => (b.onclick = () => {
       const ev = list.find((x) => x.id === b.dataset.event);
       modal(`<h2>${esc(ev.title)}</h2><p class="muted">${fmtEvent(ev)}<br>${esc(ev.location)}</p><p style="line-height:1.5;white-space:pre-wrap">${esc(ev.details || "")}</p>`);
@@ -221,9 +240,11 @@
     const fb = ev.kind === "football";
     const pills = `<div class="pills"><span class="tag">${fb ? "£6 or kitty" : Number(ev.price) > 0 ? money(ev.price) : "Free"}</span>
       <span class="tag">${ev.access === "public" ? "Open to invited guests" : "Members only"}</span>
-      ${!past ? `<span class="tag ${left ? "" : "warn"}">${left ? `${left} of ${ev.capacity} places left` : "Full"}</span>` : ""}</div>`;
+      ${ev.weekly ? `<span class="tag gold">Every ${DAYS[d.getDay()]}</span>` : !past ? `<span class="tag ${left ? "" : "warn"}">${left ? `${left} of ${ev.capacity} places left` : "Full"}</span>` : ""}</div>`;
     let action;
     if (past) action = '<button class="off" style="color:var(--muted)" disabled>Event has ended</button>';
+    else if (ev.group_id && !me) action = '<button class="go" data-go="account">Sign in to sign up</button>';
+    else if (ev.group_id) action = joined.includes(ev.group_id) || isOrg() ? '<button class="go" data-go="groups">Signed up ✓ · Open chat</button>' : `<button class="go" data-join="${esc(ev.group_id)}">Sign up · Free</button>`;
     else if (fb) action = `<button class="go" data-go="football">${mine ? "Booked ✓ · Open" : "Open football"}</button>`;
     else if (mine) action = `<button class="go" data-ticket="${mine.code}">${mine.status === "waitlist" ? "On waitlist · Ticket" : "Booked ✓ · Ticket"}</button>`;
     else if (!me && ev.access !== "public") action = '<button class="go" data-go="account">Members only · Sign in</button>';
@@ -501,18 +522,28 @@
       q(sb.from("posts").select("*").order("pinned", { ascending: false }).order("created_at", { ascending: false }).limit(100)),
       q(sb.from("comments").select("*").order("created_at")),
       q(sb.from("poll_votes").select("*")),
-    ]);
+      myGroups(),
+    ]).then(([a, b, c, d, g]) => { joined = g; return [a, b, c, d]; });
     if (!alive()) return;
     groupCache = gs;
+    const boxed = (g) => g === ANNOUNCE || gs.find((x) => x.id === g)?.members_only;
     const news = posts.filter((p) => p.group_id === ANNOUNCE).slice(0, 3);
-    const shown = posts.filter((p) => p.group_id !== ANNOUNCE && (!filter || (p.body + groupName(p.group_id)).toLowerCase().includes(filter.toLowerCase())));
+    const shown = posts.filter((p) => !boxed(p.group_id) && (!filter || (p.body + groupName(p.group_id)).toLowerCase().includes(filter.toLowerCase())));
     const newsBox = `<section class="news"><div class="row" style="justify-content:space-between"><h2>📢 Latest Community Announcements</h2>${isAdmin() ? '<button class="btn small" data-compose="news">Post</button>' : ""}</div>
       ${news.map((p) => postHtml(p, comments.filter((c) => c.post_id === p.id), votes.filter((v) => v.post_id === p.id))).join("") || '<p class="muted">No announcements yet.</p>'}</section>`;
+    // Members-only chats (like the Quran target): shown to people who signed up, with a sign-up button for everyone else.
+    const clubs = gs.filter((g) => g.members_only).map((g) => {
+      const inIt = joined.includes(g.id) || isOrg();
+      const gp = posts.filter((p) => p.group_id === g.id).slice(0, 4);
+      return `<section class="news club"><div class="row" style="justify-content:space-between"><h2>📖 ${esc(g.name)}</h2>${inIt ? `<button class="btn small" data-compose="text" data-group="${esc(g.id)}">Post</button>` : ""}</div>
+        ${inIt ? gp.map((p) => postHtml(p, comments.filter((c) => c.post_id === p.id), votes.filter((v) => v.post_id === p.id))).join("") || '<p class="muted">Nothing posted yet.</p>'
+          : `<p class="muted">${esc(g.about)}</p><button class="btn solid" data-join="${esc(g.id)}">Sign up · Free</button>`}</section>`;
+    }).join("");
     el.innerHTML = `
       <div class="subhead"><h2>Chats</h2><a href="#grouplist">Group list</a>
         <span style="width:1px;height:28px;background:var(--line)"></span>
         <button id="searchBtn" style="color:var(--green)">${ICON.search}</button></div>
-      ${filter ? "" : newsBox}
+      ${filter ? "" : newsBox + clubs}
       ${filter ? `<div class="pad" style="padding-top:10px">Results for “${esc(filter)}” · <a href="#" id="clear">clear</a></div>` : ""}
       <div class="composer">
         <div class="row"><div class="avatar" style="width:46px;height:46px">${esc(initials(me.name))}</div>
@@ -523,7 +554,8 @@
         </div>
       </div>
       <div id="feed">${shown.map((p) => postHtml(p, comments.filter((c) => c.post_id === p.id), votes.filter((v) => v.post_id === p.id))).join("") || '<div class="empty"><h2>No posts yet</h2></div>'}</div>`;
-    el.querySelectorAll("[data-compose]").forEach((b) => (b.onclick = () => compose(b.dataset.compose)));
+    el.querySelectorAll("[data-compose]").forEach((b) => (b.onclick = () => compose(b.dataset.compose, b.dataset.group)));
+    el.querySelectorAll("[data-join]").forEach((b) => (b.onclick = () => joinGroup(b.dataset.join).then(refresh)));
     $("#searchBtn", el).onclick = () => {
       modal(`<h2>Search posts</h2><input id="q" placeholder="Search..." value="${esc(filter)}"><div class="form-actions"><button class="btn solid block" id="go">Search</button></div>`, (m) => {
         const qi = $("#q", m); qi.focus();
@@ -600,9 +632,10 @@
     }));
   }
 
-  function compose(kind) {
-    const news = kind === "news"; if (news) kind = "text";
-    const groupOpts = groupCache.filter((g) => news ? g.id === ANNOUNCE : g.id !== ANNOUNCE).map((g) => `<option value="${g.id}">${esc(g.name)}</option>`).join("");
+  function compose(kind, fixed) {
+    if (kind === "news") { kind = "text"; fixed = ANNOUNCE; }
+    const news = !!fixed;
+    const groupOpts = groupCache.filter((g) => fixed ? g.id === fixed : g.id !== ANNOUNCE && (!g.members_only || joined.includes(g.id) || isOrg())).map((g) => `<option value="${g.id}">${esc(g.name)}</option>`).join("");
     const extra = {
       photo: '<label>Photo</label><input type="file" id="file" accept="image/*">',
       poll: '<label>Options (one per line)</label><textarea id="opts" placeholder="Yes\nNo\nMaybe"></textarea>',
