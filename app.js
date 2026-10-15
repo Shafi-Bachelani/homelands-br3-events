@@ -338,7 +338,7 @@
         ${me.family ? '<span class="tag">Family: pays by transfer</span>' : ""}${Number(me.credit) ? `<span class="tag">${money(me.credit)} credit</span>` : ""}</div>`;
       let body;
       if (mine) {
-        const st = mine.charge === "covered" ? "Booked, covered by your kitty" : mine.paid ? (mine.method === "credit" ? "Booked, paid with credit" : "Booked and paid") : "Booked, not paid yet";
+        const st = mine.charge === "covered" ? "Booked, covered by your kitty" : mine.paid ? (mine.method === "credit" ? "Booked, paid with credit" : mine.method === "card" ? "Booked and paid by card" : "Booked and paid") : "Booked, not paid yet";
         body = `<p><b>${st}.</b> You're number ${bookings.indexOf(mine) + 1} on the list.</p>
           ${!mine.paid ? `<p class="note">Please pay <b>${money(mine.amount)}</b> before <b>Thursday 11pm</b>, or your place is released.${me.family ? " Pay the organiser by bank transfer." : " Pay by card here, or by bank transfer to the organiser."}</p>
             ${me.family ? "" : `<button class="btn solid" data-pay="${esc(mine.code)}" style="margin-bottom:10px">Pay ${money(mine.amount)} by card</button>`}` : ""}
