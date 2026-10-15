@@ -280,7 +280,7 @@
     });
   }
 
-  async function showTicket(code) {
+  async function showTicket(code, recheck) {
     try {
       const [t] = await q(sb.rpc("ticket", { p_code: code }));
       if (!t) return toast("Ticket not found");
@@ -294,6 +294,8 @@
         </div>
         ${!t.paid && Number(t.amount) > 0 && t.status === "booked" ? `<p class="note">${money(t.amount)} still to pay.</p><button class="btn solid block" data-pay="${esc(t.code)}">Pay ${money(t.amount)} by card</button>` : ""}
         <p class="muted" style="font-size:14px">Show this at the door. A screenshot works too.</p>`, (m) => { if (t.status !== "waitlist") qr($("#qr", m), t.code); });
+      // If they paid by card but didn't come back through Square's return link, check with Square now.
+      if (!t.paid && Number(t.amount) > 0 && !recheck) payApi({ code: t.code, confirm: true }).then((r) => { if (r.paid) { toast("Payment received, thank you!"); showTicket(t.code, true); } }).catch(() => {});
     } catch (e) { fail(e); }
   }
 
@@ -334,6 +336,7 @@
       </div>`;
 
       const mine = bookings.find((b) => b.user_id === me.id);
+      if (mine && !mine.paid && mine.square_order_id) payApi({ code: mine.code, confirm: true }).then((r) => { if (r.paid && alive()) { toast("Payment received, thank you!"); refresh(); } }).catch(() => {});
       const pills = `<div class="pills"><span class="tag ${kitty ? "gold" : ""}">${kitty ? `Kitty member, kitty ${fs.session_no}` : "Ordinary member"}</span>
         ${me.family ? '<span class="tag">Family: pays by transfer</span>' : ""}${Number(me.credit) ? `<span class="tag">${money(me.credit)} credit</span>` : ""}</div>`;
       let body;
@@ -383,6 +386,7 @@
     const cx = $("#cancel", el);
     if (cx) cx.onclick = async () => {
       const mine = bookings.find((b) => b.user_id === me.id);
+      if (mine && !mine.paid && mine.square_order_id) payApi({ code: mine.code, confirm: true }).then((r) => { if (r.paid && alive()) { toast("Payment received, thank you!"); refresh(); } }).catch(() => {});
       if (cx.dataset.sure !== "1") { cx.dataset.sure = "1"; cx.textContent = "Tap again to remove yourself"; return; }
       try { toast(await q(sb.rpc("cancel_booking", { p_id: mine.id }))); await loadMe(); refresh(); } catch (e) { fail(e); }
     };
