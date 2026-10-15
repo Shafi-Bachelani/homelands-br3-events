@@ -105,6 +105,7 @@ const APP_DATA = {
     }
   ],
   "counselling": {
-    "intro": "Confidential one-to-one support with a trained counsellor. Send a request and we'll get back to you to arrange a time."
+    "intro": "Confidential one-to-one support. Send a request and we'll get back to you to arrange a time.",
+    "disclaimer": "This is not a professional counselling service, we are simply a listening ear."
   }
 };
