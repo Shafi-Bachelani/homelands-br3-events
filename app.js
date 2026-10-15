@@ -187,6 +187,20 @@
     while (eventEnd({ ...ev, day: dayKey(d) }) < new Date()) d.setDate(d.getDate() + 7);
     ev.day = dayKey(d);
   }
+  // Membership is for people within HOME_MILES of the centre of BR3 (Beckenham).
+  const HOME = { lat: 51.4078, lng: -0.0328 }, HOME_MILES = 5;
+  // Miles from BR3 for a UK postcode: a number, false if the postcode doesn't exist, null if the lookup failed.
+  async function milesFromHome(postcode) {
+    try {
+      const r = await fetch(`https://api.postcodes.io/postcodes/${encodeURIComponent(postcode)}`);
+      if (r.status === 404) return false;
+      const { result } = await r.json();
+      if (!result || result.latitude == null) return null;
+      const rad = (x) => (x * Math.PI) / 180, dLat = rad(result.latitude - HOME.lat), dLng = rad(result.longitude - HOME.lng);
+      const a = Math.sin(dLat / 2) ** 2 + Math.cos(rad(HOME.lat)) * Math.cos(rad(result.latitude)) * Math.sin(dLng / 2) ** 2;
+      return 3958.8 * 2 * Math.asin(Math.sqrt(a));
+    } catch { return null; }
+  }
   // Groups the signed-in member has signed up to (members-only chats).
   let joined = [];
   async function myGroups() {
@@ -862,6 +876,7 @@
       <div class="pills"><span class="tag">${ROLE[me.role]}</span>${me.kitty_session === fs.session_no ? `<span class="tag gold">Kitty member, kitty ${fs.session_no}</span>` : ""}
         ${me.family ? '<span class="tag">Family: pays by transfer</span>' : ""}${Number(me.credit) ? `<span class="tag">${money(me.credit)} credit</span>` : ""}</div>
       <p class="muted">${esc(me.email)}</p>
+      ${me.approved === false ? `<p class="note">Your membership is waiting for the admin to approve it. Until then you can look around, but you can't book or post.</p>` : ""}
       ${debts.length ? `<p class="note">You owe ${money(debts.reduce((t, d) => t + Number(d.amount), 0))} from ${debts.map((d) => esc(d.reason)).join(", ")}. Please pay the organiser.</p>` : ""}
       <h2 style="margin-top:24px">My tickets</h2>
       ${upcoming.map((b) => `<button class="list-row block-row" data-ticket="${b.code}"><div><b>${esc(b.events.title)}</b><span class="muted">${short(parseDay(b.events.day))} · ${hhmm(b.events.time)} · ${b.status === "waitlist" ? "Waitlist" : b.paid ? "Paid" : "Not paid yet"}</span></div>${ICON.chev}</button>`).join("") || '<p class="muted">No upcoming bookings.</p>'}
@@ -893,7 +908,9 @@
       <h1>Sign in or join</h1>
       <p class="muted" style="line-height:1.5">Members can book football and members-only events, post in the groups, and invite guests.</p>
       <div class="seg"><button data-mode="in" class="on">Sign in</button><button data-mode="up">Join</button></div>
-      <div id="nameRow" hidden><label>Your full name</label><input id="nm" autocomplete="name"></div>
+      <div id="nameRow" hidden><label>Your full name</label><input id="nm" autocomplete="name">
+        <label>Your postcode</label><input id="pc" autocomplete="postal-code" placeholder="e.g. BR3 1AA" style="text-transform:uppercase">
+        <p class="muted" style="font-size:14px">Membership is for people living within ${HOME_MILES} miles of BR3. Only the admin can see your postcode.</p></div>
       <label>Email</label><input id="em" type="email" autocomplete="email">
       <label>Password</label><input id="pw" type="password" autocomplete="current-password" minlength="6">
       <div class="form-actions"><button class="btn solid block" id="go">Sign in</button></div>
@@ -913,11 +930,18 @@
       const email = $("#em", el).value.trim(), password = $("#pw", el).value, name = $("#nm", el).value.trim();
       if (!email || password.length < 6) return toast("Enter your email and a password of at least 6 characters");
       if (mode === "up" && !name) return toast("Enter your full name");
+      const postcode = $("#pc", el).value.trim().toUpperCase();
+      if (mode === "up" && !postcode) return toast("Enter your postcode");
       try {
         $("#go", el).disabled = true;
         if (mode === "up") {
-          const r = await q(sb.auth.signUp({ email, password, options: { data: { name } } }));
-          if (!r.session) { $("#go", el).disabled = false; return modal(`<h2>Check your email</h2><p style="line-height:1.5">We've sent a link to <b>${esc(email)}</b>. Tap it, then come back and sign in.</p>`); }
+          const miles = await milesFromHome(postcode);
+          if (miles === false) { $("#go", el).disabled = false; return toast("We couldn't find that postcode. Please check it"); }
+          const far = miles == null || miles > HOME_MILES;
+          const r = await q(sb.auth.signUp({ email, password, options: { data: { name, postcode, miles: miles == null ? "" : miles.toFixed(1) } } }));
+          const held = far ? `<p class="note" style="line-height:1.5">Your postcode is outside our ${HOME_MILES}-mile area, so the admin will need to approve your membership before you can book or post.</p>` : "";
+          if (!r.session) { $("#go", el).disabled = false; return modal(`<h2>Check your email</h2><p style="line-height:1.5">We've sent a link to <b>${esc(email)}</b>. Tap it, then come back and sign in.</p>${held}`); }
+          if (far) modal(`<h2>Welcome</h2>${held}`);
         } else {
           await q(sb.auth.signInWithPassword({ email, password }));
         }
@@ -945,8 +969,14 @@
     if (!alive()) return;
     const g = Object.fromEntries(guests.map((x) => [x.booking_id, x]));
     const ROLES = ["member", "organiser", "admin"];
+    const pending = isAdmin() ? members.filter((m) => m.approved === false) : [];
+    const pcs = pending.length ? await q(sb.from("member_postcodes").select("*").in("user_id", pending.map((m) => m.id))) : [];
+    if (!alive()) return;
     el.innerHTML = `<div class="pad" style="padding-top:24px">
       <h1>Organiser tools</h1>
+      ${pending.length ? `<h2>Waiting for approval</h2>
+      <p class="muted">These people joined with a postcode outside the ${HOME_MILES}-mile area, or one we couldn't check. They can't book or post until you approve them.</p>
+      ${pending.map((m) => { const pc = pcs.find((x) => x.user_id === m.id); return `<div class="list-row"><div><b>${esc(m.name)}</b><span class="muted">${pc ? `${esc(pc.postcode)}${pc.miles != null ? ` · ${pc.miles} miles from BR3` : " · distance not checked"}` : "No postcode given"} · joined ${short(new Date(m.created_at))}</span></div><button class="btn small" data-approve="${m.id}">Approve</button></div>`; }).join("")}` : ""}
       <h2>Check someone in</h2>
       <div class="row"><input id="ci" placeholder="Ticket code, e.g. AA-7K2QX" style="text-transform:uppercase"><button class="btn small" id="ciGo">Check in</button></div>
       <h2 style="margin-top:28px">Add an event</h2>
@@ -984,6 +1014,9 @@
         <div><label>Kitty number</label><input id="fn" type="number" min="1" value="${fs.session_no}"></div><div><label>Games played in this kitty</label><input id="fg" type="number" min="0" max="4" value="${fs.games_played}"></div></div>
         <div class="form-actions"><button class="btn block" id="setF">Set funds</button></div>` : ""}
     </div>`;
+    el.querySelectorAll("[data-approve]").forEach((b) => (b.onclick = async () => {
+      try { await q(sb.rpc("approve_member", { p_id: b.dataset.approve })); toast("Approved"); refresh(); } catch (e) { fail(e); }
+    }));
     $("#ciGo", el).onclick = async () => { try { modal(`<h2>Check in</h2><p style="font-size:18px">${esc(await q(sb.rpc("check_in", { p_code: $("#ci", el).value })))}</p>`); $("#ci", el).value = ""; } catch (e) { fail(e); } };
     $("#add", el).onclick = async () => {
       const ev = { kind: "event", title: $("#t", el).value.trim(), day: $("#d", el).value, time: $("#tm", el).value, location: $("#loc", el).value.trim(),
