@@ -3,14 +3,14 @@
 // Set up in Jotform: Settings → Integrations → Webhooks → https://<site>/.netlify/functions/jotform-webhook
 import { json, db } from "../lib/square.mjs";
 
-const FORM_ID = "262877268047066";
+const FORM_IDS = ["262877635236064", "262877268047066"]; // current form, then the first one
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export default async (req) => {
   if (req.method !== "POST") return json({ error: "Use POST." }, 405);
   if (!process.env.SUPABASE_SECRET_KEY) return json({ error: "Not set up." }, 503);
   const form = await req.formData().catch(() => null);
-  if (!form || String(form.get("formID")) !== FORM_ID) return json({ error: "Unknown form." }, 400);
+  if (!form || !FORM_IDS.includes(String(form.get("formID")))) return json({ error: "Unknown form." }, 400);
 
   let raw = {};
   try { raw = JSON.parse(form.get("rawRequest") || "{}"); } catch {}
@@ -20,8 +20,8 @@ export default async (req) => {
 
   // One answer per line, without the hidden fields.
   const answers = String(form.get("pretty") || "")
-    .split(/, (?=[A-Z][^:,]{0,60}:)/)
-    .filter((line) => !/^(Member ID|Email):/i.test(line))
+    .split(/, (?=[A-Za-z][^:,]{0,60}:)/)
+    .filter((line) => !/^(member ?id|email):/i.test(line))
     .join("\n");
   try {
     const waiting = await db(`profiles?id=eq.${memberId}&approved=eq.false&select=id`);

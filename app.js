@@ -19,7 +19,7 @@
   const isAdmin = () => !!me && me.role === "admin";
   // New members wait for the admin's approval before they can book or post.
   const pending = () => !!me && me.approved === false;
-  const APPLY_FORM = "https://form.jotform.com/262877268047066";
+  const APPLY_FORM = "https://form.jotform.com/262877635236064";
   const applyUrl = () => `${APPLY_FORM}?memberId=${encodeURIComponent(me.id)}&email=${encodeURIComponent(me.email || "")}`;
   async function loadMe() {
     const { data: { session } } = await sb.auth.getSession();
