@@ -418,7 +418,8 @@
   async function organiserFootball(box, current, currentBookings, fs, awaiting, games) {
     const target = awaiting[0] || current;
     const bookings = target && target !== current ? await q(sb.from("bookings").select("*").eq("event_id", target.id).neq("status", "cancelled").order("created_at")) : currentBookings;
-    const cancelled = target ? await q(sb.from("bookings").select("*").eq("event_id", target.id).eq("status", "cancelled")) : [];
+    const people = current && !current.accounts_posted ? await q(sb.from("profiles").select("id,name,credit").order("name")) : [];
+    const onList = new Set(currentBookings.map((b) => b.user_id).filter(Boolean));
     const debts = await q(sb.from("debts").select("*, profiles(name)").eq("cleared", false).order("on_date"));
     const nextFri = (() => { const last = games.length ? parseDay(games[games.length - 1].day) : today(); const d = new Date(Math.max(last, today())); d.setDate(d.getDate() + ((5 - d.getDay() + 7) % 7 || (games.length ? 7 : 0))); return d; })();
     const charged = bookings.filter((b) => b.charge !== "covered");
@@ -427,7 +428,15 @@
       <button class="btn small" id="addGame">Add game for ${short(nextFri)}</button>
       ${current ? `<h3>Who's turned up · ${short(parseDay(current.day))}</h3>
       <p class="muted">Tap a name when they arrive. ${currentBookings.filter((b) => b.checked_in).length} of ${currentBookings.length} here.</p>
-      <div class="attend">${currentBookings.map((b) => `<label class="check"><input type="checkbox" data-here="${b.id}" ${b.checked_in ? "checked" : ""}> ${esc(b.display_name)}${b.paid ? "" : ' <span class="tag warn">Unpaid</span>'}</label>`).join("") || '<p class="muted">No one has booked yet.</p>'}</div>` : ""}
+      <div class="attend">${currentBookings.map((b) => `<label class="check"><input type="checkbox" data-here="${b.id}" ${b.checked_in ? "checked" : ""} ${current.accounts_posted ? "disabled" : ""}> ${esc(b.display_name)}${b.paid ? "" : ' <span class="tag warn">Unpaid</span>'}</label>`).join("") || '<p class="muted">No one has booked yet.</p>'}</div>
+      <p class="muted">Anyone paid for pay and play who isn't ticked when the accounts are posted keeps their £6 as credit on their account for their next booking.</p>
+      ${current.accounts_posted ? "" : `<h3>Add someone who wasn't on the list</h3>
+      <div class="grid2">
+        <div><label>Member</label><select id="wiUser"><option value="">Not a member (type name)</option>${people.filter((p) => !onList.has(p.id)).map((p) => `<option value="${p.id}" data-credit="${Number(p.credit) || 0}">${esc(p.name)}${Number(p.credit) > 0 ? ` (${money(p.credit)} credit)` : ""}</option>`).join("")}</select></div>
+        <div><label>Name</label><input id="wiName" placeholder="Their name"></div>
+        <div><label>Paid £6 by</label><select id="wiMeth">${Object.entries(METHODS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}<option value="credit" disabled>Account credit</option></select></div>
+      </div>
+      <div class="form-actions"><button class="btn solid block" id="wiAdd">Add and mark as here</button></div>`}` : ""}
       ${target ? `<h3>Payments · ${esc(target.title)} ${short(parseDay(target.day))}${target.accounts_posted ? " (accounts posted)" : ""}</h3>
       <p class="muted">Set how each person paid. Picking a method marks them paid straight away.</p>
       <div class="scroll"><table><thead><tr><th>Player</th><th>Type</th><th>Paid by</th></tr></thead><tbody>
@@ -454,6 +463,20 @@
         toast("Game added"); refresh();
       } catch (e) { fail(e); }
     };
+    const wu = $("#wiUser", box);
+    if (wu) {
+      const sync = () => { const o = wu.selectedOptions[0], cr = Number(o.dataset.credit || 0), c = $("#wiMeth", box).querySelector('[value="credit"]');
+        $("#wiName", box).disabled = !!wu.value; c.disabled = cr < 6; if (c.disabled && $("#wiMeth", box).value === "credit") $("#wiMeth", box).value = "cash"; };
+      wu.onchange = sync; sync();
+      $("#wiAdd", box).onclick = async () => {
+        try {
+          $("#wiAdd", box).disabled = true;
+          const b = (await q(sb.rpc("add_walkin", { p_event: current.id, p_user: wu.value || null, p_name: $("#wiName", box).value.trim() || null, p_method: $("#wiMeth", box).value })));
+          const row = Array.isArray(b) ? b[0] : b;
+          toast(row && row.charge === "covered" ? `${row.display_name} added (in the kitty, no charge)` : "Added and marked as here"); refresh();
+        } catch (e) { $("#wiAdd", box).disabled = false; fail(e); }
+      };
+    }
     box.querySelectorAll("[data-here]").forEach((c) => (c.onchange = async () => {
       try { await q(sb.from("bookings").update({ checked_in: c.checked }).eq("id", c.dataset.here)); toast(c.checked ? "Marked as here" : "Unmarked"); refresh(); } catch (e) { c.checked = !c.checked; fail(e); }
     }));
@@ -465,33 +488,36 @@
     const methodOf = (b) => b.method || "owes";
     dr.onclick = () => {
       const cleared = [...box.querySelectorAll("[data-clear]:checked")].map((c) => debts.find((d) => d.id === c.dataset.clear));
-      const all = [...bookings, ...cancelled.filter((b) => b.paid)];
-      const kp = all.filter((b) => b.charge === "kitty"), pg = all.filter((b) => b.charge === "payg");
+      const all = bookings, here = all.filter((b) => b.checked_in);
+      if (!here.length) return toast(`Tick who turned up under "Who's turned up" first`);
+      const kp = all.filter((b) => b.charge === "kitty"), pg = here.filter((b) => b.charge === "payg");
       const viaCredit = pg.filter((b) => b.method === "credit");
-      const cash = all.filter((b) => b.charge !== "covered" && ["card", "transfer", "cash"].includes(methodOf(b)));
-      const owing = all.filter((b) => b.charge !== "covered" && methodOf(b) === "owes");
+      const counts = (b) => b.charge === "kitty" || b.checked_in;
+      const cash = all.filter((b) => b.charge !== "covered" && counts(b) && ["card", "transfer", "cash", "credit"].includes(methodOf(b)));
+      const owing = all.filter((b) => b.charge !== "covered" && counts(b) && methodOf(b) === "owes");
+      const noShows = all.filter((b) => b.charge === "payg" && !b.checked_in && b.paid && b.user_id);
       const by = {}; cash.forEach((b) => (by[b.method] = (by[b.method] || 0) + Number(b.amount)));
       const recv = cash.reduce((t, b) => t + Number(b.amount), 0);
       const clearedAmt = cleared.reduce((t, d) => t + Number(d.amount), 0);
       const hire = Number($("#hire", box).value) || 0, fees = Number($("#fees", box).value) || 0;
       const net = recv - hire - fees, newKitty = Number(fs.kitty) + net, newEv = Number(fs.events) + clearedAmt;
       const g = fs.games_played + 1, ORD = ["1st", "2nd", "3rd", "4th", "5th"], L = "________", d = parseDay(target.day);
-      const t = [`Turnout ${bookings.length} - ${d.getDate()} ${MONTHS_LONG[d.getMonth()]} - ${ORD[g - 1] || g + "th"} kitty game of up to 5 consecutive games`, "",
+      const t = [`Turnout ${here.length} - ${d.getDate()} ${MONTHS_LONG[d.getMonth()]} - ${ORD[g - 1] || g + "th"} kitty game of up to 5 consecutive games`, "",
         "Kitty restarts when either fund drops below £150 or we have had a maximum of 5 consecutive games", "", $("#fmt", box).value.trim(), L,
         "Prior fund values", `Kitty fund ${money(fs.kitty)}`, `Events fund ${money(fs.events)}`, L];
       if (kp.length) t.push("These contributed towards the kitty", "", ...kp.map((b) => `${b.display_name} -`), "", "Expected receipts", `${kp.length}x £15 = ${money(kp.length * 15)}`, L);
-      const payable = pg.length - viaCredit.length;
-      t.push("Pay and Play", `Expected pay as you go is ${payable}x £6 = ${money(payable * 6)}`);
-      if (viaCredit.length) t.push(`${viaCredit.length} played using account credit`);
-      const exp = kp.length * 15 + payable * 6;
+      t.push("Pay and Play (only those who turned up)", `Expected pay as you go is ${pg.length}x £6 = ${money(pg.length * 6)}`);
+      if (viaCredit.length) t.push(`${viaCredit.length} paid from account credit: ${viaCredit.map((b) => b.display_name).join(", ")}`);
+      const exp = kp.length * 15 + pg.length * 6;
       t.push("", `Total exp ${money(exp)}`);
       if (cleared.length) t.push(`And ${cleared.length} owed cleared, ${money(exp + clearedAmt)} expected`);
-      t.push(L, "Paid as", ...Object.entries(by).map(([k, v]) => `${METHODS[k]} ${money(v)}`));
+      t.push(L, "Paid as", ...Object.entries(by).map(([k, v]) => `${k === "credit" ? "Paid from credit" : METHODS[k]} ${money(v)}`));
       if (clearedAmt) t.push(`Owed cleared ${money(clearedAmt)} (to events fund)`);
       owing.forEach((b) => t.push(`${b.display_name} ${b.charge === "kitty" ? "entered kitty" : "played"} but deferred payment`));
       t.push("", `Total received ${money(recv + clearedAmt)}`, recv + owing.reduce((a, b) => a + Number(b.amount), 0) === exp ? "Balanced." : "Does not balance: check the payments above.", "",
         "Less cost", `${money(hire)} hire charge`, `${money(fees)} card payment charge`, "—————————", "Receipts over costs", money(net), "——————————",
         "Updated funds", `Kitty fund ${money(newKitty)}`, `Events fund ${money(newEv)}`);
+      if (noShows.length) t.push(L, "Didn't turn up (£6 not refunded, moved to their account credit)", ...noShows.map((b) => b.display_name));
       const owes = [...debts.filter((x) => !cleared.includes(x)).map((x) => `${x.profiles?.name || "Member"} ${money(x.amount)} ${esc(x.reason)}`),
         ...owing.map((b) => `${b.display_name} ${money(b.amount)} ${short(d)}`)];
       if (owes.length) t.push(L, "These OWE", ...owes);
