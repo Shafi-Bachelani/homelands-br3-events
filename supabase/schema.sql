@@ -154,9 +154,11 @@ language sql stable security definer set search_path = public as $$
   select exists (select 1 from profiles where id = auth.uid() and role = 'admin')
 $$;
 
-create function public.new_code(prefix text) returns text
+-- Booking codes like AA-7K2QXM: 6 characters from the random part of a UUID, skipping look-alikes (0/O, 1/I/L).
+create or replace function public.new_code(prefix text) returns text
 language sql volatile as $$
-  select prefix || upper(substr(translate(encode(gen_random_bytes(6), 'base64'), '+/=0O1Il', ''), 1, 5))
+  select prefix || string_agg(substr('ABCDEFGHJKMNPQRSTUVWXYZ23456789', get_byte(b, i) % 31 + 1, 1), '' order by i)
+  from (select uuid_send(gen_random_uuid()) as b) x, generate_series(0, 5) as i
 $$;
 
 -- Football deadlines, in UK time: booking opens Wed 1pm, pay by Thu 11pm, credit if you cancel before Fri 6pm.
