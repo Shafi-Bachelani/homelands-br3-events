@@ -259,3 +259,7 @@ details.past { margin-top: 14px; }
 details.past summary { cursor: pointer; color: var(--muted); font-weight: 700; padding: 8px 0; }
 .attend label.check { padding: 10px 12px; margin: 6px 0; background: var(--field); border: 1px solid var(--line); border-radius: 10px; }
 .attend label.check:has(input:checked) { border-color: var(--green); }
+.card.who { margin: 14px 0; padding: 16px 18px; }
+.card.who h2 { margin: 0 0 10px; }
+.card.who p { line-height: 1.55; margin: 0 0 10px; }
+.card.who p:last-child { margin-bottom: 0; }
