@@ -32,12 +32,7 @@ const APP_DATA = {
     "name": "Mohamed Bachelani",
     "initials": "MB"
   },
-  "announcements": [
-    {
-      "date": "2026-06-14",
-      "text": "Welcome to \"The (Al-) Ansaar Ass\". This is where you can check out our latest announcements."
-    }
-  ],
+  "announcements": [],
   "events": [
     {
       "id": "footie",

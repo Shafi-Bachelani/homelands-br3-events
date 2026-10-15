@@ -147,13 +147,6 @@
   function about(el) {
     const socials = Object.entries(C.socials).filter(([, url]) => url)
       .map(([k, url]) => `<a href="${esc(url)}" target="_blank" rel="noopener" aria-label="${k}">${SOCIAL[k] || ""}</a>`).join("");
-    const notes = D.announcements.map((a) => `
-      <div class="card announce">
-        <div class="row"><div class="avatar" style="width:52px;height:52px;font-size:19px">${esc(D.admin.initials)}</div>
-          <div><b style="font-size:19px">${esc(D.admin.name)}</b><div class="muted">${agoLong(a.date)}</div></div></div>
-        <p>${bold(a.text)}</p>
-      </div>`).join("");
-
     el.innerHTML = `
       <div class="about-head"><img src="images/logo.png" alt="">
         <div><h1>${esc(C.name)}</h1><div class="muted">${esc(C.tagline)}</div></div></div>
@@ -169,9 +162,6 @@
         </div>
         <p class="desc">${esc(C.description)}</p>
         ${C.whoWeAre?.length ? `<div class="card who"><h2>Who we are</h2>${C.whoWeAre.map((p) => `<p>${esc(p)}</p>`).join("")}</div>` : ""}
-        <a class="list-row" href="#football" style="color:inherit">
-          <div><b>Friday Football</b><span class="muted">Book your place, kitty and accounts</span></div>${ICON.chev}
-        </a>
         <div class="list-row">
           <div><b>Get in Touch</b><span class="muted">${esc(C.contactName)}</span></div>
           <a class="btn small" href="https://wa.me/${esc(C.whatsapp)}" target="_blank" rel="noopener">Message</a>
@@ -183,7 +173,6 @@
           <div><b>${esc(C.location)}</b><span class="muted">Location</span></div>${ICON.pin}
         </a>
         <div class="socials">${socials}</div>
-        ${notes}
       </div>`;
     $("#invite", el).onclick = () => share(C.name, `Join ${C.name} – ${C.tagline}`);
     $("#info", el).onclick = (e) => { e.preventDefault(); modal(`<h2>General Info</h2><p style="line-height:1.5">${esc(C.generalInfo)}</p>`); };
@@ -503,6 +492,7 @@
   let groupCache = [];
   const groupName = (id) => (groupCache.find((g) => g.id === id) || {}).name || "Group";
 
+  const ANNOUNCE = "announcements";
   async function groups(el, alive, filter = "") {
     if (!me) return needSignIn(el, "see the groups");
     loading(el);
@@ -514,11 +504,15 @@
     ]);
     if (!alive()) return;
     groupCache = gs;
-    const shown = posts.filter((p) => !filter || (p.body + groupName(p.group_id)).toLowerCase().includes(filter.toLowerCase()));
+    const news = posts.filter((p) => p.group_id === ANNOUNCE).slice(0, 3);
+    const shown = posts.filter((p) => p.group_id !== ANNOUNCE && (!filter || (p.body + groupName(p.group_id)).toLowerCase().includes(filter.toLowerCase())));
+    const newsBox = `<section class="news"><div class="row" style="justify-content:space-between"><h2>📢 Latest Community Announcements</h2>${isAdmin() ? '<button class="btn small" data-compose="news">Post</button>' : ""}</div>
+      ${news.map((p) => postHtml(p, comments.filter((c) => c.post_id === p.id), votes.filter((v) => v.post_id === p.id))).join("") || '<p class="muted">No announcements yet.</p>'}</section>`;
     el.innerHTML = `
       <div class="subhead"><h2>Chats</h2><a href="#grouplist">Group list</a>
         <span style="width:1px;height:28px;background:var(--line)"></span>
         <button id="searchBtn" style="color:var(--green)">${ICON.search}</button></div>
+      ${filter ? "" : newsBox}
       ${filter ? `<div class="pad" style="padding-top:10px">Results for “${esc(filter)}” · <a href="#" id="clear">clear</a></div>` : ""}
       <div class="composer">
         <div class="row"><div class="avatar" style="width:46px;height:46px">${esc(initials(me.name))}</div>
@@ -607,7 +601,8 @@
   }
 
   function compose(kind) {
-    const groupOpts = groupCache.map((g) => `<option value="${g.id}">${esc(g.name)}</option>`).join("");
+    const news = kind === "news"; if (news) kind = "text";
+    const groupOpts = groupCache.filter((g) => news ? g.id === ANNOUNCE : g.id !== ANNOUNCE).map((g) => `<option value="${g.id}">${esc(g.name)}</option>`).join("");
     const extra = {
       photo: '<label>Photo</label><input type="file" id="file" accept="image/*">',
       poll: '<label>Options (one per line)</label><textarea id="opts" placeholder="Yes\nNo\nMaybe"></textarea>',
@@ -617,7 +612,7 @@
       <label>Group</label><select id="g">${groupOpts}</select>
       <label>${kind === "poll" ? "Question" : "Message"}</label><textarea id="t"></textarea>
       ${extra}
-      ${isOrg() ? '<label class="check"><input type="checkbox" id="pinIt"> Pin as an organiser notice</label>' : ""}
+      ${isOrg() && !news ? '<label class="check"><input type="checkbox" id="pinIt"> Pin as an organiser notice</label>' : ""}
       <div class="form-actions"><button class="btn solid block" id="post">Post</button></div>`, (m) => {
       $("#post", m).onclick = async () => {
         const body = $("#t", m).value.trim();

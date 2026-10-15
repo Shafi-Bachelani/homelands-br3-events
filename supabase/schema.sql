@@ -508,7 +508,7 @@ create policy "organisers edit groups" on public.groups for all to authenticated
 
 create policy "members see posts" on public.posts for select to authenticated using (true);
 create policy "members post" on public.posts for insert to authenticated
-  with check (user_id = auth.uid() and (not pinned or is_organiser()));
+  with check (user_id = auth.uid() and (not pinned or is_organiser()) and (group_id <> 'announcements' or is_admin()));
 create policy "organisers pin posts" on public.posts for update to authenticated using (is_organiser());
 create policy "remove own posts" on public.posts for delete to authenticated using (user_id = auth.uid() or is_organiser());
 
@@ -532,6 +532,7 @@ grant execute on function public.is_organiser(), public.is_admin(), public.book_
 -- ---------- starting content ----------
 
 insert into public.groups (id, name, about, sort) values
+  ('announcements', 'Latest Community Announcements', 'News from the admin. Only the admin can post here.', 0),
   ('hub', 'Al-Ansaar Community Hub', 'The main hub for everyone in the community.', 1),
   ('football', 'Friday Football', 'Teams, lifts, kit and match chat.', 2),
   ('enthusiasts', 'Event Enthusiasts Group', 'A space for people who love our events.', 3);
