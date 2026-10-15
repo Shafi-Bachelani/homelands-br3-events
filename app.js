@@ -208,7 +208,7 @@
     try { return (await q(sb.from("group_members").select("group_id").eq("user_id", me.id))).map((r) => r.group_id); } catch { return []; }
   }
   async function joinGroup(id) {
-    try { await q(sb.from("group_members").insert({ group_id: id, user_id: me.id })); toast("You're signed up ✓"); go("groups"); } catch (e) { fail(e); }
+    try { await q(sb.from("group_members").insert({ group_id: id, user_id: me.id })); toast("You're signed up ✓"); go("grouplist"); } catch (e) { fail(e); }
   }
   async function events(el, alive) {
     loading(el);
@@ -554,9 +554,11 @@
   const groupName = (id) => (groupCache.find((g) => g.id === id) || {}).name || "Group";
 
   const ANNOUNCE = "announcements";
-  // One chat on its own, opened from the Group list.
+  // Chats: open, informal chats anyone can join in. Joined: sign-up chats (like the Quran target).
+  // Announcements are pinned at the top of both.
   function chat(el, alive, id) { return groups(el, alive, "", id); }
-  async function groups(el, alive, filter = "", only = null) {
+  function grouplist(el, alive) { return groups(el, alive, "", null, true); }
+  async function groups(el, alive, filter = "", only = null, joinedTab = false) {
     if (!me) return needSignIn(el, "see the groups");
     loading(el);
     const [gs, posts, comments, votes] = await Promise.all([
@@ -580,7 +582,7 @@
       const canRead = !g.members_only || joined.includes(g.id) || isOrg();
       const canPost = canRead && (g.id !== ANNOUNCE || isAdmin());
       const gp = posts.filter((p) => p.group_id === g.id);
-      el.innerHTML = `<div class="subhead"><h2>${esc(g.name)}</h2><a href="#grouplist">Group list</a></div>
+      el.innerHTML = `<div class="subhead"><h2>${esc(g.name)}</h2>${g.members_only ? '<a href="#grouplist">Joined</a>' : '<a href="#groups">Chats</a>'}</div>
         ${g.about ? `<p class="muted pad" style="padding-top:10px">${esc(g.about)}</p>` : ""}
         ${!canRead ? `<div class="pad"><button class="btn solid" data-join="${esc(g.id)}">Sign up · Free</button></div>` : `
         ${canPost ? `<div class="composer">
@@ -600,15 +602,29 @@
     const clubs = gs.filter((g) => g.members_only).map((g) => {
       const inIt = joined.includes(g.id) || isOrg();
       const gp = posts.filter((p) => p.group_id === g.id).slice(0, 4);
-      return `<section class="news club"><div class="row" style="justify-content:space-between"><h2>📖 ${esc(g.name)}</h2>${inIt ? `<button class="btn small" data-compose="text" data-group="${esc(g.id)}">Post</button>` : ""}</div>
+      return `<section class="news club"><div class="row" style="justify-content:space-between"><h2>${inIt ? `<a href="#chat:${encodeURIComponent(g.id)}" style="color:inherit">📖 ${esc(g.name)}</a>` : `📖 ${esc(g.name)}`}</h2>${inIt ? `<button class="btn small" data-compose="text" data-group="${esc(g.id)}">Post</button>` : ""}</div>
         ${inIt ? gp.map((p) => postHtml(p, comments.filter((c) => c.post_id === p.id), votes.filter((v) => v.post_id === p.id))).join("") || '<p class="muted">Nothing posted yet.</p>'
           : `<p class="muted">${esc(g.about)}</p><button class="btn solid" data-join="${esc(g.id)}">Sign up · Free</button>`}</section>`;
     }).join("");
+    if (joinedTab) {
+      el.innerHTML = `<div class="subhead"><h2>Joined</h2><a href="#groups">Chats</a></div>
+        <p class="muted pad" style="padding-top:10px">Group chats you sign up for. Sign up to see what's shared and join the conversation.</p>
+        ${newsBox}${clubs || '<div class="empty"><h2>No group chats yet</h2></div>'}`;
+      el.querySelectorAll("[data-compose]").forEach((b) => (b.onclick = () => compose(b.dataset.compose, b.dataset.group)));
+      el.querySelectorAll("[data-join]").forEach((b) => (b.onclick = () => joinGroup(b.dataset.join).then(refresh)));
+      wirePosts(el, posts);
+      return;
+    }
+    const open = gs.filter((g) => g.id !== ANNOUNCE && !g.members_only).map((g) => {
+      const n = posts.filter((p) => p.group_id === g.id).length;
+      return `<a class="group-row" href="#chat:${encodeURIComponent(g.id)}"><div class="avatar" style="width:44px;height:44px;background:var(--green)">${esc(initials(g.name))}</div>
+        <div style="flex:1"><b>${esc(g.name)}</b><div class="muted">${esc(g.about || "")}${g.about ? " · " : ""}${n} post${n === 1 ? "" : "s"}</div></div><span class="muted" aria-hidden="true">›</span></a>`;
+    }).join("");
     el.innerHTML = `
-      <div class="subhead"><h2>Chats</h2><a href="#grouplist">Group list</a>
+      <div class="subhead"><h2>Chats</h2><a href="#grouplist">Joined</a>
         <span style="width:1px;height:28px;background:var(--line)"></span>
         <button id="searchBtn" style="color:var(--green)">${ICON.search}</button></div>
-      ${filter ? "" : newsBox + clubs}
+      ${filter ? "" : newsBox + open}
       ${filter ? `<div class="pad" style="padding-top:10px">Results for “${esc(filter)}” · <a href="#" id="clear">clear</a></div>` : ""}
       <div class="composer">
         <div class="row"><div class="avatar" style="width:46px;height:46px">${esc(initials(me.name))}</div>
@@ -743,16 +759,6 @@
     });
   }
 
-  async function grouplist(el, alive) {
-    const [gs, posts] = await Promise.all([q(sb.from("groups").select("*").order("sort")), me ? q(sb.from("posts").select("group_id")) : []]);
-    if (!alive()) return;
-    el.innerHTML = `<div class="subhead"><h2>Group list</h2></div>` + gs.map((g) => {
-      const n = posts.filter((p) => p.group_id === g.id).length;
-      return `<a class="group-row" href="#chat:${encodeURIComponent(g.id)}"><div class="avatar" style="width:52px;height:52px;background:var(--green)">${esc(initials(g.name))}</div>
-        <div style="flex:1"><b style="font-size:18px">${esc(g.name)}</b><div class="muted">${esc(g.about)}${me ? ` · ${n} post${n === 1 ? "" : "s"}` : ""}</div></div><span class="muted" aria-hidden="true">›</span></a>`;
-    }).join("");
-  }
-
   // ---------- SCHEDULE ----------
   let selDay = today();
   // Schedule = everything you've booked, by date, with a week view that marks the days.
@@ -762,6 +768,10 @@
     if (me) {
       const bks = await q(sb.from("bookings").select("code,status,paid,amount,charge,checked_in,places,events(title,day,time,location,kind)").eq("user_id", me.id).neq("status", "cancelled"));
       rows = bks.filter((b) => b.events && b.events.day).map((b) => ({ ...b, ...b.events }));
+      // Weekly events tied to a chat you've joined (like the Quran target) show every week.
+      joined = await myGroups();
+      const evs = joined.length ? await q(sb.from("events").select("*").in("group_id", joined)) : [];
+      evs.filter((e) => e.day && joined.includes(e.group_id)).forEach((e) => { const first = e.day; nextWeekly(e); rows.push({ ...e, first, joinedChat: true }); });
     } else {
       rows = (await Promise.all(state.guestTickets.map((c) => q(sb.rpc("ticket", { p_code: c })).then((r) => r[0]).catch(() => null)))).filter((t) => t && t.day && t.status !== "cancelled");
     }
@@ -769,7 +779,8 @@
     const now = new Date();
     const upcoming = rows.filter((r) => eventEnd(r) > now).sort((a, b) => eventStart(a) - eventStart(b));
     const past = rows.filter((r) => eventEnd(r) <= now).sort((a, b) => eventStart(b) - eventStart(a));
-    const on = (d) => upcoming.concat(past).filter((r) => r.day === dayKey(d));
+    const on = (d) => upcoming.concat(past).filter((r) => r.day === dayKey(d)
+      || (r.joinedChat && r.weekly && d >= parseDay(r.first) && d.getDay() === parseDay(r.first).getDay()));
     const monday = new Date(selDay); monday.setDate(selDay.getDate() - ((selDay.getDay() + 6) % 7));
     const days = [...Array(7)].map((_, i) => { const d = new Date(monday); d.setDate(monday.getDate() + i); return d; });
     const t = today();
@@ -777,9 +788,9 @@
       : r.checked_in ? '<span class="tag">Checked in</span>'
       : r.charge === "covered" ? '<span class="tag gold">Kitty</span>'
       : r.paid || !(Number(r.amount) > 0) ? '<span class="tag">Paid</span>' : `<span class="tag warn">To pay ${money(r.amount)}</span>`;
-    const row = (r) => { const d = parseDay(r.day); return `<button class="card ticket-row" data-ticket="${esc(r.code)}">
+    const row = (r, day) => { const d = day || parseDay(r.day); return `<button class="card ticket-row" ${r.joinedChat ? `data-go="chat:${esc(r.group_id)}"` : `data-ticket="${esc(r.code)}"`}>
         <div class="event-date"><div class="d">${d.getDate()}</div><div class="m">${MONTHS[d.getMonth()]}</div></div>
-        <div class="info"><b>${esc(r.title)}</b><span class="muted">${DAYS[d.getDay()]} · ${hhmm(r.time)}${r.location ? ` · ${esc(r.location)}` : ""}</span><div class="pills">${status(r)}${r.places > 1 ? `<span class="tag">${r.places} places</span>` : ""}</div></div>
+        <div class="info"><b>${esc(r.title)}</b><span class="muted">${DAYS[d.getDay()]} · ${hhmm(r.time)}${r.location ? ` · ${esc(r.location)}` : ""}</span><div class="pills">${r.joinedChat ? `<span class="tag">${r.weekly ? `Every ${d.toLocaleDateString("en-GB", { weekday: "long" })}` : "Signed up"}</span>` : status(r)}${r.places > 1 ? `<span class="tag">${r.places} places</span>` : ""}</div></div>
         ${ICON.chev}</button>`; };
     const sel = on(selDay);
     el.innerHTML = `
@@ -791,10 +802,10 @@
         </div>
       </div>
       <div class="pad tickets">
-        ${sel.length && dayKey(selDay) !== dayKey(t) ? `<h2>${short(selDay)}</h2>${sel.map(row).join("")}` : ""}
+        ${sel.length && dayKey(selDay) !== dayKey(t) ? `<h2>${short(selDay)}</h2>${sel.map((r) => row(r, selDay)).join("")}` : ""}
         <h2>My tickets</h2>
-        ${upcoming.map(row).join("") || `<div class="empty" style="padding:30px 10px"><p class="muted">${me ? "Nothing booked yet." : "Sign in to see your tickets here."}</p><button class="btn solid" data-go="${me ? "events" : "account"}">${me ? "See events" : "Sign in or join"}</button></div>`}
-        ${past.length ? `<details class="past"><summary>Past tickets (${past.length})</summary>${past.map(row).join("")}</details>` : ""}
+        ${upcoming.map((r) => row(r)).join("") || `<div class="empty" style="padding:30px 10px"><p class="muted">${me ? "Nothing booked yet." : "Sign in to see your tickets here."}</p><button class="btn solid" data-go="${me ? "events" : "account"}">${me ? "See events" : "Sign in or join"}</button></div>`}
+        ${past.length ? `<details class="past"><summary>Past tickets (${past.length})</summary>${past.map((r) => row(r)).join("")}</details>` : ""}
       </div>`;
     const move = (n) => { selDay = new Date(selDay); selDay.setDate(selDay.getDate() + n); refresh(); };
     $("#prev", el).onclick = () => move(-7);
