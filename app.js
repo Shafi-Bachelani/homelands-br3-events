@@ -168,6 +168,7 @@
           <a class="btn solid" href="${esc(C.website)}" target="_blank" rel="noopener">Our website</a>
         </div>
         <p class="desc">${esc(C.description)}</p>
+        ${C.whoWeAre?.length ? `<div class="card who"><h2>Who we are</h2>${C.whoWeAre.map((p) => `<p>${esc(p)}</p>`).join("")}</div>` : ""}
         <a class="list-row" href="#football" style="color:inherit">
           <div><b>Friday Football</b><span class="muted">Book your place, kitty and accounts</span></div>${ICON.chev}
         </a>
