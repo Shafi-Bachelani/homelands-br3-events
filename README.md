@@ -22,3 +22,7 @@ The first person to sign up becomes the admin.
 - `SQUARE_ENVIRONMENT`: `sandbox` while testing, `production` for real payments
 - `SUPABASE_SECRET_KEY`: Supabase, then Project Settings, API Keys, then the secret key
 - `SQUARE_WEBHOOK_SIGNATURE_KEY` (optional): from the Square webhook subscription for `payment.updated`
+
+## Copyright
+
+Copyright (c) 2026 Al Ansaar Association. All rights reserved. See [LICENSE](LICENSE). The code is public only so the site can be updated; it is not open source.
