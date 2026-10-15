@@ -248,3 +248,12 @@ details.adm summary { cursor: pointer; }
 .about-body { padding: 0 20px; }
 .event-date.tbc .d { font-size: 20px; padding-top: 6px; }
 .events > h2 { margin-top: 8px; }
+.tickets h2 { margin: 18px 0 10px; }
+.ticket-row { display: flex; align-items: center; gap: 14px; width: 100%; text-align: left; padding: 14px; margin-bottom: 10px; color: var(--text); }
+.ticket-row .info { flex: 1; min-width: 0; }
+.ticket-row .info b { display: block; font-size: 17px; }
+.ticket-row .info .muted { display: block; font-size: 14px; }
+.ticket-row .pills { margin: 6px 0 0; }
+.ticket-row svg { color: var(--muted); flex: none; }
+details.past { margin-top: 14px; }
+details.past summary { cursor: pointer; color: var(--muted); font-weight: 700; padding: 8px 0; }

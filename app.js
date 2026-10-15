@@ -652,38 +652,52 @@
 
   // ---------- SCHEDULE ----------
   let selDay = today();
-  function schedule(el) {
+  // Schedule = everything you've booked, by date, with a week view that marks the days.
+  async function schedule(el, alive) {
+    loading(el);
+    let rows;
+    if (me) {
+      const bks = await q(sb.from("bookings").select("code,status,paid,amount,charge,checked_in,places,events(title,day,time,location,kind)").eq("user_id", me.id).neq("status", "cancelled"));
+      rows = bks.filter((b) => b.events && b.events.day).map((b) => ({ ...b, ...b.events }));
+    } else {
+      rows = (await Promise.all(state.guestTickets.map((c) => q(sb.rpc("ticket", { p_code: c })).then((r) => r[0]).catch(() => null)))).filter((t) => t && t.day && t.status !== "cancelled");
+    }
+    if (!alive()) return;
+    const now = new Date();
+    const upcoming = rows.filter((r) => eventEnd(r) > now).sort((a, b) => eventStart(a) - eventStart(b));
+    const past = rows.filter((r) => eventEnd(r) <= now).sort((a, b) => eventStart(b) - eventStart(a));
+    const on = (d) => upcoming.concat(past).filter((r) => r.day === dayKey(d));
     const monday = new Date(selDay); monday.setDate(selDay.getDate() - ((selDay.getDay() + 6) % 7));
     const days = [...Array(7)].map((_, i) => { const d = new Date(monday); d.setDate(monday.getDate() + i); return d; });
     const t = today();
-    const sessionsOn = (d) => D.sessions.filter((s) => s.day === dayKey(d));
-    const todays = sessionsOn(selDay);
+    const status = (r) => r.status === "waitlist" ? '<span class="tag gold">Waitlist</span>'
+      : r.checked_in ? '<span class="tag">Checked in</span>'
+      : r.charge === "covered" ? '<span class="tag gold">Kitty</span>'
+      : r.paid || !(Number(r.amount) > 0) ? '<span class="tag">Paid</span>' : `<span class="tag warn">To pay ${money(r.amount)}</span>`;
+    const row = (r) => { const d = parseDay(r.day); return `<button class="card ticket-row" data-ticket="${esc(r.code)}">
+        <div class="event-date"><div class="d">${d.getDate()}</div><div class="m">${MONTHS[d.getMonth()]}</div></div>
+        <div class="info"><b>${esc(r.title)}</b><span class="muted">${DAYS[d.getDay()]} · ${hhmm(r.time)}${r.location ? ` · ${esc(r.location)}` : ""}</span><div class="pills">${status(r)}${r.places > 1 ? `<span class="tag">${r.places} places</span>` : ""}</div></div>
+        ${ICON.chev}</button>`; };
+    const sel = on(selDay);
     el.innerHTML = `
       <div class="cal">
-        <div class="cal-head"><button id="prev">${ICON.left}</button><b>${MONTHS_LONG[monday.getMonth()]} ${monday.getFullYear()} ⌄</b><button id="next" style="transform:scaleX(-1)">${ICON.left}</button></div>
+        <div class="cal-head"><button id="prev">${ICON.left}</button><b>${MONTHS_LONG[monday.getMonth()]} ${monday.getFullYear()}</b><button id="next" style="transform:scaleX(-1)">${ICON.left}</button></div>
         <div class="week">
           ${["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map((n) => `<div class="dn">${n}</div>`).join("")}
-          ${days.map((d) => `<div><button data-day="${dayKey(d)}" class="${d >= t ? "future" : ""} ${dayKey(d) === dayKey(selDay) ? "sel" : ""} ${sessionsOn(d).length ? "has" : ""}">${d.getDate()}</button></div>`).join("")}
+          ${days.map((d) => `<div><button data-day="${dayKey(d)}" class="${d >= t ? "future" : ""} ${dayKey(d) === dayKey(selDay) ? "sel" : ""} ${on(d).length ? "has" : ""}">${d.getDate()}</button></div>`).join("")}
         </div>
       </div>
-      <div class="filters">${ICON.filter} Filters</div>
-      ${todays.length ? todays.map((s, i) => `<div class="card session"><div><b style="font-size:18px">${esc(s.title)}</b><div class="muted">${esc(s.time)} · ${esc(s.length || "")} · ${esc(s.place || "")}</div></div>
-          <button class="btn small" data-book-session="${i}">Book</button></div>`).join("")
-        : `<div class="empty"><h2>No Upcoming Sessions</h2><p style="font-size:19px;line-height:1.5">${nextSession() ? "There are no sessions on this day." : "There are no available sessions for the next 6 months."}</p>
-          <button class="btn solid" id="nextAvail" style="margin-top:20px">Check Next Availability</button></div>`}`;
-    const move = (n) => { selDay = new Date(selDay); selDay.setDate(selDay.getDate() + n); render(); };
+      <div class="pad tickets">
+        ${sel.length && dayKey(selDay) !== dayKey(t) ? `<h2>${short(selDay)}</h2>${sel.map(row).join("")}` : ""}
+        <h2>My tickets</h2>
+        ${upcoming.map(row).join("") || `<div class="empty" style="padding:30px 10px"><p class="muted">${me ? "Nothing booked yet." : "Sign in to see your tickets here."}</p><button class="btn solid" data-go="${me ? "events" : "account"}">${me ? "See events" : "Sign in or join"}</button></div>`}
+        ${past.length ? `<details class="past"><summary>Past tickets (${past.length})</summary>${past.map(row).join("")}</details>` : ""}
+      </div>`;
+    const move = (n) => { selDay = new Date(selDay); selDay.setDate(selDay.getDate() + n); refresh(); };
     $("#prev", el).onclick = () => move(-7);
     $("#next", el).onclick = () => move(7);
-    el.querySelectorAll("[data-day]").forEach((b) => (b.onclick = () => { selDay = parseDay(b.dataset.day); render(); }));
-    const na = $("#nextAvail", el);
-    if (na) na.onclick = () => { const s = nextSession(); if (s) { selDay = parseDay(s.day); render(); } else toast("Nothing scheduled yet"); };
-    el.querySelectorAll("[data-book-session]").forEach((b) => (b.onclick = () => {
-      const s = todays[Number(b.dataset.bookSession)]; requestForm(`${s.title} – ${s.day} ${s.time}`);
-    }));
-  }
-  function nextSession() {
-    const from = dayKey(today()), limit = new Date(); limit.setMonth(limit.getMonth() + 6);
-    return D.sessions.filter((s) => s.day >= from && parseDay(s.day) <= limit).sort((a, b) => a.day.localeCompare(b.day))[0];
+    el.querySelectorAll("[data-day]").forEach((b) => (b.onclick = () => { selDay = parseDay(b.dataset.day); refresh(); }));
+    el.querySelectorAll("[data-ticket]").forEach((b) => (b.onclick = () => showTicket(b.dataset.ticket)));
   }
 
   // ---------- MORE ----------
