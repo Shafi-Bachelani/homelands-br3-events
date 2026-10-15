@@ -19,7 +19,7 @@ const APP_DATA = {
       "We believe that the man-woman relationship can never be of the friend-friend type.",
       "That women need their space to develop, and as do men. That in our social and public lives, we will organise ourselves according to that principle, and when women-men events occur (like our family events, or debates etc) then we will abide by a principle of soft segregation between the sexes. That we believe in the primacy of family, and the institution of marriage, and that soft segregation both protects that and enables it too."
     ],
-    "generalInfo": "Creating Our Homelands is a community project run by Al Ansaar in Beckenham. We organise sports, cultural events, debates, donation drives and support services for everyone in the local area.",
+    "generalInfo": "Creating Our Homelands is a community project run by Al Ansaar in Beckenham. We organise sports, cultural events, debates and support services for everyone in the local area.",
     "socials": {
       "instagram": "https://instagram.com/",
       "facebook": "https://facebook.com/",
@@ -93,14 +93,6 @@ const APP_DATA = {
       "place": "Beckenham",
       "price": 30,
       "emoji": "♟️",
-      "image": ""
-    },
-    {
-      "id": "donation",
-      "title": "Donation Drive",
-      "place": "Beckenham",
-      "price": 50,
-      "emoji": "📦",
       "image": ""
     },
     {
