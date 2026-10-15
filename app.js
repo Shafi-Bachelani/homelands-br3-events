@@ -366,7 +366,7 @@
 
       players = `<div class="card fb"><div class="row" style="justify-content:space-between"><h2>Who's playing</h2><span class="muted">${bookings.length} of ${ev.capacity}</span></div>
         <p class="muted">${bookings.length <= 25 ? "Up to 25 players: 1 pitch." : bookings.length >= 30 ? "30 or more: 2 pitches and a tournament." : "26 to 29 players: the organiser decides on 1 or 2 pitches."}</p>
-        <ol class="players">${bookings.map((b) => `<li><span>${esc(b.display_name)}${b.user_id === me.id ? " (you)" : ""}</span>${b.charge === "covered" || b.charge === "kitty" ? '<span class="tag gold">Kitty</span>' : ""}${b.paid ? "" : '<span class="tag warn">Unpaid</span>'}</li>`).join("") || '<li class="muted">No one has booked yet.</li>'}</ol></div>`;
+        <ol class="players">${bookings.map((b) => `<li><span>${esc(b.display_name)}${b.user_id === me.id ? " (you)" : ""}</span>${b.charge === "covered" || b.charge === "kitty" ? '<span class="tag gold">Kitty</span>' : ""}${b.paid ? "" : '<span class="tag warn">Unpaid</span>'}${b.checked_in ? '<span class="tag">Here</span>' : ""}</li>`).join("") || '<li class="muted">No one has booked yet.</li>'}</ol></div>`;
     }
 
     const fund = `<div class="card fb"><h2>Kitty fund accounts</h2>
@@ -414,6 +414,9 @@
     const METHODS = { card: "Card", transfer: "Transfer", cash: "Cash", owes: "Owes" };
     box.innerHTML = `<div class="card fb"><h2>Organiser</h2>
       <button class="btn small" id="addGame">Add game for ${short(nextFri)}</button>
+      ${current ? `<h3>Who's turned up · ${short(parseDay(current.day))}</h3>
+      <p class="muted">Tap a name when they arrive. ${currentBookings.filter((b) => b.checked_in).length} of ${currentBookings.length} here.</p>
+      <div class="attend">${currentBookings.map((b) => `<label class="check"><input type="checkbox" data-here="${b.id}" ${b.checked_in ? "checked" : ""}> ${esc(b.display_name)}${b.paid ? "" : ' <span class="tag warn">Unpaid</span>'}</label>`).join("") || '<p class="muted">No one has booked yet.</p>'}</div>` : ""}
       ${target ? `<h3>Payments · ${esc(target.title)} ${short(parseDay(target.day))}${target.accounts_posted ? " (accounts posted)" : ""}</h3>
       <p class="muted">Set how each person paid. Picking a method marks them paid straight away.</p>
       <div class="scroll"><table><thead><tr><th>Player</th><th>Type</th><th>Paid by</th></tr></thead><tbody>
@@ -440,6 +443,9 @@
         toast("Game added"); refresh();
       } catch (e) { fail(e); }
     };
+    box.querySelectorAll("[data-here]").forEach((c) => (c.onchange = async () => {
+      try { await q(sb.from("bookings").update({ checked_in: c.checked }).eq("id", c.dataset.here)); toast(c.checked ? "Marked as here" : "Unmarked"); refresh(); } catch (e) { c.checked = !c.checked; fail(e); }
+    }));
     box.querySelectorAll("[data-meth]").forEach((s) => (s.onchange = async () => {
       try { await q(sb.from("bookings").update({ method: s.value || null, paid: !!s.value && s.value !== "owes" }).eq("id", s.dataset.meth)); toast("Saved"); refresh(); } catch (e) { fail(e); }
     }));

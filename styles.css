@@ -257,3 +257,5 @@ details.adm summary { cursor: pointer; }
 .ticket-row svg { color: var(--muted); flex: none; }
 details.past { margin-top: 14px; }
 details.past summary { cursor: pointer; color: var(--muted); font-weight: 700; padding: 8px 0; }
+.attend label.check { padding: 10px 12px; margin: 6px 0; background: var(--field); border: 1px solid var(--line); border-radius: 10px; }
+.attend label.check:has(input:checked) { border-color: var(--green); }
