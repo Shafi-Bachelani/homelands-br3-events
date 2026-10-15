@@ -561,6 +561,8 @@
 
   const ANNOUNCE = "announcements";
   const ORG_POSTS = ["football-accounts"]; // chats only organisers can post in
+  const AUTO_GROUPS = ["football-accounts"]; // every approved member is in these, no sign-up
+  const inGroup = (id) => joined.includes(id) || isOrg() || (AUTO_GROUPS.includes(id) && !!me && !pending());
   const PENDING_NOTE = '<p class="note">You can join in once the admin has approved your membership.</p>';
   // Chats: open, informal chats anyone can join in. Joined: sign-up chats (like the Quran target).
   // Announcements are pinned at the top of both.
@@ -587,7 +589,7 @@
     if (only) {
       const g = gs.find((x) => x.id === only);
       if (!g) { el.innerHTML = '<div class="empty"><h2>Chat not found</h2></div>'; return; }
-      const canRead = !g.members_only || joined.includes(g.id) || isOrg();
+      const canRead = !g.members_only || inGroup(g.id);
       const canPost = canRead && !pending() && (g.id !== ANNOUNCE || isAdmin()) && (!ORG_POSTS.includes(g.id) || isOrg());
       const gp = posts.filter((p) => p.group_id === g.id);
       el.innerHTML = `<div class="subhead"><h2>${esc(g.name)}</h2>${g.members_only ? '<a href="#grouplist">Joined</a>' : '<a href="#groups">Chats</a>'}</div>
@@ -609,7 +611,7 @@
       return;
     }
     const clubs = gs.filter((g) => g.members_only).map((g) => {
-      const inIt = joined.includes(g.id) || isOrg();
+      const inIt = inGroup(g.id);
       const gp = posts.filter((p) => p.group_id === g.id).slice(0, 4);
       return `<section class="news club"><div class="row" style="justify-content:space-between"><h2>${inIt ? `<a href="#chat:${encodeURIComponent(g.id)}" style="color:inherit">📖 ${esc(g.name)}</a>` : `📖 ${esc(g.name)}`}</h2>${inIt && (!ORG_POSTS.includes(g.id) || isOrg()) ? `<button class="btn small" data-compose="text" data-group="${esc(g.id)}">Post</button>` : ""}</div>
         ${inIt ? gp.map((p) => postHtml(p, comments.filter((c) => c.post_id === p.id), votes.filter((v) => v.post_id === p.id))).join("") || '<p class="muted">Nothing posted yet.</p>'
@@ -725,7 +727,7 @@
   function compose(kind, fixed) {
     if (kind === "news") { kind = "text"; fixed = ANNOUNCE; }
     const news = !!fixed;
-    const groupOpts = groupCache.filter((g) => fixed ? g.id === fixed : g.id !== ANNOUNCE && (!ORG_POSTS.includes(g.id) || isOrg()) && (!g.members_only || joined.includes(g.id) || isOrg())).map((g) => `<option value="${g.id}">${esc(g.name)}</option>`).join("");
+    const groupOpts = groupCache.filter((g) => fixed ? g.id === fixed : g.id !== ANNOUNCE && (!ORG_POSTS.includes(g.id) || isOrg()) && (!g.members_only || inGroup(g.id))).map((g) => `<option value="${g.id}">${esc(g.name)}</option>`).join("");
     const extra = {
       photo: '<label>Photo</label><input type="file" id="file" accept="image/*">',
       poll: '<label>Options (one per line)</label><textarea id="opts" placeholder="Yes\nNo\nMaybe"></textarea>',
