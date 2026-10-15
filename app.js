@@ -117,13 +117,13 @@
 
   // ---------- router ----------
   const TABS = ["events", "groups", "schedule", "about", "more"];
-  const ROUTES = { about, home: about, events, groups, grouplist, schedule, more, services, counselling, messages, notifications, account, football, admin };
-  const PARENT = { grouplist: "groups", services: "more", counselling: "more", football: "events", account: null, admin: "more", messages: null, notifications: null };
+  const ROUTES = { about, home: about, events, groups, grouplist, chat, schedule, more, services, counselling, messages, notifications, account, football, admin };
+  const PARENT = { grouplist: "groups", chat: "groups", services: "more", counselling: "more", football: "events", account: null, admin: "more", messages: null, notifications: null };
   let lastTab = "events", seq = 0;
 
   function go(route) { if (location.hash.slice(1) === route) render(); else location.hash = route; }
   async function render() {
-    const route = (location.hash.slice(1) || "events");
+    const [route, arg] = decodeURIComponent(location.hash.slice(1) || "events").split(":");
     const fn = ROUTES[route] || events;
     if (TABS.includes(route)) lastTab = route;
     const active = TABS.includes(route) ? route : (PARENT[route] || lastTab);
@@ -134,7 +134,7 @@
     const token = ++seq, alive = () => token === seq;
     view.innerHTML = "";
     window.scrollTo(0, 0);
-    try { await fn(view, alive); } catch (e) { if (alive()) view.innerHTML = `<div class="empty"><h2>Something went wrong</h2><p class="muted">${esc(e.message)}</p><button class="btn solid" data-go="${route}" style="margin-top:16px">Try again</button></div>`; }
+    try { await fn(view, alive, arg); } catch (e) { if (alive()) view.innerHTML = `<div class="empty"><h2>Something went wrong</h2><p class="muted">${esc(e.message)}</p><button class="btn solid" data-go="${route}" style="margin-top:16px">Try again</button></div>`; }
   }
   // Re-renders the current screen in place, keeping the scroll position.
   async function refresh() { const y = window.scrollY; await render(); window.scrollTo(0, y); }
@@ -540,7 +540,9 @@
   const groupName = (id) => (groupCache.find((g) => g.id === id) || {}).name || "Group";
 
   const ANNOUNCE = "announcements";
-  async function groups(el, alive, filter = "") {
+  // One chat on its own, opened from the Group list.
+  function chat(el, alive, id) { return groups(el, alive, "", id); }
+  async function groups(el, alive, filter = "", only = null) {
     if (!me) return needSignIn(el, "see the groups");
     loading(el);
     const [gs, posts, comments, votes] = await Promise.all([
@@ -558,6 +560,29 @@
     const newsBox = `<section class="news"><div class="row" style="justify-content:space-between"><h2>📢 Latest Community Announcements</h2>${isAdmin() ? '<button class="btn small" data-compose="news">Post</button>' : ""}</div>
       ${news.map((p) => postHtml(p, comments.filter((c) => c.post_id === p.id), votes.filter((v) => v.post_id === p.id))).join("") || '<p class="muted">No announcements yet.</p>'}</section>`;
     // Members-only chats (like the Quran target): shown to people who signed up, with a sign-up button for everyone else.
+    if (only) {
+      const g = gs.find((x) => x.id === only);
+      if (!g) { el.innerHTML = '<div class="empty"><h2>Chat not found</h2></div>'; return; }
+      const canRead = !g.members_only || joined.includes(g.id) || isOrg();
+      const canPost = canRead && (g.id !== ANNOUNCE || isAdmin());
+      const gp = posts.filter((p) => p.group_id === g.id);
+      el.innerHTML = `<div class="subhead"><h2>${esc(g.name)}</h2><a href="#grouplist">Group list</a></div>
+        ${g.about ? `<p class="muted pad" style="padding-top:10px">${esc(g.about)}</p>` : ""}
+        ${!canRead ? `<div class="pad"><button class="btn solid" data-join="${esc(g.id)}">Sign up · Free</button></div>` : `
+        ${canPost ? `<div class="composer">
+          <div class="row"><div class="avatar" style="width:46px;height:46px">${esc(initials(me.name))}</div>
+            <button class="share" data-compose="text" data-group="${esc(g.id)}">Share something...</button></div>
+          <div class="tools">
+            <button data-compose="photo" data-group="${esc(g.id)}">${ICON.camera} Photo</button>
+            <button data-compose="poll" data-group="${esc(g.id)}">${ICON.poll} Poll</button>
+          </div>
+        </div>` : ""}
+        <div id="feed">${gp.map((p) => postHtml(p, comments.filter((c) => c.post_id === p.id), votes.filter((v) => v.post_id === p.id))).join("") || '<div class="empty"><h2>No posts yet</h2></div>'}</div>`}`;
+      el.querySelectorAll("[data-compose]").forEach((b) => (b.onclick = () => compose(b.dataset.compose, b.dataset.group)));
+      el.querySelectorAll("[data-join]").forEach((b) => (b.onclick = () => joinGroup(b.dataset.join).then(refresh)));
+      wirePosts(el, posts);
+      return;
+    }
     const clubs = gs.filter((g) => g.members_only).map((g) => {
       const inIt = joined.includes(g.id) || isOrg();
       const gp = posts.filter((p) => p.group_id === g.id).slice(0, 4);
@@ -709,8 +734,8 @@
     if (!alive()) return;
     el.innerHTML = `<div class="subhead"><h2>Group list</h2></div>` + gs.map((g) => {
       const n = posts.filter((p) => p.group_id === g.id).length;
-      return `<div class="group-row"><div class="avatar" style="width:52px;height:52px;background:var(--green)">${esc(initials(g.name))}</div>
-        <div style="flex:1"><b style="font-size:18px">${esc(g.name)}</b><div class="muted">${esc(g.about)}${me ? ` · ${n} post${n === 1 ? "" : "s"}` : ""}</div></div></div>`;
+      return `<a class="group-row" href="#chat:${encodeURIComponent(g.id)}"><div class="avatar" style="width:52px;height:52px;background:var(--green)">${esc(initials(g.name))}</div>
+        <div style="flex:1"><b style="font-size:18px">${esc(g.name)}</b><div class="muted">${esc(g.about)}${me ? ` · ${n} post${n === 1 ? "" : "s"}` : ""}</div></div><span class="muted" aria-hidden="true">›</span></a>`;
     }).join("");
   }
 
