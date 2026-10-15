@@ -17,6 +17,10 @@
   let me = null; // { id, email, name, role, family, credit, kitty_session }
   const isOrg = () => !!me && (me.role === "organiser" || me.role === "admin");
   const isAdmin = () => !!me && me.role === "admin";
+  // New members wait for the admin's approval before they can book or post.
+  const pending = () => !!me && me.approved === false;
+  const APPLY_FORM = "https://form.jotform.com/262877268047066";
+  const applyUrl = () => `${APPLY_FORM}?memberId=${encodeURIComponent(me.id)}&email=${encodeURIComponent(me.email || "")}`;
   async function loadMe() {
     const { data: { session } } = await sb.auth.getSession();
     if (!session) { me = null; return; }
@@ -258,6 +262,7 @@
     let action;
     if (past) action = '<button class="off" style="color:var(--muted)" disabled>Event has ended</button>';
     else if (ev.group_id && !me) action = '<button class="go" data-go="account">Sign in to sign up</button>';
+    else if (pending() && !fb) action = '<button class="off" style="color:var(--muted)" disabled>Bookable once approved</button>';
     else if (ev.group_id) action = joined.includes(ev.group_id) || isOrg() ? '<button class="go" data-go="groups">Signed up ✓ · Open chat</button>' : `<button class="go" data-join="${esc(ev.group_id)}">Sign up · Free</button>`;
     else if (fb) action = `<button class="go" data-go="football">${mine ? "Booked ✓ · Open" : "Open football"}</button>`;
     else if (mine) action = `<button class="go" data-ticket="${mine.code}">${mine.status === "waitlist" ? "On waitlist · Ticket" : "Booked ✓ · Ticket"}</button>`;
@@ -373,7 +378,8 @@
             ${me.family ? "" : `<button class="btn solid" data-pay="${esc(mine.code)}" style="margin-bottom:10px">Pay ${money(mine.amount)} by card</button>`}` : ""}
           ${mine.charge === "payg" && mine.paid ? `<p class="muted">${now < creditUntil ? "Remove yourself before Friday 6pm and your £6 becomes credit for your next game." : "It's after Friday 6pm, so removing yourself now won't give credit."}</p>` : ""}
           <button class="btn" id="cancel">Remove me</button>`;
-      } else if (removed) body = `<p class="note">Your place was released because it wasn't paid in time, so you can't rebook this game. Message the organiser if something went wrong.</p>`;
+      } else if (pending()) body = `<p class="note">You can book once the admin has approved your membership.</p>`;
+      else if (removed) body = `<p class="note">Your place was released because it wasn't paid in time, so you can't rebook this game. Message the organiser if something went wrong.</p>`;
       else if (phase === "closed") body = `<p>Booking for this game opens <b>Wednesday at 1pm</b>.</p>`;
       else if (phase === "played") body = `<p>This game has been played.</p>`;
       else if (bookings.length >= ev.capacity) body = `<p>All ${ev.capacity} places are taken.</p>`;
@@ -554,6 +560,8 @@
   const groupName = (id) => (groupCache.find((g) => g.id === id) || {}).name || "Group";
 
   const ANNOUNCE = "announcements";
+  const ORG_POSTS = ["football-accounts"]; // chats only organisers can post in
+  const PENDING_NOTE = '<p class="note">You can join in once the admin has approved your membership.</p>';
   // Chats: open, informal chats anyone can join in. Joined: sign-up chats (like the Quran target).
   // Announcements are pinned at the top of both.
   function chat(el, alive, id) { return groups(el, alive, "", id); }
@@ -580,11 +588,12 @@
       const g = gs.find((x) => x.id === only);
       if (!g) { el.innerHTML = '<div class="empty"><h2>Chat not found</h2></div>'; return; }
       const canRead = !g.members_only || joined.includes(g.id) || isOrg();
-      const canPost = canRead && (g.id !== ANNOUNCE || isAdmin());
+      const canPost = canRead && !pending() && (g.id !== ANNOUNCE || isAdmin()) && (!ORG_POSTS.includes(g.id) || isOrg());
       const gp = posts.filter((p) => p.group_id === g.id);
       el.innerHTML = `<div class="subhead"><h2>${esc(g.name)}</h2>${g.members_only ? '<a href="#grouplist">Joined</a>' : '<a href="#groups">Chats</a>'}</div>
         ${g.about ? `<p class="muted pad" style="padding-top:10px">${esc(g.about)}</p>` : ""}
-        ${!canRead ? `<div class="pad"><button class="btn solid" data-join="${esc(g.id)}">Sign up · Free</button></div>` : `
+        ${!canRead ? `<div class="pad">${pending() ? PENDING_NOTE : `<button class="btn solid" data-join="${esc(g.id)}">Sign up · Free</button>`}</div>` : `
+        ${pending() && g.id !== ANNOUNCE ? `<div class="pad">${PENDING_NOTE}</div>` : ""}
         ${canPost ? `<div class="composer">
           <div class="row"><div class="avatar" style="width:46px;height:46px">${esc(initials(me.name))}</div>
             <button class="share" data-compose="text" data-group="${esc(g.id)}">Share something...</button></div>
@@ -602,9 +611,9 @@
     const clubs = gs.filter((g) => g.members_only).map((g) => {
       const inIt = joined.includes(g.id) || isOrg();
       const gp = posts.filter((p) => p.group_id === g.id).slice(0, 4);
-      return `<section class="news club"><div class="row" style="justify-content:space-between"><h2>${inIt ? `<a href="#chat:${encodeURIComponent(g.id)}" style="color:inherit">📖 ${esc(g.name)}</a>` : `📖 ${esc(g.name)}`}</h2>${inIt ? `<button class="btn small" data-compose="text" data-group="${esc(g.id)}">Post</button>` : ""}</div>
+      return `<section class="news club"><div class="row" style="justify-content:space-between"><h2>${inIt ? `<a href="#chat:${encodeURIComponent(g.id)}" style="color:inherit">📖 ${esc(g.name)}</a>` : `📖 ${esc(g.name)}`}</h2>${inIt && (!ORG_POSTS.includes(g.id) || isOrg()) ? `<button class="btn small" data-compose="text" data-group="${esc(g.id)}">Post</button>` : ""}</div>
         ${inIt ? gp.map((p) => postHtml(p, comments.filter((c) => c.post_id === p.id), votes.filter((v) => v.post_id === p.id))).join("") || '<p class="muted">Nothing posted yet.</p>'
-          : `<p class="muted">${esc(g.about)}</p><button class="btn solid" data-join="${esc(g.id)}">Sign up · Free</button>`}</section>`;
+          : `<p class="muted">${esc(g.about)}</p>${pending() ? PENDING_NOTE : `<button class="btn solid" data-join="${esc(g.id)}">Sign up · Free</button>`}`}</section>`;
     }).join("");
     if (joinedTab) {
       el.innerHTML = `<div class="subhead"><h2>Joined</h2><a href="#groups">Chats</a></div>
@@ -626,14 +635,14 @@
         <button id="searchBtn" style="color:var(--green)">${ICON.search}</button></div>
       ${filter ? "" : newsBox + open}
       ${filter ? `<div class="pad" style="padding-top:10px">Results for “${esc(filter)}” · <a href="#" id="clear">clear</a></div>` : ""}
-      <div class="composer">
+      ${pending() ? `<div class="pad">${PENDING_NOTE}</div>` : `<div class="composer">
         <div class="row"><div class="avatar" style="width:46px;height:46px">${esc(initials(me.name))}</div>
           <button class="share" data-compose="text">Share something...</button></div>
         <div class="tools">
           <button data-compose="photo">${ICON.camera} Photo</button>
           <button data-compose="poll">${ICON.poll} Poll</button>
         </div>
-      </div>
+      </div>`}
       <div id="feed">${shown.map((p) => postHtml(p, comments.filter((c) => c.post_id === p.id), votes.filter((v) => v.post_id === p.id))).join("") || '<div class="empty"><h2>No posts yet</h2></div>'}</div>`;
     el.querySelectorAll("[data-compose]").forEach((b) => (b.onclick = () => compose(b.dataset.compose, b.dataset.group)));
     el.querySelectorAll("[data-join]").forEach((b) => (b.onclick = () => joinGroup(b.dataset.join).then(refresh)));
@@ -716,7 +725,7 @@
   function compose(kind, fixed) {
     if (kind === "news") { kind = "text"; fixed = ANNOUNCE; }
     const news = !!fixed;
-    const groupOpts = groupCache.filter((g) => fixed ? g.id === fixed : g.id !== ANNOUNCE && (!g.members_only || joined.includes(g.id) || isOrg())).map((g) => `<option value="${g.id}">${esc(g.name)}</option>`).join("");
+    const groupOpts = groupCache.filter((g) => fixed ? g.id === fixed : g.id !== ANNOUNCE && (!ORG_POSTS.includes(g.id) || isOrg()) && (!g.members_only || joined.includes(g.id) || isOrg())).map((g) => `<option value="${g.id}">${esc(g.name)}</option>`).join("");
     const extra = {
       photo: '<label>Photo</label><input type="file" id="file" accept="image/*">',
       poll: '<label>Options (one per line)</label><textarea id="opts" placeholder="Yes\nNo\nMaybe"></textarea>',
@@ -880,6 +889,7 @@
       q(sb.from("debts").select("*").eq("user_id", me.id).eq("cleared", false)),
       q(sb.from("fund_state").select("*").single()),
     ]);
+    const application = pending() ? await q(sb.from("applications").select("submitted_at").eq("user_id", me.id).maybeSingle()).catch(() => null) : null;
     if (!alive()) return;
     const upcoming = bks.filter((b) => b.events && b.events.day && eventEnd(b.events) > new Date());
     const ROLE = { member: "Member", organiser: "Organiser", admin: "Admin" };
@@ -888,7 +898,8 @@
       <div class="pills"><span class="tag">${ROLE[me.role]}</span>${me.kitty_session === fs.session_no ? `<span class="tag gold">Kitty member, kitty ${fs.session_no}</span>` : ""}
         ${me.family ? '<span class="tag">Family: pays by transfer</span>' : ""}${Number(me.credit) ? `<span class="tag">${money(me.credit)} credit</span>` : ""}</div>
       <p class="muted">${esc(me.email)}</p>
-      ${me.approved === false ? `<p class="note">Your membership is waiting for the admin to approve it. Until then you can look around, but you can't book or post.</p>` : ""}
+      ${pending() ? (application ? `<p class="note">Thanks, we've received your application. The admin will approve your membership soon. Until then you can look around, but you can't book or post.</p>`
+        : `<p class="note">Please complete your membership application. Accounts without one are removed 24 hours after joining.</p><a class="btn solid block" href="${applyUrl()}" target="_blank" rel="noopener">Complete your application</a>`) : ""}
       ${debts.length ? `<p class="note">You owe ${money(debts.reduce((t, d) => t + Number(d.amount), 0))} from ${debts.map((d) => esc(d.reason)).join(", ")}. Please pay the organiser.</p>` : ""}
       <h2 style="margin-top:24px">My tickets</h2>
       ${upcoming.map((b) => `<button class="list-row block-row" data-ticket="${b.code}"><div><b>${esc(b.events.title)}</b><span class="muted">${short(parseDay(b.events.day))} · ${hhmm(b.events.time)} · ${b.status === "waitlist" ? "Waitlist" : b.paid ? "Paid" : "Not paid yet"}</span></div>${ICON.chev}</button>`).join("") || '<p class="muted">No upcoming bookings.</p>'}
@@ -949,11 +960,16 @@
         if (mode === "up") {
           const miles = await milesFromHome(postcode);
           if (miles === false) { $("#go", el).disabled = false; return toast("We couldn't find that postcode. Please check it"); }
-          const far = miles == null || miles > HOME_MILES;
           const r = await q(sb.auth.signUp({ email, password, options: { data: { name, postcode, miles: miles == null ? "" : miles.toFixed(1) } } }));
-          const held = far ? `<p class="note" style="line-height:1.5">Your postcode is outside our ${HOME_MILES}-mile area, so the admin will need to approve your membership before you can book or post.</p>` : "";
-          if (!r.session) { $("#go", el).disabled = false; return modal(`<h2>Check your email</h2><p style="line-height:1.5">We've sent a link to <b>${esc(email)}</b>. Tap it, then come back and sign in.</p>${held}`); }
-          if (far) modal(`<h2>Welcome</h2>${held}`);
+          const far = miles == null || miles > HOME_MILES;
+          const uid = r.user?.id || r.session?.user?.id;
+          const form = `${APPLY_FORM}?memberId=${encodeURIComponent(uid || "")}&email=${encodeURIComponent(email)}`;
+          const next = `<p style="line-height:1.5"><b>Next, please complete your membership application.</b> The admin reviews it and approves your membership. Accounts without an application are removed after 24 hours.</p>
+            ${far ? `<p class="note" style="line-height:1.5">Your postcode is outside our ${HOME_MILES}-mile area around BR3, so please say in the application how you're connected to the community.</p>` : ""}
+            <a class="btn solid block" href="${form}" target="_blank" rel="noopener">Complete your application</a>`;
+          $("#go", el).disabled = false;
+          if (!r.session) return modal(`<h2>Check your email</h2><p style="line-height:1.5">We've sent a link to <b>${esc(email)}</b> to confirm your account.</p>${next}`);
+          modal(`<h2>Welcome</h2>${next}`);
         } else {
           await q(sb.auth.signInWithPassword({ email, password }));
         }
@@ -982,13 +998,22 @@
     const g = Object.fromEntries(guests.map((x) => [x.booking_id, x]));
     const ROLES = ["member", "organiser", "admin"];
     const pending = isAdmin() ? members.filter((m) => m.approved === false) : [];
-    const pcs = pending.length ? await q(sb.from("member_postcodes").select("*").in("user_id", pending.map((m) => m.id))) : [];
+    const ids = pending.map((m) => m.id);
+    const [pcs, apps] = ids.length ? await Promise.all([q(sb.from("member_postcodes").select("*").in("user_id", ids)), q(sb.from("applications").select("*").in("user_id", ids))]) : [[], []];
     if (!alive()) return;
     el.innerHTML = `<div class="pad" style="padding-top:24px">
       <h1>Organiser tools</h1>
       ${pending.length ? `<h2>Waiting for approval</h2>
-      <p class="muted">These people joined with a postcode outside the ${HOME_MILES}-mile area, or one we couldn't check. They can't book or post until you approve them.</p>
-      ${pending.map((m) => { const pc = pcs.find((x) => x.user_id === m.id); return `<div class="list-row"><div><b>${esc(m.name)}</b><span class="muted">${pc ? `${esc(pc.postcode)}${pc.miles != null ? ` · ${pc.miles} miles from BR3` : " · distance not checked"}` : "No postcode given"} · joined ${short(new Date(m.created_at))}</span></div><button class="btn small" data-approve="${m.id}">Approve</button></div>`; }).join("")}` : ""}
+      <p class="muted">New members can't book or post until you approve them. Their full answers are also in your Google Sheet. Anyone who hasn't sent the application within 24 hours of joining is removed automatically.</p>
+      ${pending.map((m) => {
+        const pc = pcs.find((x) => x.user_id === m.id), ap = apps.find((x) => x.user_id === m.id);
+        const far = pc && (pc.miles == null || Number(pc.miles) > HOME_MILES);
+        return `<div class="card" style="padding:14px;margin-bottom:10px"><b>${esc(m.name)}</b>
+          <div class="muted">${pc ? `${esc(pc.postcode)}${pc.miles != null ? ` · ${pc.miles} miles from BR3` : " · distance not checked"}` : "No postcode given"} · joined ${short(new Date(m.created_at))}</div>
+          ${far ? '<span class="tag warn">Outside 5 miles</span>' : ""}
+          ${ap ? `<p style="white-space:pre-line;margin:8px 0">${esc(ap.answers || "Application received.")}</p>` : `<p class="muted">No application yet. Removed ${short(new Date(new Date(m.created_at).getTime() + 864e5))} if none arrives.</p>`}
+          <div class="row" style="gap:8px"><button class="btn solid small" data-approve="${m.id}">Approve</button><button class="btn small" data-decline="${m.id}" data-name="${esc(m.name)}">Decline</button></div></div>`;
+      }).join("")}` : ""}
       <h2>Check someone in</h2>
       <div class="row"><input id="ci" placeholder="Ticket code, e.g. AA-7K2QX" style="text-transform:uppercase"><button class="btn small" id="ciGo">Check in</button></div>
       <h2 style="margin-top:28px">Add an event</h2>
@@ -1028,6 +1053,10 @@
     </div>`;
     el.querySelectorAll("[data-approve]").forEach((b) => (b.onclick = async () => {
       try { await q(sb.rpc("approve_member", { p_id: b.dataset.approve })); toast("Approved"); refresh(); } catch (e) { fail(e); }
+    }));
+    el.querySelectorAll("[data-decline]").forEach((b) => (b.onclick = async () => {
+      if (!confirm(`Decline ${b.dataset.name}? Their account will be removed.`)) return;
+      try { await q(sb.rpc("decline_member", { p_id: b.dataset.decline })); toast("Declined and removed"); refresh(); } catch (e) { fail(e); }
     }));
     $("#ciGo", el).onclick = async () => { try { modal(`<h2>Check in</h2><p style="font-size:18px">${esc(await q(sb.rpc("check_in", { p_code: $("#ci", el).value })))}</p>`); $("#ci", el).value = ""; } catch (e) { fail(e); } };
     $("#add", el).onclick = async () => {
