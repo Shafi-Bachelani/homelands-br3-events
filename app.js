@@ -1156,5 +1156,30 @@
   }
 
   loadMe().catch(() => {}).then(confirmReturn).finally(render);
+
+  // "Add to home screen" pop-up. Android/Chrome installs with one tap; iPhone needs the Share menu.
+  let installEvt = null;
+  window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); installEvt = e; });
+  const INSTALL_KEY = "homelands-install-later";
+  const installed = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  function offerInstall() {
+    if (installed() || !$("#modal").hidden) return;
+    try { if (Date.now() < Number(localStorage.getItem(INSTALL_KEY) || 0)) return; } catch {}
+    if (!installEvt && !isIOS()) return;
+    const later = () => { try { localStorage.setItem(INSTALL_KEY, String(Date.now() + 7 * 864e5)); } catch {} closeModal(); };
+    modal(`<button class="close" aria-label="Close">×</button>
+      <div class="row" style="gap:14px"><img src="images/icon-192.png" alt="" style="width:56px;height:56px;border-radius:12px"><h2 style="margin:0">Add Homelands to your home screen</h2></div>
+      <p class="muted" style="margin-top:12px">Open the app in one tap, like any other app on your phone.</p>
+      ${installEvt ? "" : `<ol style="margin:12px 0 0 20px;line-height:1.7"><li>Tap the Share button <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-4px"><path d="M12 3v12M8 7l4-4 4 4M6 11v9h12v-9"/></svg> at the bottom of Safari</li><li>Scroll down and tap <b>Add to Home Screen</b></li><li>Tap <b>Add</b></li></ol>`}
+      <div class="form-actions">${installEvt ? `<button class="btn solid block" id="instGo">Add to home screen</button>` : ""}
+        <button class="btn block" id="instLater" style="margin-top:10px">${installEvt ? "Not now" : "Got it"}</button></div>`, (m) => {
+      $("#instLater", m).onclick = later;
+      $(".close", m).onclick = later;
+      const go = $("#instGo", m);
+      if (go) go.onclick = async () => { const e = installEvt; installEvt = null; closeModal(); e.prompt(); try { await e.userChoice; } catch {} };
+    });
+  }
+  window.addEventListener("load", () => setTimeout(offerInstall, 4000));
   if ("serviceWorker" in navigator && location.protocol.startsWith("http")) navigator.serviceWorker.register("sw.js").catch(() => {});
 })();
