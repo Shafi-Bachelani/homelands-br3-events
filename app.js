@@ -263,7 +263,7 @@
     if (past) action = '<button class="off" style="color:var(--muted)" disabled>Event has ended</button>';
     else if (ev.group_id && !me) action = '<button class="go" data-go="account">Sign in to sign up</button>';
     else if (pending() && !fb) action = '<button class="off" style="color:var(--muted)" disabled>Bookable once approved</button>';
-    else if (ev.group_id) action = joined.includes(ev.group_id) || isOrg() ? '<button class="go" data-go="groups">Signed up ✓ · Open chat</button>' : `<button class="go" data-join="${esc(ev.group_id)}">Sign up · Free</button>`;
+    else if (ev.group_id) action = joined.includes(ev.group_id) ? '<button class="go" data-go="groups">Signed up ✓ · Open chat</button>' : `<button class="go" data-join="${esc(ev.group_id)}">Sign up · Free</button>`;
     else if (fb) action = `<button class="go" data-go="football">${mine ? "Booked ✓ · Open" : "Open football"}</button>`;
     else if (mine) action = `<button class="go" data-ticket="${mine.code}">${mine.status === "waitlist" ? "On waitlist · Ticket" : "Booked ✓ · Ticket"}</button>`;
     else if (!me && ev.access !== "public") action = '<button class="go" data-go="account">Members only · Sign in</button>';
@@ -592,7 +592,7 @@
       const canRead = !g.members_only || inGroup(g.id);
       const canPost = canRead && !pending() && (g.id !== ANNOUNCE || isAdmin()) && (!ORG_POSTS.includes(g.id) || isOrg());
       const gp = posts.filter((p) => p.group_id === g.id);
-      el.innerHTML = `<div class="subhead"><h2>${esc(g.name)}</h2>${g.members_only ? '<a href="#grouplist">Joined</a>' : '<a href="#groups">Chats</a>'}</div>
+      el.innerHTML = `<div class="subhead"><h2>${esc(g.name)}</h2>${g.members_only ? '<a href="#grouplist">Joined events</a>' : '<a href="#groups">Chats</a>'}</div>
         ${g.about ? `<p class="muted pad" style="padding-top:10px">${esc(g.about)}</p>` : ""}
         ${!canRead ? `<div class="pad">${pending() ? PENDING_NOTE : `<button class="btn solid" data-join="${esc(g.id)}">Sign up · Free</button>`}</div>` : `
         ${pending() && g.id !== ANNOUNCE ? `<div class="pad">${PENDING_NOTE}</div>` : ""}
@@ -615,14 +615,14 @@
     const clubs = gs.filter((g) => g.members_only).sort((a, b) => firstIn(a) - firstIn(b)).map((g) => {
       const inIt = inGroup(g.id);
       const gp = posts.filter((p) => p.group_id === g.id).slice(0, 4);
-      return `<section class="news club"><div class="row" style="justify-content:space-between"><h2>${inIt ? `<a href="#chat:${encodeURIComponent(g.id)}" style="color:inherit">📖 ${esc(g.name)}</a>` : `📖 ${esc(g.name)}`}</h2>${inIt && (!ORG_POSTS.includes(g.id) || isOrg()) ? `<button class="btn small" data-compose="text" data-group="${esc(g.id)}">Post</button>` : ""}</div>
+      return `<section class="news club"><div class="row" style="justify-content:space-between"><h2>${inIt ? `<a href="#chat:${encodeURIComponent(g.id)}" style="color:inherit">📖 ${esc(g.name)}</a>` : `📖 ${esc(g.name)}`}</h2><span class="row" style="gap:8px">${inIt && !joined.includes(g.id) && !AUTO_GROUPS.includes(g.id) && !pending() ? `<button class="btn small" data-join="${esc(g.id)}">Sign up</button>` : ""}${inIt && (!ORG_POSTS.includes(g.id) || isOrg()) ? `<button class="btn small" data-compose="text" data-group="${esc(g.id)}">Post</button>` : ""}</span></div>
         ${inIt ? gp.map((p) => postHtml(p, comments.filter((c) => c.post_id === p.id), votes.filter((v) => v.post_id === p.id))).join("") || '<p class="muted">Nothing posted yet.</p>'
           : `<p class="muted">${esc(g.about)}</p>${pending() ? PENDING_NOTE : `<button class="btn solid" data-join="${esc(g.id)}">Sign up · Free</button>`}`}</section>`;
     }).join("");
     if (joinedTab) {
-      el.innerHTML = `<div class="subhead"><h2>Joined</h2><a href="#groups">Chats</a></div>
+      el.innerHTML = `<div class="subhead"><h2>Joined events</h2><a href="#groups">Chats</a></div>
         <p class="muted pad" style="padding-top:10px">Group chats you sign up for. Sign up to see what's shared and join the conversation.</p>
-        ${newsBox}${clubs || '<div class="empty"><h2>No group chats yet</h2></div>'}`;
+        ${clubs || '<div class="empty"><h2>No group chats yet</h2></div>'}`;
       el.querySelectorAll("[data-compose]").forEach((b) => (b.onclick = () => compose(b.dataset.compose, b.dataset.group)));
       el.querySelectorAll("[data-join]").forEach((b) => (b.onclick = () => joinGroup(b.dataset.join).then(refresh)));
       wirePosts(el, posts);
@@ -634,7 +634,7 @@
         <div style="flex:1"><b>${esc(g.name)}</b><div class="muted">${esc(g.about || "")}${g.about ? " · " : ""}${n} post${n === 1 ? "" : "s"}</div></div><span class="muted" aria-hidden="true">›</span></a>`;
     }).join("");
     el.innerHTML = `
-      <div class="subhead"><h2>Chats</h2><a href="#grouplist">Joined</a>
+      <div class="subhead"><h2>Chats</h2><a href="#grouplist">Joined events</a>
         <span style="width:1px;height:28px;background:var(--line)"></span>
         <button id="searchBtn" style="color:var(--green)">${ICON.search}</button></div>
       ${filter ? "" : newsBox + open}
