@@ -1181,5 +1181,14 @@
     });
   }
   window.addEventListener("load", () => setTimeout(offerInstall, 4000));
-  if ("serviceWorker" in navigator && location.protocol.startsWith("http")) navigator.serviceWorker.register("sw.js").catch(() => {});
+  // Phones keep a home-screen app paused, so check for a new version whenever it comes back
+  // to the front, and reload once when one has been installed.
+  if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+    const hadWorker = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.register("sw.js").then((reg) => {
+      document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && reg.update().catch(() => {}));
+    }).catch(() => {});
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => { if (hadWorker && !reloaded) { reloaded = true; location.reload(); } });
+  }
 })();
