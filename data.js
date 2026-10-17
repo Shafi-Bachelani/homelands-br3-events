@@ -25,7 +25,7 @@ const APP_DATA = {
       "facebook": "https://www.ourhomelands.co.uk/ambassadors#become-ambassador",
       "x": "https://www.ourhomelands.co.uk/ambassadors#become-ambassador",
       "youtube": "https://www.ourhomelands.co.uk/ambassadors#become-ambassador",
-      "tiktok": "https://www.ourhomelands.co.uk/ambassadors#become-ambassador"
+      "tiktok": "https://www.tiktok.com/@shafi.bachelani"
     }
   },
   "admin": {
