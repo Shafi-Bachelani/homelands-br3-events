@@ -474,7 +474,7 @@
 
     const fund = `<div class="card fb"><h2>Football funds</h2>
       ${fundStats(fs)}
-      <p class="muted">Kitty ${fs.session_no}: ${fs.games_played} of 5 games played.</p>
+      <p class="muted">Kitty ${fs.session_no}: ${fs.games_played} game${fs.games_played === 1 ? "" : "s"} played of up to a maximum of 5 consecutive games.</p>
       ${FUND_INFO}
       ${posts[0] ? `<h3>Latest accounts · ${short(new Date(posts[0].created_at))}</h3><pre class="acc">${esc(posts[0].body)}</pre>${(posts[0].images || []).map((src) => `<img class="receipt" src="${esc(src)}" alt="Receipt">`).join("")}` : '<p class="muted">The organiser\'s confirmed accounts appear here after each game.</p>'}
       <div class="form-actions"><button class="btn block" data-go="funds">See all fund changes</button></div>
