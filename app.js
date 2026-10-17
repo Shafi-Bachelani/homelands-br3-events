@@ -344,7 +344,7 @@
   const FUND_INFO = `<details class="info"><summary><b>What the three funds are</b></summary>
         <p><b>Kitty fund</b> runs the football. £15 kitty contributions and pay-and-play payments go in, and it pays the pitch hire and card fees. The kitty restarts when the fund drops below £150 or after 5 games, and anything over £100 then moves to the events fund.</p>
         <p><b>Events fund</b> is built up from the kitty and from owed money that's been paid. It's used for small come-together events and to buy new footballs and other things that keep the football going.</p>
-        <p><b>Credits</b> is money members have paid but not used: they paid but didn't play, or cancelled before Friday 6pm. It still belongs to them. When they pay for a game from their credit, it moves from credits into the kitty fund.</p>
+        <p><b>Credits</b> is money members have paid but not used: they paid but didn't play, or cancelled before Friday 6pm. It still belongs to them. When they pay for a game from their credit, it moves from credits into the kitty fund. Advance payments are only taken through the app, which records every credit added or used, so the credits fund always matches the total credit on members' accounts.</p>
       </details>`;
   const ledgerTable = (rows) => `<div class="scroll"><table><thead><tr><th>Date</th><th>Fund</th><th>Reason</th><th class="amt">Change</th><th class="amt">Balance</th></tr></thead><tbody>${rows.map((l) => `<tr><td>${short(parseDay(l.on_date))}</td><td>${FUND_NAME[l.fund] || ""}</td><td>${esc(l.what)}</td><td class="amt ${Number(l.amount) < 0 ? "neg" : ""}">${money(l.amount)}</td><td class="amt">${money(l.balance)}</td></tr>`).join("")}</tbody></table></div>`;
 
@@ -353,10 +353,13 @@
     loading(el);
     let lq = sb.from("ledger").select("*").order("id", { ascending: false }).limit(300);
     if (FUND_NAME[which]) lq = lq.eq("fund", which);
-    const [fs, rows] = await Promise.all([q(sb.from("fund_state").select("*").single()), q(lq)]);
+    const [fs, rows, accts] = await Promise.all([q(sb.from("fund_state").select("*").single()), q(lq), isOrg() ? q(sb.from("profiles").select("credit")) : []]);
+    const onAccounts = Math.round(accts.reduce((t, r) => t + Number(r.credit || 0), 0) * 100) / 100;
     if (!alive()) return;
     el.innerHTML = `<div class="events"><div class="card fb"><h2>Funds</h2>
       ${fundStats(fs)}
+      ${isOrg() ? (onAccounts === Math.round(Number(fs.credits || 0) * 100) / 100 ? `<p class="note">Credits tally ✓ The credits fund matches the ${money(onAccounts)} of credit on members' accounts.</p>`
+        : `<p class="note">Credits don't tally: members' accounts hold ${money(onAccounts)} but the credits fund shows ${money(fs.credits || 0)}.</p>`) : ""}
       ${FUND_INFO.replace("<details ", "<details open ")}
       <h3>History</h3>
       <div class="seg">${[["", "All"], ["kitty", "Kitty"], ["events", "Events"], ["credits", "Credits"]].map(([k, v]) => `<button class="${k === (FUND_NAME[which] ? which : "") ? "on" : ""}" data-f="${k}">${v}</button>`).join("")}</div>
@@ -530,7 +533,7 @@
   }
 
   // Organiser tools on the football screen: payments, accounts and adding the next game.
-  const sumBy = (bs, m) => bs.filter((b) => b.paid && b.method === m && b.status === "booked").reduce((t, b) => t + Number(b.amount), 0).toFixed(2);
+  const sumBy = (bs, m) => bs.filter((b) => b.paid && b.method === m && b.status !== "waitlist").reduce((t, b) => t + Number(b.amount), 0).toFixed(2);
   async function organiserFootball(box, current, currentBookings, fs, awaiting, games) {
     const target = awaiting[0] || current;
     const bookings = target && target !== current ? await q(sb.from("bookings").select("*").eq("event_id", target.id).neq("status", "cancelled").order("created_at")) : currentBookings;
@@ -540,6 +543,10 @@
     // cancelled before Friday 6pm: their money is in this game's takings but now belongs to the credits fund
     const cancelled = target ? (await q(sb.from("bookings").select("*").eq("event_id", target.id).eq("status", "cancelled")))
       .filter((b) => b.status === "cancelled" && b.charge === "payg" && b.paid && ["card", "transfer", "cash"].includes(b.method)) : [];
+    // credits check: every credit change since the last accounts, and the credit on members' accounts now
+    const [creditMoves, creditRows] = target && !target.accounts_posted ? await Promise.all([
+      fs.posted_at ? q(sb.from("ledger").select("*").eq("fund", "credits").gt("created_at", fs.posted_at).order("id")) : [],
+      q(sb.from("profiles").select("credit"))]) : [[], []];
     const fromCredit = target ? bookings.filter((b) => b.charge === "payg" && b.paid && b.method === "credit" && b.checked_in).reduce((t, b) => t + Number(b.amount), 0) : 0;
     const nextFri = (() => { const last = games.length ? parseDay(games[games.length - 1].day) : today(); const d = new Date(Math.max(last, today())); d.setDate(d.getDate() + ((5 - d.getDay() + 7) % 7 || (games.length ? 7 : 0))); return d; })();
     const charged = bookings.filter((b) => b.charge !== "covered");
@@ -572,9 +579,9 @@
         <h3>Money actually received</h3>
         <p class="muted">From the Square summary, your bank and cash in hand. Filled in from the app's records, so change them to match.</p>
         <div class="grid2">
-          <div><label>Square (£)</label><input id="rSquare" type="number" step="0.01" value="${sumBy(bookings, "card")}"></div>
-          <div><label>Transfers (£)</label><input id="rTransfer" type="number" step="0.01" value="${sumBy(bookings, "transfer")}"></div>
-          <div><label>Cash or PayPal (£)</label><input id="rCash" type="number" step="0.01" value="${sumBy(bookings, "cash")}"></div>
+          <div><label>Square (£)</label><input id="rSquare" type="number" step="0.01" value="${sumBy([...bookings, ...cancelled], "card")}"></div>
+          <div><label>Transfers (£)</label><input id="rTransfer" type="number" step="0.01" value="${sumBy([...bookings, ...cancelled], "transfer")}"></div>
+          <div><label>Cash or PayPal (£)</label><input id="rCash" type="number" step="0.01" value="${sumBy([...bookings, ...cancelled], "cash")}"></div>
           <div><label>From credits (£)</label><input id="rCredit" type="number" value="${fromCredit.toFixed(2)}" readonly title="Worked out from who paid with credit and turned up"></div>
         </div>
         <p class="muted">From credits is filled in by the app: players who turned up and paid from their account credit.</p>
@@ -659,7 +666,13 @@
       // Same split as post_accounts: cleared debts go to events, unused money to credits, the rest to the kitty.
       const income = received + rCr - toCredits - clearedAmt;
       const net = income - hire - fees, newKitty = Number(fs.kitty) + net, newEv = Number(fs.events) + clearedAmt;
-      const oldCr = Number(fs.credits || 0), newCr = oldCr + toCredits - rCr;
+      // Credits: held at the last accounts + added - used (+ no-shows credited now) must equal members' accounts.
+      const oldCr = Number(fs.credits_posted ?? fs.credits ?? 0);
+      const crIn = creditMoves.filter((m) => Number(m.amount) > 0), crOut = creditMoves.filter((m) => Number(m.amount) < 0);
+      const crAdded = crIn.reduce((t, m) => t + Number(m.amount), 0), crUsed = -crOut.reduce((t, m) => t + Number(m.amount), 0);
+      const crNow = sum(noShows);
+      const newCr = Math.round((oldCr + crAdded - crUsed + crNow) * 100) / 100;
+      const onAccounts = Math.round((creditRows.reduce((t, r) => t + Number(r.credit || 0), 0) + crNow) * 100) / 100;
       const g = fs.games_played + 1, ORD = ["1st", "2nd", "3rd", "4th", "5th"], L = "________", d = parseDay(target.day);
       const t = [`Turnout ${turnout} - ${d.getDate()} ${MONTHS_LONG[d.getMonth()]} - ${ORD[g - 1] || g + "th"} kitty game of up to 5 consecutive games`, "",
         "Kitty restarts when either fund drops below £150 or we have had a maximum of 5 consecutive games", "", $("#fmt", box).value.trim(), L,
@@ -678,9 +691,14 @@
         "Less cost", `${money(hire)} Goals pitch hire`, `${money(fees)} card payment charge`, "—————————", "Receipts over costs", money(net), "——————————",
         "Movements between funds");
       if (rCr) t.push(`Credits to kitty fund ${money(rCr)} (paid from credit)`);
-      if (toCredits) t.push(`Into credits ${money(toCredits)} (paid but didn't play)`);
+      if (toCredits) t.push(`Takings kept as credit ${money(toCredits)} (paid but didn't play or cancelled)`);
       if (clearedAmt) t.push(`Into events fund ${money(clearedAmt)} (owed money cleared)`);
       if (!rCr && !toCredits && !clearedAmt) t.push("None");
+      t.push(L, "Credits check", `Held at last accounts ${money(oldCr)}`, `Added ${money(crAdded + crNow)}`,
+        ...crIn.map((m) => `  + ${money(m.amount)} ${m.what}`), ...noShows.map((b) => `  + ${money(b.amount)} ${b.display_name}: paid but didn't play, credit added now`),
+        `Used ${money(crUsed)}`, ...crOut.map((m) => `  - ${money(-m.amount)} ${m.what}`),
+        `Credits held now ${money(newCr)}`, `Total credit on members' accounts ${money(onAccounts)}`,
+        newCr === onAccounts ? "Credits tally ✓" : `Credits don't tally: off by ${money(Math.abs(newCr - onAccounts))}. Check before posting.`);
       t.push(L, "Updated funds", `Kitty fund ${money(newKitty)}`, `Events fund ${money(newEv)}`, `Credits ${money(newCr)}`);
       const owes = [...debts.filter((x) => !cleared.includes(x)).map((x) => `${x.profiles?.name || "Member"} ${money(x.amount)} ${esc(x.reason)}`),
         ...owing.map((b) => `${b.display_name} ${money(b.amount)} ${short(d)}`)];
@@ -1196,7 +1214,7 @@
           <button class="btn small" data-save="${m.id}">Save</button></div></div>`).join("")}
       ${isAdmin() ? `<h2 style="margin-top:28px">Starting funds</h2>
         <p class="muted">Use once to bring the balances over from WhatsApp. Kitty ${fs.session_no}, ${fs.games_played} of 5 games played.</p>
-        <div class="grid2"><div><label>Kitty fund £</label><input id="fk" type="number" step="0.01" value="${fs.kitty}"></div><div><label>Events fund £</label><input id="fe" type="number" step="0.01" value="${fs.events}"></div><div><label>Credits £</label><input id="fc" type="number" step="0.01" value="${fs.credits || 0}"></div>
+        <div class="grid2"><div><label>Kitty fund £</label><input id="fk" type="number" step="0.01" value="${fs.kitty}"></div><div><label>Events fund £</label><input id="fe" type="number" step="0.01" value="${fs.events}"></div><div><label>Credits £ (from members' accounts)</label><input id="fc" type="number" value="${fs.credits || 0}" readonly></div>
         <div><label>Kitty number</label><input id="fn" type="number" min="1" value="${fs.session_no}"></div><div><label>Games played in this kitty</label><input id="fg" type="number" min="0" max="4" value="${fs.games_played}"></div></div>
         <div class="form-actions"><button class="btn block" id="setF">Set funds</button></div>` : ""}
     </div>`;
