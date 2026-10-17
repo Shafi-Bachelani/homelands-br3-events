@@ -462,11 +462,11 @@
       // One friend per member per game, shown on the roster as "Friend (Member)".
       const friend = bookings.find((b) => b.booked_by === me.id);
       const canAdd = !pending() && !removed && (phase === "open" || phase === "locked" || phase === "late");
-      const friendBox = friend ? `<h3>Your friend</h3><p><b>${esc(friend.display_name)}</b> is number ${bookings.indexOf(friend) + 1} on the list${friend.paid ? ", paid." : "."}</p>
+      const friendBox = friend ? `<h3>Your friend</h3><p><b>${esc(friend.display_name)}</b> is number ${bookings.indexOf(friend) + 1} on the list${friend.paid ? (friend.method === "credit" ? ", paid from your credit." : ", paid.") : "."}</p>
           ${friend.paid ? "" : `<p class="note">Please pay <b>${money(friend.amount)}</b> for your friend ${new Date(friend.created_at) > payBy ? "within <b>30 minutes</b>" : "before <b>Thursday 11pm</b>"}, or their place is released.${me.family ? " Pay the organiser by bank transfer." : ""}</p>
             ${me.family ? "" : `<button class="btn solid" data-pay="${esc(friend.code)}" style="margin-bottom:10px">Pay ${money(friend.amount)} for your friend</button>`}`}
           <button class="btn" id="cancelFriend">Remove my friend</button>`
-        : canAdd && bookings.length < ev.capacity ? `<h3>Bring a friend</h3><p class="muted">You can add one friend per game. You pay their ${P$}${me.family ? " by transfer" : ""}.</p><button class="btn" id="addFriend">Add a friend</button>` : "";
+        : canAdd && bookings.length < ev.capacity ? `<h3>Bring a friend</h3><p class="muted">You can add one friend per game. You pay their ${P$}${me.family ? " by transfer" : Number(me.credit) >= P ? ", taken from your credit" : ""}.</p><button class="btn" id="addFriend">Add a friend</button>` : "";
       you = `<div class="card fb"><h2>You</h2>${pills}${body}${friendBox}</div>`;
 
       const paidCount = bookings.filter((b) => b.paid).length;
@@ -499,7 +499,7 @@
         if (!$("#fRisk", m).checked) return toast("Please tick to confirm your friend plays at their own risk");
         try {
           const b = await q(sb.rpc("book_friend", { p_event: ev.id, p_name: $("#fName", m).value.trim(), p_risk: true }));
-          closeModal(); toast(b.paid ? "Your friend is on the roster ✓" : `Friend added. Pay their ${P$} to keep the place`); refresh();
+          closeModal(); toast(b.paid ? (b.method === "credit" ? `Your friend is on the roster ✓ Paid ${P$} from your credit` : "Your friend is on the roster ✓") : `Friend added. Pay their ${P$} to keep the place`); await loadMe(); refresh();
         } catch (e) { fail(e); }
       };
     });
