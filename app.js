@@ -464,9 +464,10 @@
       const canAdd = !pending() && !removed && (phase === "open" || phase === "locked" || phase === "late");
       const friendBox = friend ? `<h3>Your friend</h3><p><b>${esc(friend.display_name)}</b> is number ${bookings.indexOf(friend) + 1} on the list${friend.paid ? (friend.method === "credit" ? ", paid from your credit." : ", paid.") : "."}</p>
           ${friend.paid ? "" : `<p class="note">Please pay <b>${money(friend.amount)}</b> for your friend ${new Date(friend.created_at) > payBy ? "within <b>30 minutes</b>" : "before <b>Thursday 11pm</b>"}, or their place is released.${me.family ? " Pay the organiser by bank transfer." : ""}</p>
-            ${me.family ? "" : `<button class="btn solid" data-pay="${esc(friend.code)}" style="margin-bottom:10px">Pay ${money(friend.amount)} for your friend</button>`}`}
+            ${me.family ? "" : `<button class="btn solid" data-pay="${esc(friend.code)}" style="margin-bottom:10px">Pay ${money(friend.amount)} for your friend</button>`}
+            ${!me.family && Number(me.credit) >= Number(friend.amount) ? `<button class="btn" id="friendCredit" style="margin-bottom:10px">Use ${money(friend.amount)} of my credit</button>` : ""}`}
           <button class="btn" id="cancelFriend">Remove my friend</button>`
-        : canAdd && bookings.length < ev.capacity ? `<h3>Bring a friend</h3><p class="muted">You can add one friend per game. You pay their ${P$}${me.family ? " by transfer" : Number(me.credit) >= P ? ", taken from your credit" : ""}.</p><button class="btn" id="addFriend">Add a friend</button>` : "";
+        : canAdd && bookings.length < ev.capacity ? `<h3>Bring a friend</h3><p class="muted">You can add one friend per game. You pay their ${P$}${me.family ? " by transfer" : Number(me.credit) >= P ? ", by card or from your credit" : ""}.</p><button class="btn" id="addFriend">Add a friend</button>` : "";
       you = `<div class="card fb"><h2>You</h2>${pills}${body}${friendBox}</div>`;
 
       const paidCount = bookings.filter((b) => b.paid).length;
@@ -492,17 +493,25 @@
       <p class="muted">They'll appear on the roster as <b>Their name (${esc(me.name)})</b>. You pay their ${P$}${me.family ? " by bank transfer" : ", by card or bank transfer"}.</p>
       <label>Your friend's name</label><input id="fName" maxlength="40" placeholder="Their full name">
       <label class="check"><input type="checkbox" id="fRisk"> My friend is 16 or over and agrees they play at their own risk</label>
+      ${!me.family && Number(me.credit) >= P ? `<label>How do you want to pay?</label>
+        <label class="check"><input type="radio" name="fPay" value="card" checked> Pay ${P$} by card</label>
+        <label class="check"><input type="radio" name="fPay" value="credit"> Use ${P$} of my credit (${money(me.credit)} available)</label>` : ""}
       <div class="form-actions"><button class="btn solid block" id="fGo">Add to the roster · ${P$}</button></div>`, (m) => {
       $("#fName", m).focus();
       $("#fGo", m).onclick = async () => {
         if (!$("#fName", m).value.trim()) return toast("Enter your friend's name");
         if (!$("#fRisk", m).checked) return toast("Please tick to confirm your friend plays at their own risk");
         try {
-          const b = await q(sb.rpc("book_friend", { p_event: ev.id, p_name: $("#fName", m).value.trim(), p_risk: true }));
+          const b = await q(sb.rpc("book_friend", { p_event: ev.id, p_name: $("#fName", m).value.trim(), p_risk: true, p_credit: m.querySelector('[name="fPay"]:checked')?.value === "credit" }));
           closeModal(); toast(b.paid ? (b.method === "credit" ? `Your friend is on the roster ✓ Paid ${P$} from your credit` : "Your friend is on the roster ✓") : `Friend added. Pay their ${P$} to keep the place`); await loadMe(); refresh();
         } catch (e) { fail(e); }
       };
     });
+    const fc = $("#friendCredit", el);
+    if (fc) fc.onclick = async () => {
+      try { fc.disabled = true; await q(sb.rpc("pay_friend_credit", { p_id: bookings.find((b) => b.booked_by === me.id).id })); toast(`Paid from your credit ✓`); await loadMe(); refresh(); }
+      catch (e) { fc.disabled = false; fail(e); }
+    };
     const cf = $("#cancelFriend", el);
     if (cf) cf.onclick = async () => {
       if (cf.dataset.sure !== "1") { cf.dataset.sure = "1"; cf.textContent = "Tap again to remove your friend"; return; }
