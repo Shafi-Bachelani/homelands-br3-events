@@ -274,5 +274,4 @@ details.info[open] summary { margin-bottom: 10px; }
 details.info p, details.info li { line-height: 1.5; }
 details.info ul { margin: 8px 0 12px; padding-left: 20px; }
 details.info li { margin: 4px 0; }
-.players li.divider { list-style: none; margin-left: -26px; color: var(--muted); font-size: 14px; font-weight: 700; border-bottom: 2px dashed var(--line); }
 label.check.risk { font-weight: 700; margin: 4px 0 10px; }

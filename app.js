@@ -346,11 +346,13 @@
         <li>Spots go first come, first served to those who arrive on time, not by when you joined the list. Please be punctual: there are no substitutes and late arrivals may be turned away.</li>
         <li>To keep things fair, each person can add only 1 friend. They show on the roster with your name in brackets. Exceptions: dads for their sons, and sons for their dads (ask the organiser).</li>
         <li>No game is free: £6 pay and play, or £15 to join the kitty fund.</li>
-        <li>Max ${PITCH} on one pitch. If 30 people sign up, we book 2 pitches and play 5 teams of 6.</li>
         <li>No booking space? Come for the fun. If someone is late you'll be given their spot.</li>
         <li>Come early to guarantee play. No play is guaranteed if you're late.</li>
         <li>Can't make it? Remove yourself here, and everyone below moves up a place.</li>
       </ul>
+      <h3>Guaranteed play and what to expect</h3>
+      <p>Guaranteed play for places 1 to ${PITCH}, so long as you arrive on time. If we reach 28 or more players, we book a second pitch and accept a maximum of 30. If we reach 36, we play sudden death games on two pitches, with the last 10-minute game between the two teams with the most 2-goal wins.</p>
+      <p>If you are late, your place may be given to someone who didn't book but arrived on time, even if you've paid. Your payment will be credited to your account.</p>
       <p class="note"><b>Play is at your own risk.</b></p>
       <p class="muted">This is not for profit. Any money over costs is used to bring us all together on a more social footing.</p>
     </details>`;
@@ -431,8 +433,8 @@
 
       const paidCount = bookings.filter((b) => b.paid).length;
       players = `<div class="card fb"><div class="row" style="justify-content:space-between"><h2>Roster</h2><span class="muted">${bookings.length} booked · ${paidCount} paid</span></div>
-        <p class="muted">Everyone on the list for this game. If someone drops out or is removed for not paying, everyone below moves up a place. Max ${PITCH} on one pitch; if 30 sign up we book 2 pitches and play 5 teams of 6.</p>
-        <ol class="players">${bookings.map((b, i) => `${i === PITCH ? `<li class="divider">Max ${PITCH}. Places below are reserves unless we book a second pitch.</li>` : ""}<li value="${i + 1}"><span>${esc(b.display_name)}${b.user_id === me.id || b.booked_by === me.id ? " ★" : ""}</span>${b.charge === "covered" || b.charge === "kitty" ? '<span class="tag gold">Kitty</span>' : ""}${b.paid ? '<span class="tag">Paid</span>' : '<span class="tag warn">Unpaid</span>'}${b.checked_in ? '<span class="tag">Here</span>' : ""}</li>`).join("") || '<li class="muted">No one has booked yet.</li>'}</ol></div>`;
+        <p class="muted">Everyone on the list for this game. If someone drops out or is removed for not paying, everyone below moves up a place. Places 1 to ${PITCH} are guaranteed play if you arrive on time.</p>
+        <ol class="players">${bookings.map((b, i) => `<li value="${i + 1}"><span>${esc(b.display_name)}${b.user_id === me.id || b.booked_by === me.id ? " ★" : ""}</span>${b.charge === "covered" || b.charge === "kitty" ? '<span class="tag gold">Kitty</span>' : ""}${b.paid ? '<span class="tag">Paid</span>' : '<span class="tag warn">Unpaid</span>'}${b.checked_in ? '<span class="tag">Here</span>' : ""}</li>`).join("") || '<li class="muted">No one has booked yet.</li>'}</ol></div>`;
     }
 
     const fund = `<div class="card fb"><h2>Kitty fund accounts</h2>
@@ -524,7 +526,7 @@
         ${debts.length ? `<h3>Owed from earlier games</h3>${debts.map((d) => `<label class="check"><input type="checkbox" data-clear="${d.id}"> ${esc(d.profiles?.name || "Member")} owes ${money(d.amount)} (${esc(d.reason)})</label>`).join("")}` : ""}
         <div class="grid2">
           <div><label>Game format</label><input id="fmt" value="3 team sudden death games"></div>
-          <div><label>Pitch hire (£)</label><input id="hire" type="number" step="0.01" value="${bookings.length >= 30 ? "124.00" : "62.00"}"></div>
+          <div><label>Pitch hire (£)</label><input id="hire" type="number" step="0.01" value="${bookings.length >= 28 ? "124.00" : "62.00"}"></div>
           <div><label>Card fees (£)</label><input id="fees" type="number" step="0.01" value="${bookings.reduce((t, b) => t + Number(b.card_fee || 0), 0).toFixed(2)}"></div>
         </div>
         <div class="form-actions"><button class="btn solid block" id="draft">Draft accounts</button></div>
