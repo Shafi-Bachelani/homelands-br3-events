@@ -330,6 +330,31 @@
   }
 
   // ---------- FOOTBALL ----------
+  const PITCH = 18; // players on one pitch
+  const RISK = `<label class="check risk"><input type="checkbox" id="riskOk"> I agree that I play at my own risk</label>`;
+  // The booking blurb from the WhatsApp list, kept on the football page.
+  function footballInfo(ev, fs) {
+    const t = hhmm(ev.time);
+    return `<details class="card fb info"><summary><b>How Friday football works</b><span class="muted">Times, rules and prices</span></summary>
+      <p><b>6-a-side at Goals, Beckenham</b>, this Friday ${t} till 11pm. This is game ${fs.games_played + 1} in kitty ${fs.session_no}, for up to 5 consecutive kitty games. A new kitty starts when the kitty fund drops below £150 or after 5 games, whichever is sooner.</p>
+      <p><b>Address:</b> Elmers End Road, BR3 4EJ. On-site car park, next to Elmers End station and numerous bus stops.</p>
+      <p><b>Get together at ${t}</b> next to Pitch 1.</p>
+      <ul>
+        <li>Everyone welcome, from semi-pro to two left feet.</li>
+        <li>Players from 16 up. We decide on ability, not age.</li>
+        <li>Randomised, fair teams. Games of 11 minutes at most.</li>
+        <li>Spots go first come, first served to those who arrive on time, not by when you joined the list. Please be punctual: there are no substitutes and late arrivals may be turned away.</li>
+        <li>To keep things fair, each person can add only 1 friend. They show on the roster with your name in brackets. Exceptions: dads for their sons, and sons for their dads (ask the organiser).</li>
+        <li>No game is free: £6 pay and play, or £15 to join the kitty fund.</li>
+        <li>Max ${PITCH} on one pitch. If 30 people sign up, we book 2 pitches and play 5 teams of 6.</li>
+        <li>No booking space? Come for the fun. If someone is late you'll be given their spot.</li>
+        <li>Come early to guarantee play. No play is guaranteed if you're late.</li>
+        <li>Can't make it? Remove yourself here, and everyone below moves up a place.</li>
+      </ul>
+      <p class="note"><b>Play is at your own risk.</b></p>
+      <p class="muted">This is not for profit. Any money over costs is used to bring us all together on a more social footing.</p>
+    </details>`;
+  }
   async function football(el, alive) {
     if (!me) return needSignIn(el, "book football");
     loading(el);
@@ -376,28 +401,38 @@
         body = `<p><b>${st}.</b> You're number ${bookings.indexOf(mine) + 1} on the list.</p>
           ${!mine.paid ? `<p class="note">Please pay <b>${money(mine.amount)}</b> ${new Date(mine.created_at) > payBy ? "within <b>30 minutes</b> of booking" : "before <b>Thursday 11pm</b>"}, or your place is released and you can't rebook this game.${me.family ? " Pay the organiser by bank transfer." : " Pay by card here, or by bank transfer to the organiser."}</p>
             ${me.family ? "" : `<button class="btn solid" data-pay="${esc(mine.code)}" style="margin-bottom:10px">Pay ${money(mine.amount)} by card</button>`}` : ""}
-          ${mine.charge === "payg" && mine.paid ? `<p class="muted">${now < creditUntil ? "Remove yourself before Friday 6pm and your £6 becomes credit for your next game." : "It's after Friday 6pm, so removing yourself now won't give credit."}</p>` : ""}
+          ${me.family && mine.method === "transfer" ? `<p class="muted">As family you're added automatically each week. If you can't come, remove yourself to free your place.</p>`
+            : mine.charge === "payg" && mine.paid ? `<p class="muted">${now < creditUntil ? "Remove yourself before Friday 6pm and your £6 becomes credit for your next game." : "It's after Friday 6pm, so removing yourself now won't give credit."}</p>` : ""}
           <button class="btn" id="cancel">Remove me</button>`;
       } else if (pending()) body = `<p class="note">You can book once the admin has approved your membership.</p>`;
       else if (removed) body = `<p class="note">Your place was released because it wasn't paid in time, so you can't rebook this game. Message the organiser if something went wrong.</p>`;
       else if (phase === "closed") body = `<p>Booking for this game opens <b>Wednesday at 1pm</b>.</p>`;
       else if (phase === "played") body = `<p>This game has been played.</p>`;
       else if (bookings.length >= ev.capacity) body = `<p>All ${ev.capacity} places are taken.</p>`;
-      else if (kitty) body = `<p class="muted">Your kitty membership covers this game.</p><button class="btn solid" data-choice="payg">Book my place</button>`;
+      else if (kitty) body = `${RISK}<p class="muted">Your kitty membership covers this game.</p><button class="btn solid" data-choice="payg">Book my place</button>`;
       else {
         const six = Number(me.credit) >= 6 ? "Use my £6 credit" : me.family ? "£6 by transfer" : "Pay as you play · £6";
         const due = !me.family && Number(me.credit) < 6;
-        body = `<p class="muted">How do you want to pay for this game?${due && phase === "open" ? " Pay by Thursday 11pm or your place is released, and you won't be able to rebook." : due ? " The pay deadline has passed, so pay by card straight away: unpaid places are released after 30 minutes." : ""}</p>
+        body = `${RISK}<p class="muted">How do you want to pay for this game?${due && phase === "open" ? " Pay by Thursday 11pm or your place is released, and you won't be able to rebook." : due ? " The pay deadline has passed, so pay by card straight away: unpaid places are released after 30 minutes." : ""}</p>
           <div class="choices">
             <div><b>£6 · this game</b><span class="muted">Pay as you play, just this Friday.</span><button class="btn solid small" data-choice="payg">${six}</button></div>
             <div><b>£15 · kitty</b><span class="muted">Every game until the kitty resets. This is week ${week} of up to 5.</span><button class="btn small" id="kittyAsk">Choose the kitty</button></div>
           </div>`;
       }
-      you = `<div class="card fb"><h2>You</h2>${pills}${body}</div>`;
+      // One friend per member per game, shown on the roster as "Friend (Member)".
+      const friend = bookings.find((b) => b.booked_by === me.id);
+      const canAdd = !pending() && !removed && (phase === "open" || phase === "locked" || phase === "late");
+      const friendBox = friend ? `<h3>Your friend</h3><p><b>${esc(friend.display_name)}</b> is number ${bookings.indexOf(friend) + 1} on the list${friend.paid ? ", paid." : "."}</p>
+          ${friend.paid ? "" : `<p class="note">Please pay <b>${money(friend.amount)}</b> for your friend ${new Date(friend.created_at) > payBy ? "within <b>30 minutes</b>" : "before <b>Thursday 11pm</b>"}, or their place is released.${me.family ? " Pay the organiser by bank transfer." : ""}</p>
+            ${me.family ? "" : `<button class="btn solid" data-pay="${esc(friend.code)}" style="margin-bottom:10px">Pay ${money(friend.amount)} for your friend</button>`}`}
+          <button class="btn" id="cancelFriend">Remove my friend</button>`
+        : canAdd && bookings.length < ev.capacity ? `<h3>Bring a friend</h3><p class="muted">You can add one friend per game. You pay their £6${me.family ? " by transfer" : ""}.</p><button class="btn" id="addFriend">Add a friend</button>` : "";
+      you = `<div class="card fb"><h2>You</h2>${pills}${body}${friendBox}</div>`;
 
-      players = `<div class="card fb"><div class="row" style="justify-content:space-between"><h2>Who's playing</h2><span class="muted">${bookings.length} of ${ev.capacity}</span></div>
-        <p class="muted">${bookings.length <= 25 ? "Up to 25 players: 1 pitch." : bookings.length >= 30 ? "30 or more: 2 pitches and a tournament." : "26 to 29 players: the organiser decides on 1 or 2 pitches."}</p>
-        <ol class="players">${bookings.map((b) => `<li><span>${esc(b.display_name)}${b.user_id === me.id ? " (you)" : ""}</span>${b.charge === "covered" || b.charge === "kitty" ? '<span class="tag gold">Kitty</span>' : ""}${b.paid ? "" : '<span class="tag warn">Unpaid</span>'}${b.checked_in ? '<span class="tag">Here</span>' : ""}</li>`).join("") || '<li class="muted">No one has booked yet.</li>'}</ol></div>`;
+      const paidCount = bookings.filter((b) => b.paid).length;
+      players = `<div class="card fb"><div class="row" style="justify-content:space-between"><h2>Roster</h2><span class="muted">${bookings.length} booked · ${paidCount} paid</span></div>
+        <p class="muted">Everyone on the list for this game. If someone drops out or is removed for not paying, everyone below moves up a place. Max ${PITCH} on one pitch; if 30 sign up we book 2 pitches and play 5 teams of 6.</p>
+        <ol class="players">${bookings.map((b, i) => `${i === PITCH ? `<li class="divider">Max ${PITCH}. Places below are reserves unless we book a second pitch.</li>` : ""}<li value="${i + 1}"><span>${esc(b.display_name)}${b.user_id === me.id || b.booked_by === me.id ? " ★" : ""}</span>${b.charge === "covered" || b.charge === "kitty" ? '<span class="tag gold">Kitty</span>' : ""}${b.paid ? '<span class="tag">Paid</span>' : '<span class="tag warn">Unpaid</span>'}${b.checked_in ? '<span class="tag">Here</span>' : ""}</li>`).join("") || '<li class="muted">No one has booked yet.</li>'}</ol></div>`;
     }
 
     const fund = `<div class="card fb"><h2>Kitty fund accounts</h2>
@@ -407,11 +442,33 @@
       ${ledger.length ? `<h3>Fund history</h3><div class="scroll"><table><tbody>${ledger.map((l) => `<tr><td>${short(parseDay(l.on_date))}</td><td>${esc(l.what)}</td><td class="amt ${Number(l.amount) < 0 ? "neg" : ""}">${money(l.amount)}</td><td class="amt">${money(l.balance)}</td></tr>`).join("")}</tbody></table></div>` : ""}
     </div>`;
 
-    el.innerHTML = `<div class="events">${top}${you}${players}${fund}${isOrg() ? '<div id="org"></div>' : ""}</div>`;
+    el.innerHTML = `<div class="events">${top}${ev ? footballInfo(ev, fs) : ""}${you}${players}${fund}${isOrg() ? '<div id="org"></div>' : ""}</div>`;
 
-    el.querySelectorAll("[data-choice]").forEach((b) => (b.onclick = () => bookFootball(ev, b.dataset.choice)));
+    const riskOk = () => { const r = $("#riskOk", el); if (r && r.checked) return true; toast("Please tick to confirm you play at your own risk"); return false; };
+    el.querySelectorAll("[data-choice]").forEach((b) => (b.onclick = () => riskOk() && bookFootball(ev, b.dataset.choice)));
+    const af = $("#addFriend", el);
+    if (af) af.onclick = () => modal(`<h2>Add a friend</h2>
+      <p class="muted">They'll appear on the roster as <b>Their name (${esc(me.name)})</b>. You pay their £6${me.family ? " by bank transfer" : ", by card or bank transfer"}.</p>
+      <label>Your friend's name</label><input id="fName" maxlength="40" placeholder="Their full name">
+      <label class="check"><input type="checkbox" id="fRisk"> My friend is 16 or over and agrees they play at their own risk</label>
+      <div class="form-actions"><button class="btn solid block" id="fGo">Add to the roster · £6</button></div>`, (m) => {
+      $("#fName", m).focus();
+      $("#fGo", m).onclick = async () => {
+        if (!$("#fName", m).value.trim()) return toast("Enter your friend's name");
+        if (!$("#fRisk", m).checked) return toast("Please tick to confirm your friend plays at their own risk");
+        try {
+          const b = await q(sb.rpc("book_friend", { p_event: ev.id, p_name: $("#fName", m).value.trim(), p_risk: true }));
+          closeModal(); toast(b.paid ? "Your friend is on the roster ✓" : "Friend added. Pay their £6 to keep the place"); refresh();
+        } catch (e) { fail(e); }
+      };
+    });
+    const cf = $("#cancelFriend", el);
+    if (cf) cf.onclick = async () => {
+      if (cf.dataset.sure !== "1") { cf.dataset.sure = "1"; cf.textContent = "Tap again to remove your friend"; return; }
+      try { toast(await q(sb.rpc("cancel_booking", { p_id: bookings.find((b) => b.booked_by === me.id).id }))); await loadMe(); refresh(); } catch (e) { fail(e); }
+    };
     const ka = $("#kittyAsk", el);
-    if (ka) ka.onclick = () => modal(`<h2>Before you join the kitty</h2>
+    if (ka) ka.onclick = () => riskOk() && modal(`<h2>Before you join the kitty</h2>
       <p style="line-height:1.5">This Friday is <b>week ${week} of up to 5</b> in kitty ${fs.session_no}.<br>The kitty fund is currently <b>${money(fs.kitty)}</b>.</p>
       <p class="muted" style="line-height:1.5">The kitty resets when the fund drops below £150 or after week 5, whichever comes first. Then everyone goes back to ordinary membership and chooses £15 or £6 again. Joining now covers at most ${5 - fs.games_played} game${5 - fs.games_played === 1 ? "" : "s"}, and fewer if the fund runs low first.</p>
       <div class="form-actions"><button class="btn solid block" id="join">Join the kitty and book · £15${me.family ? " by transfer" : ""}</button></div>`, (m) => {
@@ -428,7 +485,7 @@
   }
   async function bookFootball(ev, choice) {
     try {
-      const b = await q(sb.rpc("book_football", { p_event: ev.id, p_choice: choice }));
+      const b = await q(sb.rpc("book_football", { p_event: ev.id, p_choice: choice, p_risk: true }));
       toast(b.paid ? "You're booked ✓" : "Booked. Pay by Thursday 11pm to keep your place");
       await loadMe(); refresh();
     } catch (e) { fail(e); }
