@@ -231,6 +231,7 @@
     const rank = (e) => (!e.day ? 1 : eventEnd(e) < now ? 2 : 0);
     list.sort((a, b) => rank(a) - rank(b) || (rank(a) === 1 ? a.title.localeCompare(b.title) : rank(a) === 2 ? eventStart(b) - eventStart(a) : eventStart(a) - eventStart(b)));
     el.innerHTML = `<div class="events">
+      ${offerBanner(list, false)}
       ${isOrg() ? `<a class="btn block" href="#admin">${ICON.tools} Add or manage events</a>` : ""}
       ${list.map((ev) => eventCard(ev, taken[ev.id] || 0, myBk[ev.id])).join("") || '<div class="empty"><h2>No events yet</h2></div>'}</div>`;
     el.querySelectorAll("[data-invite]").forEach((b) => (b.onclick = () => {
@@ -244,6 +245,14 @@
       modal(`<h2>${esc(ev.title)}</h2><p class="muted">${fmtEvent(ev)}<br>${esc(ev.location)}</p><p style="line-height:1.5;white-space:pre-wrap">${esc(ev.details || "")}</p>`);
     }));
   }
+  // A football game priced below the usual £6 gets a big banner on Events and Football.
+  function offerBanner(games, onFootball) {
+    const g = games.filter((e) => e.kind === "football" && e.day && Number(e.price) < 6 && eventEnd(e) > new Date()).sort((a, b) => eventStart(a) - eventStart(b))[0];
+    if (!g) return "";
+    const d = parseDay(g.day), when = `Friday ${d.getDate()} ${MONTHS_LONG[d.getMonth()]}`;
+    return `<a class="offer" href="#football"><small>Launch offer</small><b>Book here for ${when} and get your place for just ${money(g.price).replace(".00", "")}</b>
+      <span>${onFootball ? "Book below in the app. " : ""}Only for bookings made in the app.${onFootball ? "" : " Tap to book →"}</span></a>`;
+  }
   function fmtEvent(ev) { if (!ev.day) return "Date to be confirmed"; const d = parseDay(ev.day); return `${DAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()} | ${hhmm(ev.time).replace(/^0(\d)/, "$1")}`; }
   function eventCard(ev, taken, mine) {
     if (!ev.day) return `<article class="card">
@@ -256,7 +265,7 @@
     </article>`;
     const d = parseDay(ev.day), past = eventEnd(ev) < new Date(), left = Math.max(0, ev.capacity - taken);
     const fb = ev.kind === "football";
-    const pills = `<div class="pills"><span class="tag">${fb ? "£6 or kitty" : Number(ev.price) > 0 ? money(ev.price) : "Free"}</span>
+    const pills = `<div class="pills"><span class="tag">${fb ? `${money(ev.price)} or kitty` : Number(ev.price) > 0 ? money(ev.price) : "Free"}</span>
       <span class="tag">${ev.access === "public" ? "Open to invited guests" : "Members only"}</span>
       ${ev.weekly ? `<span class="tag gold">Every ${DAYS[d.getDay()]}</span>` : !past ? `<span class="tag ${left ? "" : "warn"}">${left ? `${left} of ${ev.capacity} places left` : "Full"}</span>` : ""}</div>`;
     let action;
@@ -345,12 +354,14 @@
         <li>Randomised, fair teams. Games of 11 minutes at most.</li>
         <li>Spots go first come, first served to those who arrive on time, not by when you joined the list. Please be punctual: there are no substitutes and late arrivals may be turned away.</li>
         <li>To keep things fair, each person can add only 1 friend. They show on the roster with your name in brackets. Exceptions: dads for their sons, and sons for their dads (ask the organiser).</li>
-        <li>No game is free: £6 pay and play, or £15 to join the kitty fund.</li>
-        <li>Max ${PITCH} on one pitch. If 30 people sign up, we book 2 pitches and play 5 teams of 6.</li>
+        <li>No game is free: £6 pay and play, or £15 to join the kitty fund.${Number(ev.price) < 6 ? ` <b>Launch offer: ${money(ev.price).replace(".00", "")} pay and play for this game when you book in the app.</b>` : ""}</li>
         <li>No booking space? Come for the fun. If someone is late you'll be given their spot.</li>
         <li>Come early to guarantee play. No play is guaranteed if you're late.</li>
         <li>Can't make it? Remove yourself here, and everyone below moves up a place.</li>
       </ul>
+      <h3>Guaranteed play and what to expect</h3>
+      <p>Guaranteed play for places 1 to ${PITCH}, so long as you arrive on time. If we reach 28 or more players, we book a second pitch and accept a maximum of 30. If we reach 36, we play sudden death games on two pitches, with the last 10-minute game between the two teams with the most 2-goal wins.</p>
+      <p>If you are late, your place may be given to someone who didn't book but arrived on time, even if you've paid. Your payment will be credited to your account.</p>
       <p class="note"><b>Play is at your own risk.</b></p>
       <p class="muted">This is not for profit. Any money over costs is used to bring us all together on a more social footing.</p>
     </details>`;
@@ -376,6 +387,7 @@
     await loadMe();
     const kitty = me.kitty_session === fs.session_no;
     const week = fs.games_played + 1;
+    const P = ev ? Number(ev.price) : 6, P$ = money(P).replace(".00", "");
 
     let top = "", you = "", players = "";
     if (!ev) {
@@ -402,7 +414,7 @@
           ${!mine.paid ? `<p class="note">Please pay <b>${money(mine.amount)}</b> ${new Date(mine.created_at) > payBy ? "within <b>30 minutes</b> of booking" : "before <b>Thursday 11pm</b>"}, or your place is released and you can't rebook this game.${me.family ? " Pay the organiser by bank transfer." : " Pay by card here, or by bank transfer to the organiser."}</p>
             ${me.family ? "" : `<button class="btn solid" data-pay="${esc(mine.code)}" style="margin-bottom:10px">Pay ${money(mine.amount)} by card</button>`}` : ""}
           ${me.family && mine.method === "transfer" ? `<p class="muted">As family you're added automatically each week. If you can't come, remove yourself to free your place.</p>`
-            : mine.charge === "payg" && mine.paid ? `<p class="muted">${now < creditUntil ? "Remove yourself before Friday 6pm and your £6 becomes credit for your next game." : "It's after Friday 6pm, so removing yourself now won't give credit."}</p>` : ""}
+            : mine.charge === "payg" && mine.paid ? `<p class="muted">${now < creditUntil ? `Remove yourself before Friday 6pm and your ${P$} becomes credit for your next game.` : "It's after Friday 6pm, so removing yourself now won't give credit."}</p>` : ""}
           <button class="btn" id="cancel">Remove me</button>`;
       } else if (pending()) body = `<p class="note">You can book once the admin has approved your membership.</p>`;
       else if (removed) body = `<p class="note">Your place was released because it wasn't paid in time, so you can't rebook this game. Message the organiser if something went wrong.</p>`;
@@ -411,11 +423,11 @@
       else if (bookings.length >= ev.capacity) body = `<p>All ${ev.capacity} places are taken.</p>`;
       else if (kitty) body = `${RISK}<p class="muted">Your kitty membership covers this game.</p><button class="btn solid" data-choice="payg">Book my place</button>`;
       else {
-        const six = Number(me.credit) >= 6 ? "Use my £6 credit" : me.family ? "£6 by transfer" : "Pay as you play · £6";
-        const due = !me.family && Number(me.credit) < 6;
+        const six = Number(me.credit) >= P ? `Use ${P$} of my credit` : me.family ? `${P$} by transfer` : `Pay as you play · ${P$}`;
+        const due = !me.family && Number(me.credit) < P;
         body = `${RISK}<p class="muted">How do you want to pay for this game?${due && phase === "open" ? " Pay by Thursday 11pm or your place is released, and you won't be able to rebook." : due ? " The pay deadline has passed, so pay by card straight away: unpaid places are released after 30 minutes." : ""}</p>
           <div class="choices">
-            <div><b>£6 · this game</b><span class="muted">Pay as you play, just this Friday.</span><button class="btn solid small" data-choice="payg">${six}</button></div>
+            <div><b>${P$} · this game</b><span class="muted">Pay as you play, just this Friday.${P < 6 ? " Launch offer price." : ""}</span><button class="btn solid small" data-choice="payg">${six}</button></div>
             <div><b>£15 · kitty</b><span class="muted">Every game until the kitty resets. This is week ${week} of up to 5.</span><button class="btn small" id="kittyAsk">Choose the kitty</button></div>
           </div>`;
       }
@@ -426,39 +438,39 @@
           ${friend.paid ? "" : `<p class="note">Please pay <b>${money(friend.amount)}</b> for your friend ${new Date(friend.created_at) > payBy ? "within <b>30 minutes</b>" : "before <b>Thursday 11pm</b>"}, or their place is released.${me.family ? " Pay the organiser by bank transfer." : ""}</p>
             ${me.family ? "" : `<button class="btn solid" data-pay="${esc(friend.code)}" style="margin-bottom:10px">Pay ${money(friend.amount)} for your friend</button>`}`}
           <button class="btn" id="cancelFriend">Remove my friend</button>`
-        : canAdd && bookings.length < ev.capacity ? `<h3>Bring a friend</h3><p class="muted">You can add one friend per game. You pay their £6${me.family ? " by transfer" : ""}.</p><button class="btn" id="addFriend">Add a friend</button>` : "";
+        : canAdd && bookings.length < ev.capacity ? `<h3>Bring a friend</h3><p class="muted">You can add one friend per game. You pay their ${P$}${me.family ? " by transfer" : ""}.</p><button class="btn" id="addFriend">Add a friend</button>` : "";
       you = `<div class="card fb"><h2>You</h2>${pills}${body}${friendBox}</div>`;
 
       const paidCount = bookings.filter((b) => b.paid).length;
       players = `<div class="card fb"><div class="row" style="justify-content:space-between"><h2>Roster</h2><span class="muted">${bookings.length} booked · ${paidCount} paid</span></div>
-        <p class="muted">Everyone on the list for this game. If someone drops out or is removed for not paying, everyone below moves up a place. Max ${PITCH} on one pitch; if 30 sign up we book 2 pitches and play 5 teams of 6.</p>
-        <ol class="players">${bookings.map((b, i) => `${i === PITCH ? `<li class="divider">Max ${PITCH}. Places below are reserves unless we book a second pitch.</li>` : ""}<li value="${i + 1}"><span>${esc(b.display_name)}${b.user_id === me.id || b.booked_by === me.id ? " ★" : ""}</span>${b.charge === "covered" || b.charge === "kitty" ? '<span class="tag gold">Kitty</span>' : ""}${b.paid ? '<span class="tag">Paid</span>' : '<span class="tag warn">Unpaid</span>'}${b.checked_in ? '<span class="tag">Here</span>' : ""}</li>`).join("") || '<li class="muted">No one has booked yet.</li>'}</ol></div>`;
+        <p class="muted">Everyone on the list for this game. If someone drops out or is removed for not paying, everyone below moves up a place. Places 1 to ${PITCH} are guaranteed play if you arrive on time.</p>
+        <ol class="players">${bookings.map((b, i) => `<li value="${i + 1}"><span>${esc(b.display_name)}${b.user_id === me.id || b.booked_by === me.id ? " ★" : ""}</span>${b.charge === "covered" || b.charge === "kitty" ? '<span class="tag gold">Kitty</span>' : ""}${b.paid ? '<span class="tag">Paid</span>' : '<span class="tag warn">Unpaid</span>'}${b.checked_in ? '<span class="tag">Here</span>' : ""}</li>`).join("") || '<li class="muted">No one has booked yet.</li>'}</ol></div>`;
     }
 
     const fund = `<div class="card fb"><h2>Kitty fund accounts</h2>
       <div class="stats"><div><span>Kitty fund</span><b>${money(fs.kitty)}</b></div><div><span>Events fund</span><b>${money(fs.events)}</b></div><div><span>Kitty ${fs.session_no}</span><b>${fs.games_played} of 5</b></div></div>
       <p class="muted">The kitty restarts when the fund drops below £150 or after 5 games. Anything over £100 then moves to the events fund.</p>
-      ${posts[0] ? `<h3>Latest accounts · ${short(new Date(posts[0].created_at))}</h3><pre class="acc">${esc(posts[0].body)}</pre>` : '<p class="muted">The organiser\'s confirmed accounts appear here after each game.</p>'}
+      ${posts[0] ? `<h3>Latest accounts · ${short(new Date(posts[0].created_at))}</h3><pre class="acc">${esc(posts[0].body)}</pre>${(posts[0].images || []).map((src) => `<img class="receipt" src="${esc(src)}" alt="Receipt">`).join("")}` : '<p class="muted">The organiser\'s confirmed accounts appear here after each game.</p>'}
       ${ledger.length ? `<h3>Fund history</h3><div class="scroll"><table><tbody>${ledger.map((l) => `<tr><td>${short(parseDay(l.on_date))}</td><td>${esc(l.what)}</td><td class="amt ${Number(l.amount) < 0 ? "neg" : ""}">${money(l.amount)}</td><td class="amt">${money(l.balance)}</td></tr>`).join("")}</tbody></table></div>` : ""}
     </div>`;
 
-    el.innerHTML = `<div class="events">${top}${ev ? footballInfo(ev, fs) : ""}${you}${players}${fund}${isOrg() ? '<div id="org"></div>' : ""}</div>`;
+    el.innerHTML = `<div class="events">${offerBanner(allGames, true)}${top}${ev ? footballInfo(ev, fs) : ""}${you}${players}${fund}${isOrg() ? '<div id="org"></div>' : ""}</div>`;
 
     const riskOk = () => { const r = $("#riskOk", el); if (r && r.checked) return true; toast("Please tick to confirm you play at your own risk"); return false; };
     el.querySelectorAll("[data-choice]").forEach((b) => (b.onclick = () => riskOk() && bookFootball(ev, b.dataset.choice)));
     const af = $("#addFriend", el);
     if (af) af.onclick = () => modal(`<h2>Add a friend</h2>
-      <p class="muted">They'll appear on the roster as <b>Their name (${esc(me.name)})</b>. You pay their £6${me.family ? " by bank transfer" : ", by card or bank transfer"}.</p>
+      <p class="muted">They'll appear on the roster as <b>Their name (${esc(me.name)})</b>. You pay their ${P$}${me.family ? " by bank transfer" : ", by card or bank transfer"}.</p>
       <label>Your friend's name</label><input id="fName" maxlength="40" placeholder="Their full name">
       <label class="check"><input type="checkbox" id="fRisk"> My friend is 16 or over and agrees they play at their own risk</label>
-      <div class="form-actions"><button class="btn solid block" id="fGo">Add to the roster · £6</button></div>`, (m) => {
+      <div class="form-actions"><button class="btn solid block" id="fGo">Add to the roster · ${P$}</button></div>`, (m) => {
       $("#fName", m).focus();
       $("#fGo", m).onclick = async () => {
         if (!$("#fName", m).value.trim()) return toast("Enter your friend's name");
         if (!$("#fRisk", m).checked) return toast("Please tick to confirm your friend plays at their own risk");
         try {
           const b = await q(sb.rpc("book_friend", { p_event: ev.id, p_name: $("#fName", m).value.trim(), p_risk: true }));
-          closeModal(); toast(b.paid ? "Your friend is on the roster ✓" : "Friend added. Pay their £6 to keep the place"); refresh();
+          closeModal(); toast(b.paid ? "Your friend is on the roster ✓" : `Friend added. Pay their ${P$} to keep the place`); refresh();
         } catch (e) { fail(e); }
       };
     });
@@ -470,7 +482,7 @@
     const ka = $("#kittyAsk", el);
     if (ka) ka.onclick = () => riskOk() && modal(`<h2>Before you join the kitty</h2>
       <p style="line-height:1.5">This Friday is <b>week ${week} of up to 5</b> in kitty ${fs.session_no}.<br>The kitty fund is currently <b>${money(fs.kitty)}</b>.</p>
-      <p class="muted" style="line-height:1.5">The kitty resets when the fund drops below £150 or after week 5, whichever comes first. Then everyone goes back to ordinary membership and chooses £15 or £6 again. Joining now covers at most ${5 - fs.games_played} game${5 - fs.games_played === 1 ? "" : "s"}, and fewer if the fund runs low first.</p>
+      <p class="muted" style="line-height:1.5">The kitty resets when the fund drops below £150 or after week 5, whichever comes first. Then everyone goes back to ordinary membership and chooses £15 or pay as you play again. Joining now covers at most ${5 - fs.games_played} game${5 - fs.games_played === 1 ? "" : "s"}, and fewer if the fund runs low first.</p>
       <div class="form-actions"><button class="btn solid block" id="join">Join the kitty and book · £15${me.family ? " by transfer" : ""}</button></div>`, (m) => {
       $("#join", m).onclick = () => { closeModal(); bookFootball(ev, "kitty"); };
     });
@@ -492,6 +504,7 @@
   }
 
   // Organiser tools on the football screen: payments, accounts and adding the next game.
+  const sumBy = (bs, m) => bs.filter((b) => b.paid && b.method === m && b.status === "booked").reduce((t, b) => t + Number(b.amount), 0).toFixed(2);
   async function organiserFootball(box, current, currentBookings, fs, awaiting, games) {
     const target = awaiting[0] || current;
     const bookings = target && target !== current ? await q(sb.from("bookings").select("*").eq("event_id", target.id).neq("status", "cancelled").order("created_at")) : currentBookings;
@@ -506,26 +519,42 @@
       ${current ? `<h3>Who's turned up · ${short(parseDay(current.day))}</h3>
       <p class="muted">Tap a name when they arrive. ${currentBookings.filter((b) => b.checked_in).length} of ${currentBookings.length} here.</p>
       <div class="attend">${currentBookings.map((b) => `<label class="check"><input type="checkbox" data-here="${b.id}" ${b.checked_in ? "checked" : ""} ${current.accounts_posted ? "disabled" : ""}> ${esc(b.display_name)}${b.paid ? "" : ' <span class="tag warn">Unpaid</span>'}</label>`).join("") || '<p class="muted">No one has booked yet.</p>'}</div>
-      <p class="muted">Anyone paid for pay and play who isn't ticked when the accounts are posted keeps their £6 as credit on their account for their next booking.</p>
+      <p class="muted">Anyone paid for pay and play who isn't ticked when the accounts are posted keeps what they paid as credit on their account for their next booking.</p>
       ${current.accounts_posted ? "" : `<h3>Add someone who wasn't on the list</h3>
       <div class="grid2">
         <div><label>Member</label><select id="wiUser"><option value="">Not a member (type name)</option>${people.filter((p) => !onList.has(p.id)).map((p) => `<option value="${p.id}" data-credit="${Number(p.credit) || 0}">${esc(p.name)}${Number(p.credit) > 0 ? ` (${money(p.credit)} credit)` : ""}</option>`).join("")}</select></div>
         <div><label>Name</label><input id="wiName" placeholder="Their name"></div>
-        <div><label>Paid £6 by</label><select id="wiMeth">${Object.entries(METHODS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}<option value="credit" disabled>Account credit</option></select></div>
+        <div><label>Paid ${money(current.price)} by</label><select id="wiMeth">${Object.entries(METHODS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}<option value="credit" disabled>Account credit</option></select></div>
       </div>
       <div class="form-actions"><button class="btn solid block" id="wiAdd">Add and mark as here</button></div>`}` : ""}
       ${target ? `<h3>Payments · ${esc(target.title)} ${short(parseDay(target.day))}${target.accounts_posted ? " (accounts posted)" : ""}</h3>
       <p class="muted">Set how each person paid. Picking a method marks them paid straight away.</p>
       <div class="scroll"><table><thead><tr><th>Player</th><th>Type</th><th>Paid by</th></tr></thead><tbody>
-        ${charged.map((b) => `<tr><td>${esc(b.display_name)}</td><td>${b.charge === "kitty" ? "Kitty £15" : "Pay & play £6"}</td><td>${b.method === "credit" ? "Credit" :
+        ${charged.map((b) => `<tr><td>${esc(b.display_name)}</td><td>${b.charge === "kitty" ? "Kitty £15" : `Pay & play ${money(b.amount)}`}</td><td>${b.method === "credit" ? "Credit" :
           `<select data-meth="${b.id}" ${target.accounts_posted ? "disabled" : ""}><option value="">Not paid</option>${Object.entries(METHODS).map(([k, v]) => `<option value="${k}" ${b.method === k ? "selected" : ""}>${v}</option>`).join("")}</select>`}</td></tr>`).join("") || '<tr><td colspan="3" class="muted">No payments to check.</td></tr>'}
       </tbody></table></div>
       ${!target.accounts_posted && eventStart(target) <= new Date() ? `
         ${debts.length ? `<h3>Owed from earlier games</h3>${debts.map((d) => `<label class="check"><input type="checkbox" data-clear="${d.id}"> ${esc(d.profiles?.name || "Member")} owes ${money(d.amount)} (${esc(d.reason)})</label>`).join("")}` : ""}
         <div class="grid2">
           <div><label>Game format</label><input id="fmt" value="3 team sudden death games"></div>
-          <div><label>Pitch hire (£)</label><input id="hire" type="number" step="0.01" value="${bookings.length >= 30 ? "124.00" : "62.00"}"></div>
+          <div><label>Turnout</label><input id="turnout" type="number" min="0" value="${bookings.filter((b) => b.checked_in).length}"></div>
+        </div>
+        <h3>Money actually received</h3>
+        <p class="muted">From the Square summary, your bank and cash in hand. Filled in from the app's records, so change them to match.</p>
+        <div class="grid2">
+          <div><label>Square (£)</label><input id="rSquare" type="number" step="0.01" value="${sumBy(bookings, "card")}"></div>
+          <div><label>Transfers (£)</label><input id="rTransfer" type="number" step="0.01" value="${sumBy(bookings, "transfer")}"></div>
+          <div><label>Cash or PayPal (£)</label><input id="rCash" type="number" step="0.01" value="${sumBy(bookings, "cash")}"></div>
+        </div>
+        <h3>Costs</h3>
+        <div class="grid2">
+          <div><label>Goals pitch hire (£)</label><input id="hire" type="number" step="0.01" value="${bookings.length >= 28 ? "124.00" : "62.00"}"></div>
           <div><label>Card fees (£)</label><input id="fees" type="number" step="0.01" value="${bookings.reduce((t, b) => t + Number(b.card_fee || 0), 0).toFixed(2)}"></div>
+        </div>
+        <h3>Receipt photos</h3>
+        <div class="grid2">
+          <div><label>Goals receipt</label><input id="phGoals" type="file" accept="image/*"></div>
+          <div><label>Square summary</label><input id="phSquare" type="file" accept="image/*"></div>
         </div>
         <div class="form-actions"><button class="btn solid block" id="draft">Draft accounts</button></div>
         <div id="draftBox" hidden><label>Accounts (edit freely)</label><textarea id="acc" rows="18" class="mono"></textarea>
@@ -535,7 +564,7 @@
 
     $("#addGame", box).onclick = async () => {
       try {
-        await q(sb.from("events").insert({ kind: "football", title: "Weekly Friday Footie", day: dayKey(nextFri), time: "20:30", location: "Goals Beckenham, Elmers End",
+        await q(sb.from("events").insert({ kind: "football", title: "Weekly Friday Footie", day: dayKey(nextFri), time: "21:15", location: "Goals Beckenham, Elmers End",
           details: "Weekly 5-a-side every Friday night. All abilities welcome. £6 pay as you play, or £15 for the kitty.", price: 6, capacity: 36, access: "members" }));
         toast("Game added"); refresh();
       } catch (e) { fail(e); }
@@ -543,7 +572,7 @@
     const wu = $("#wiUser", box);
     if (wu) {
       const sync = () => { const o = wu.selectedOptions[0], cr = Number(o.dataset.credit || 0), c = $("#wiMeth", box).querySelector('[value="credit"]');
-        $("#wiName", box).disabled = !!wu.value; c.disabled = cr < 6; if (c.disabled && $("#wiMeth", box).value === "credit") $("#wiMeth", box).value = "cash"; };
+        $("#wiName", box).disabled = !!wu.value; c.disabled = cr < Number(current.price); if (c.disabled && $("#wiMeth", box).value === "credit") $("#wiMeth", box).value = "cash"; };
       wu.onchange = sync; sync();
       $("#wiAdd", box).onclick = async () => {
         try {
@@ -563,38 +592,55 @@
     const dr = $("#draft", box);
     if (!dr) return;
     const methodOf = (b) => b.method || "owes";
+    const photos = {};
+    [["phGoals", 0], ["phSquare", 1]].forEach(([id, i]) => {
+      const f = $("#" + id, box);
+      if (f) f.onchange = () => { const file = f.files[0]; if (!file) return delete photos[i];
+        const rd = new FileReader(); rd.onload = async () => { photos[i] = await shrink(rd.result, 1600); }; rd.readAsDataURL(file); };
+    });
     dr.onclick = () => {
       const cleared = [...box.querySelectorAll("[data-clear]:checked")].map((c) => debts.find((d) => d.id === c.dataset.clear));
       const all = bookings, here = all.filter((b) => b.checked_in);
       if (!here.length) return toast(`Tick who turned up under "Who's turned up" first`);
-      const kp = all.filter((b) => b.charge === "kitty"), pg = here.filter((b) => b.charge === "payg");
+      const turnout = Number($("#turnout", box).value) || here.length;
+      const kittyHere = here.filter((b) => b.charge === "covered" || b.charge === "kitty");
+      const kp = all.filter((b) => b.charge === "kitty");
+      const payers = Math.max(turnout - kittyHere.length, 0);
+      const pg = here.filter((b) => b.charge === "payg");
       const viaCredit = pg.filter((b) => b.method === "credit");
       const counts = (b) => b.charge === "kitty" || b.checked_in;
-      const cash = all.filter((b) => b.charge !== "covered" && counts(b) && ["card", "transfer", "cash", "credit"].includes(methodOf(b)));
       const owing = all.filter((b) => b.charge !== "covered" && counts(b) && methodOf(b) === "owes");
-      const noShows = all.filter((b) => b.charge === "payg" && !b.checked_in && b.paid && b.user_id);
-      const by = {}; cash.forEach((b) => (by[b.method] = (by[b.method] || 0) + Number(b.amount)));
-      const recv = cash.reduce((t, b) => t + Number(b.amount), 0);
+      const noShows = all.filter((b) => b.charge === "payg" && !b.checked_in && b.paid && (b.user_id || b.booked_by));
+      const noShowCash = noShows.filter((b) => ["card", "transfer", "cash"].includes(b.method));
+      const sum = (xs) => xs.reduce((t, b) => t + Number(b.amount), 0);
       const clearedAmt = cleared.reduce((t, d) => t + Number(d.amount), 0);
+      const rSq = Number($("#rSquare", box).value) || 0, rTr = Number($("#rTransfer", box).value) || 0, rCa = Number($("#rCash", box).value) || 0;
+      const received = rSq + rTr + rCa;
       const hire = Number($("#hire", box).value) || 0, fees = Number($("#fees", box).value) || 0;
-      const net = recv - hire - fees, newKitty = Number(fs.kitty) + net, newEv = Number(fs.events) + clearedAmt;
+      // What should have come in: kitty joiners, £6 from everyone else who played, owed money cleared,
+      // and £6s already paid by no-shows; less what was covered by credit or deferred.
+      const TP = Number(target.price);
+      const expGross = kp.length * 15 + payers * TP;
+      const expIn = expGross + clearedAmt + sum(noShowCash) - sum(viaCredit) - sum(owing);
+      const diff = Math.round((received - expIn) * 100) / 100;
+      const income = received + sum(viaCredit) - sum(noShowCash) - clearedAmt;
+      const net = income - hire - fees, newKitty = Number(fs.kitty) + net, newEv = Number(fs.events) + clearedAmt;
       const g = fs.games_played + 1, ORD = ["1st", "2nd", "3rd", "4th", "5th"], L = "________", d = parseDay(target.day);
-      const t = [`Turnout ${here.length} - ${d.getDate()} ${MONTHS_LONG[d.getMonth()]} - ${ORD[g - 1] || g + "th"} kitty game of up to 5 consecutive games`, "",
+      const t = [`Turnout ${turnout} - ${d.getDate()} ${MONTHS_LONG[d.getMonth()]} - ${ORD[g - 1] || g + "th"} kitty game of up to 5 consecutive games`, "",
         "Kitty restarts when either fund drops below £150 or we have had a maximum of 5 consecutive games", "", $("#fmt", box).value.trim(), L,
         "Prior fund values", `Kitty fund ${money(fs.kitty)}`, `Events fund ${money(fs.events)}`, L];
-      if (kp.length) t.push("These contributed towards the kitty", "", ...kp.map((b) => `${b.display_name} -`), "", "Expected receipts", `${kp.length}x £15 = ${money(kp.length * 15)}`, L);
-      t.push("Pay and Play (only those who turned up)", `Expected pay as you go is ${pg.length}x £6 = ${money(pg.length * 6)}`);
-      if (viaCredit.length) t.push(`${viaCredit.length} paid from account credit: ${viaCredit.map((b) => b.display_name).join(", ")}`);
-      const exp = kp.length * 15 + pg.length * 6;
-      t.push("", `Total exp ${money(exp)}`);
-      if (cleared.length) t.push(`And ${cleared.length} owed cleared, ${money(exp + clearedAmt)} expected`);
-      t.push(L, "Paid as", ...Object.entries(by).map(([k, v]) => `${k === "credit" ? "Paid from credit" : METHODS[k]} ${money(v)}`));
-      if (clearedAmt) t.push(`Owed cleared ${money(clearedAmt)} (to events fund)`);
-      owing.forEach((b) => t.push(`${b.display_name} ${b.charge === "kitty" ? "entered kitty" : "played"} but deferred payment`));
-      t.push("", `Total received ${money(recv + clearedAmt)}`, recv + owing.reduce((a, b) => a + Number(b.amount), 0) === exp ? "Balanced." : "Does not balance: check the payments above.", "",
-        "Less cost", `${money(hire)} hire charge`, `${money(fees)} card payment charge`, "—————————", "Receipts over costs", money(net), "——————————",
+      if (kittyHere.length) t.push(`Kitty players who turned up (${kittyHere.length})`, ...kittyHere.map((b) => b.display_name), L);
+      if (kp.length) t.push(`Joined the kitty this game (${kp.length})`, ...kp.map((b) => b.display_name), `Expected ${kp.length}x £15 = ${money(kp.length * 15)}`, L);
+      t.push("Pay and Play", `Turnout ${turnout} less ${kittyHere.length} kitty = ${payers} to pay`, `Expected ${payers}x ${money(TP)} = ${money(payers * TP)}`);
+      if (viaCredit.length) t.push(`Less ${viaCredit.length} paid from account credit: ${viaCredit.map((b) => b.display_name).join(", ")}`);
+      if (owing.length) t.push(`Less ${owing.length} deferred: ${owing.map((b) => b.display_name).join(", ")}`);
+      if (noShowCash.length) t.push(`Plus ${noShowCash.length} paid but didn't come (now their credit): ${noShowCash.map((b) => b.display_name).join(", ")}`);
+      if (cleared.length) t.push(`Plus ${cleared.length} owed cleared ${money(clearedAmt)} (to events fund)`);
+      t.push("", `Expected in ${money(expIn)}`, L, "Received",
+        `Square ${money(rSq)}`, `Transfers ${money(rTr)}`, `Cash or PayPal ${money(rCa)}`, `Total received ${money(received)}`, "",
+        diff === 0 ? "Balanced." : `Off by ${money(Math.abs(diff))} (${diff > 0 ? "more" : "less"} than expected)`, L,
+        "Less cost", `${money(hire)} Goals pitch hire`, `${money(fees)} card payment charge`, "—————————", "Receipts over costs", money(net), "——————————",
         "Updated funds", `Kitty fund ${money(newKitty)}`, `Events fund ${money(newEv)}`);
-      if (noShows.length) t.push(L, "Didn't turn up (£6 not refunded, moved to their account credit)", ...noShows.map((b) => b.display_name));
       const owes = [...debts.filter((x) => !cleared.includes(x)).map((x) => `${x.profiles?.name || "Member"} ${money(x.amount)} ${esc(x.reason)}`),
         ...owing.map((b) => `${b.display_name} ${money(b.amount)} ${short(d)}`)];
       if (owes.length) t.push(L, "These OWE", ...owes);
@@ -604,8 +650,9 @@
         const methods = {}; all.forEach((b) => { if (b.charge !== "covered" && b.method !== "credit") methods[b.id] = methodOf(b); });
         try {
           $("#post", box).disabled = true;
-          await q(sb.rpc("post_accounts", { p_event: target.id, p_body: $("#acc", box).value, p_hire: hire, p_fees: fees, p_methods: methods, p_cleared: cleared.map((x) => x.id) }));
-          toast("Accounts posted to the board"); refresh();
+          await q(sb.rpc("post_accounts", { p_event: target.id, p_body: $("#acc", box).value, p_hire: hire, p_fees: fees, p_methods: methods,
+            p_cleared: cleared.map((x) => x.id), p_received: received, p_images: [photos[0], photos[1]].filter(Boolean) }));
+          toast("Accounts posted to the board and Football Accounts"); refresh();
         } catch (e) { $("#post", box).disabled = false; fail(e); }
       };
       $("#copy", box).onclick = async () => { try { await navigator.clipboard.writeText($("#acc", box).value); toast("Copied. Paste it into WhatsApp"); } catch { $("#acc", box).select(); toast("Select all and copy"); } };
@@ -817,11 +864,11 @@
     });
   }
   // Downscale photos so posts stay small
-  function shrink(dataUrl) {
+  function shrink(dataUrl, max = 1000) {
     return new Promise((res) => {
       const img = new Image();
       img.onload = () => {
-        const s = Math.min(1, 1000 / Math.max(img.width, img.height));
+        const s = Math.min(1, max / Math.max(img.width, img.height));
         const c = document.createElement("canvas"); c.width = img.width * s; c.height = img.height * s;
         c.getContext("2d").drawImage(img, 0, 0, c.width, c.height); res(c.toDataURL("image/jpeg", 0.75));
       };
