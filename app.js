@@ -434,7 +434,7 @@
       const mine = bookings.find((b) => b.user_id === me.id);
       if (mine && !mine.paid && mine.square_order_id) payApi({ code: mine.code, confirm: true }).then((r) => { if (r.paid && alive()) { toast("Payment received, thank you!"); refresh(); } }).catch(() => {});
       const pills = `<div class="pills"><span class="tag ${kitty ? "gold" : ""}">${kitty ? `Kitty member, kitty ${fs.session_no}` : "Ordinary member"}</span>
-        ${me.family ? '<span class="tag">Family: pays by transfer</span>' : ""}${Number(me.credit) ? `<span class="tag">${money(me.credit)} credit</span>` : ""}</div>`;
+        ${me.family ? '<span class="tag">Family: pays by transfer</span>' : ""}<span class="tag">${money(me.credit || 0)} credit</span></div>`;
       let body;
       if (mine) {
         const st = mine.charge === "covered" ? "Booked, covered by your kitty" : mine.paid ? (mine.method === "credit" ? "Booked, paid with credit" : mine.method === "card" ? "Booked and paid by card" : "Booked and paid") : "Booked, not paid yet";
@@ -1056,6 +1056,8 @@
       q(sb.from("debts").select("*").eq("user_id", me.id).eq("cleared", false)),
       q(sb.from("fund_state").select("*").single()),
     ]);
+    // my credit changes, as recorded in the credits fund ("Name: reason")
+    const myCredit = await q(sb.from("ledger").select("*").eq("fund", "credits").like("what", `${me.name}: %`).order("id", { ascending: false }).limit(20)).catch(() => []);
     const application = pending() ? await q(sb.from("applications").select("submitted_at").eq("user_id", me.id).maybeSingle()).catch(() => null) : null;
     if (!alive()) return;
     const upcoming = bks.filter((b) => b.events && b.events.day && eventEnd(b.events) > new Date());
@@ -1063,11 +1065,15 @@
     el.innerHTML = `<div class="pad" style="padding-top:24px">
       <h1>${esc(me.name)}</h1>
       <div class="pills"><span class="tag">${ROLE[me.role]}</span>${me.kitty_session === fs.session_no ? `<span class="tag gold">Kitty member, kitty ${fs.session_no}</span>` : ""}
-        ${me.family ? '<span class="tag">Family: pays by transfer</span>' : ""}${Number(me.credit) ? `<span class="tag">${money(me.credit)} credit</span>` : ""}</div>
+        ${me.family ? '<span class="tag">Family: pays by transfer</span>' : ""}<span class="tag">${money(me.credit || 0)} credit</span></div>
       <p class="muted">${esc(me.email)}</p>
       ${pending() ? (application ? `<p class="note">Thanks, we've received your application. The admin will approve your membership soon. Until then you can look around, but you can't book or post.</p>`
         : `<p class="note">Please complete your membership application. Accounts without one are removed 24 hours after joining.</p><a class="btn solid block" href="${applyUrl()}" target="_blank" rel="noopener">Complete your application</a>`) : ""}
       ${debts.length ? `<p class="note">You owe ${money(debts.reduce((t, d) => t + Number(d.amount), 0))} from ${debts.map((d) => esc(d.reason)).join(", ")}. Please pay the organiser.</p>` : ""}
+      <h2 style="margin-top:24px">My credit</h2>
+      <p><b>${money(me.credit || 0)}</b> <span class="muted">held on your account</span></p>
+      <p class="muted">Credit comes from paying for football and then not playing, or cancelling before Friday 6pm. It's used automatically for your next booking.</p>
+      ${myCredit.length ? `<div class="scroll"><table><tbody>${myCredit.map((l) => `<tr><td>${short(new Date(l.created_at || l.on_date))}</td><td>${esc(l.what.slice(me.name.length + 2))}</td><td class="amt ${Number(l.amount) < 0 ? "neg" : ""}">${money(l.amount)}</td></tr>`).join("")}</tbody></table></div>` : '<p class="muted">No credit added or used yet.</p>'}
       <h2 style="margin-top:24px">My tickets</h2>
       ${upcoming.map((b) => `<button class="list-row block-row" data-ticket="${b.code}"><div><b>${esc(b.events.title)}</b><span class="muted">${short(parseDay(b.events.day))} · ${hhmm(b.events.time)} · ${b.status === "waitlist" ? "Waitlist" : b.paid ? "Paid" : "Not paid yet"}</span></div>${ICON.chev}</button>`).join("") || '<p class="muted">No upcoming bookings.</p>'}
       <h2 style="margin-top:24px">Invite a guest</h2>
