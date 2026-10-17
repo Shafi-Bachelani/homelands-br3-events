@@ -21,11 +21,11 @@ const APP_DATA = {
     ],
     "generalInfo": "Creating Our Homelands is a community project run by Al Ansaar in Beckenham. We organise sports, cultural events, debates and support services for everyone in the local area.",
     "socials": {
-      "instagram": "https://instagram.com/",
-      "facebook": "https://facebook.com/",
-      "x": "https://x.com/",
-      "youtube": "https://youtube.com/",
-      "tiktok": "https://tiktok.com/"
+      "instagram": "https://www.ourhomelands.co.uk/ambassadors#become-ambassador",
+      "facebook": "https://www.ourhomelands.co.uk/ambassadors#become-ambassador",
+      "x": "https://www.ourhomelands.co.uk/ambassadors#become-ambassador",
+      "youtube": "https://www.ourhomelands.co.uk/ambassadors#become-ambassador",
+      "tiktok": "https://www.tiktok.com/@shafi.bachelani"
     }
   },
   "admin": {
