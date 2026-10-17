@@ -22,7 +22,8 @@ export default async (req) => {
 
     const ev = booking.events || {};
     const when = ev.day ? new Date(`${ev.day}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "Europe/London" }) : "";
-    const name = ev.kind === "football" ? `Friday Football ${when} (${booking.charge === "kitty" ? "£15 kitty" : "pay as you play"})` : `${ev.title} ${when}`;
+    // Fixed football item names so the Square summary groups them: game payments and kitty contributions.
+    const name = ev.kind === "football" ? (booking.charge === "kitty" ? "BR3 Football Kitty Contributions" : "BR3 Football Payments") : `${ev.title} ${when}`;
     const origin = new URL(req.url).origin;
     const back = ev.kind === "football" ? "football" : "account";
     const { payment_link: link } = await square("/v2/online-checkout/payment-links", {
@@ -34,7 +35,7 @@ export default async (req) => {
           redirect_url: `${origin}/?paid=${encodeURIComponent(booking.code)}#${back}`,
           accepted_payment_methods: { apple_pay: true, google_pay: true },
         },
-        payment_note: `${booking.display_name} · booking ${booking.code}`,
+        payment_note: `${booking.display_name} · ${ev.kind === "football" ? `Football ${when} · ` : ""}booking ${booking.code}`,
       }),
     });
     await db(`bookings?id=eq.${booking.id}`, { method: "PATCH", body: JSON.stringify({ square_order_id: link.order_id }) });
