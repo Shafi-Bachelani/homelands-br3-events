@@ -937,7 +937,6 @@
       <button class="menu-row" data-to="account">${ICON.user}<span>${me ? "My account & tickets" : "Sign in or join"} ${ICON.chev}</span></button>
       <button class="menu-row" data-to="football">${ICON.ball}<span>Friday Football ${ICON.chev}</span></button>
       ${isOrg() ? `<button class="menu-row" data-to="admin">${ICON.tools}<span>Organiser tools ${ICON.chev}</span></button>` : ""}
-      <button class="menu-row" data-to="services">${ICON.cal}<span>Services ${ICON.chev}</span></button>
       <button class="menu-row" data-to="counselling">${ICON.star}<span>Counselling ${ICON.chev}</span></button>`;
     el.querySelectorAll("[data-to]").forEach((b) => (b.onclick = () => go(b.dataset.to)));
   }
