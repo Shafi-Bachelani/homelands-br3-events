@@ -347,12 +347,11 @@
     return `<details class="card fb info"><summary><b>How Friday football works</b><span class="muted">Times, rules and prices</span></summary>
       <p><b>6-a-side at Goals, Beckenham</b>, this Friday ${t} till 11pm. This is game ${fs.games_played + 1} in kitty ${fs.session_no}, for up to 5 consecutive kitty games. A new kitty starts when the kitty fund drops below £150 or after 5 games, whichever is sooner.</p>
       <p><b>Address:</b> Elmers End Road, BR3 4EJ. On-site car park, next to Elmers End station and numerous bus stops.</p>
-      <p><b>Get together at ${t}</b> next to Pitch 1.</p>
+      <p><b>Get together at ${t}</b> next to Pitch 1. Pitch booked from 9:30pm.</p>
       <ul>
         <li>Everyone welcome, from semi-pro to two left feet.</li>
         <li>Players from 16 up. We decide on ability, not age.</li>
         <li>Randomised, fair teams. Games of 11 minutes at most.</li>
-        <li>Spots go first come, first served to those who arrive on time, not by when you joined the list. Please be punctual: there are no substitutes and late arrivals may be turned away.</li>
         <li>To keep things fair, each person can add only 1 friend. They show on the roster with your name in brackets. Exceptions: dads for their sons, and sons for their dads (ask the organiser).</li>
         <li>No game is free: £6 pay and play, or £15 to join the kitty fund.${Number(ev.price) < 6 ? ` <b>Launch offer: ${money(ev.price).replace(".00", "")} pay and play for this game when you book in the app.</b>` : ""}</li>
         <li>No booking space? Come for the fun. If someone is late you'll be given their spot.</li>
