@@ -123,8 +123,8 @@
 
   // ---------- router ----------
   const TABS = ["events", "groups", "schedule", "about", "more"];
-  const ROUTES = { about, home: about, events, groups, grouplist, chat, schedule, more, services, counselling, messages, notifications, account, football, admin, funds };
-  const PARENT = { grouplist: "groups", chat: "groups", services: "more", counselling: "more", football: "events", funds: "more", account: null, admin: "more", messages: null, notifications: null };
+  const ROUTES = { about, home: about, events, groups, grouplist, chat, schedule, more, services, counselling, messages, notifications, account, football, admin, funds, guest };
+  const PARENT = { grouplist: "groups", chat: "groups", services: "more", counselling: "more", football: "events", funds: "more", guest: null, account: null, admin: "more", messages: null, notifications: null };
   let lastTab = "events", seq = 0;
 
   function go(route) { if (location.hash.slice(1) === route) render(); else location.hash = route; }
@@ -377,6 +377,50 @@
   const PITCH = 18; // players on one pitch
   const RISK = `<label class="check risk"><input type="checkbox" id="riskOk"> I agree that I play at my own risk</label>`;
   // The booking blurb from the WhatsApp list, kept on the football page.
+  // The deadline for paying for a place: Thursday 11pm, or 30 minutes after booking if that's later.
+  const placePayBy = (ev, createdAt) => new Date(Math.max(fbPayBy(ev), new Date(createdAt).getTime() + 30 * 6e4));
+  const payByText = (ev, createdAt) => {
+    const d = placePayBy(ev, createdAt);
+    return d > fbPayBy(ev) ? `by ${d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })} (within 30 minutes of booking)` : "by Thursday 11pm";
+  };
+  // A member sends their friend a link to pay for their own place.
+  function guestLinkModal(ev, b) {
+    const guestName = b.display_name.replace(/ \([^)]*\)$/, "");
+    const url = `${location.origin}${location.pathname}#guest:${b.code}`;
+    const text = `Hi ${guestName}, I've booked you in for football on ${short(parseDay(ev.day))} at ${hhmm(ev.time)}. Please pay ${money(b.amount)} for your place ${payByText(ev, b.created_at)}, or it's released:`;
+    modal(`<button class="close" aria-label="Close">×</button><h2>Send ${esc(guestName)} a payment link</h2>
+      <p class="muted">${esc(guestName)} pays ${money(b.amount)} on the link. Their payment shows your name and theirs, and they show as Paid on the roster once it's in. If it isn't paid ${payByText(ev, b.created_at)}, their place is released.</p>
+      <div class="form-actions"><button class="btn solid block" id="glSend">${ICON.share} Send the link</button>
+        <button class="btn block" id="glCopy" style="margin-top:10px">Copy the link</button></div>`, (m) => {
+      $("#glSend", m).onclick = async () => {
+        if (navigator.share) { try { await navigator.share({ title: "Football payment", text, url }); closeModal(); } catch {} return; }
+        location.href = `https://wa.me/?text=${encodeURIComponent(`${text} ${url}`)}`;
+      };
+      $("#glCopy", m).onclick = async () => { try { await navigator.clipboard.writeText(`${text} ${url}`); toast("Link copied. Paste it to your friend"); } catch { toast(url); } };
+    });
+  }
+  // The page a guest opens from their payment link. No sign-in needed.
+  async function guest(el, alive, code) {
+    loading(el);
+    let g;
+    await sb.rpc("expire_unpaid"); // releases unpaid places that are past their deadline
+    try { g = await payApi({ code, info: true }); } catch (e) { g = null; }
+    if (!alive()) return;
+    if (!g || g.status !== "booked") {
+      el.innerHTML = `<div class="empty"><h2>This place is no longer booked</h2><p class="muted" style="font-size:17px;line-height:1.5">It wasn't paid in time, or it was removed. Ask the friend who booked you to add you again.</p></div>`;
+      return;
+    }
+    const ev = g.event, open = new Date() < placePayBy(ev, g.created_at);
+    el.innerHTML = `<div class="events"><div class="card fb">
+      <h2>${esc(ev.title || "Football")}</h2><p class="muted">${short(parseDay(ev.day))} · ${hhmm(ev.time)}</p>
+      <p style="font-size:18px"><b>${esc(g.guest)}</b>, booked by <b>${esc(g.member)}</b></p>
+      ${g.paid ? `<p class="note">Paid, thank you. See you on the pitch!</p>`
+        : open ? `<p class="note">Please pay <b>${money(g.amount)}</b> ${payByText(ev, g.created_at)}, or your place is released.</p>
+          <button class="btn solid block" data-pay="${esc(code)}" data-guest="1">Pay ${money(g.amount)} by card</button>`
+        : `<p class="note">The time to pay has passed, so this place is being released.</p>`}
+      <p class="muted">6-a-side at Goals, Beckenham, Elmers End Road, BR3 4EJ. Get together at ${hhmm(ev.time)} next to Pitch 1. Players must be 16 or over, and play is at your own risk.</p>
+    </div></div>`;
+  }
   function footballInfo(ev, fs) {
     const t = hhmm(ev.time);
     return `<details class="card fb info"><summary><b>How Friday football works</b><span class="muted">Times, rules and prices</span></summary>
@@ -485,9 +529,10 @@
       const friendBox = friend ? `<h3>Your friend</h3><p><b>${esc(friend.display_name)}</b> is number ${bookings.indexOf(friend) + 1} on the list${friend.paid ? (friend.method === "credit" ? ", paid from your credit." : ", paid.") : "."}</p>
           ${friend.paid ? "" : `<p class="note">Please pay <b>${money(friend.amount)}</b> for your friend ${new Date(friend.created_at) > payBy ? "within <b>30 minutes</b>" : "before <b>Thursday 11pm</b>"}, or their place is released.${me.family ? " Pay the organiser by bank transfer." : ""}</p>
             ${me.family ? "" : `<button class="btn solid" data-pay="${esc(friend.code)}" style="margin-bottom:10px">Pay ${money(friend.amount)} for your friend</button>`}
-            ${!me.family && Number(me.credit) >= Number(friend.amount) ? `<button class="btn" id="friendCredit" style="margin-bottom:10px">Use ${money(friend.amount)} of my credit</button>` : ""}`}
+            ${!me.family && Number(me.credit) >= Number(friend.amount) ? `<button class="btn" id="friendCredit" style="margin-bottom:10px">Use ${money(friend.amount)} of my credit</button>` : ""}
+            ${me.family ? "" : `<button class="btn" id="friendLink" style="margin-bottom:10px">${ICON.share} Send your friend a payment link</button>`}`}
           <button class="btn" id="cancelFriend">Remove my friend</button>`
-        : canAdd && bookings.length < ev.capacity ? `<h3>Bring a friend</h3><p class="muted">You can add one friend per game. You pay their ${P$}${me.family ? " by transfer" : Number(me.credit) >= P ? ", by card or from your credit" : ""}.</p><button class="btn" id="addFriend">Add a friend</button>` : "";
+        : canAdd && bookings.length < ev.capacity ? `<h3>Bring a friend</h3><p class="muted">You can add one friend per game. ${me.family ? `You pay their ${P$} by transfer` : `Pay their ${P$} yourself${Number(me.credit) >= P ? ", by card or from your credit," : ""} or send them a payment link`}.</p><button class="btn" id="addFriend">Add a friend</button>` : "";
       you = `<div class="card fb"><h2>You</h2>${pills}${body}${friendBox}</div>`;
 
       const paidCount = bookings.filter((b) => b.paid).length;
@@ -510,20 +555,24 @@
     el.querySelectorAll("[data-choice]").forEach((b) => (b.onclick = () => riskOk() && bookFootball(ev, b.dataset.choice)));
     const af = $("#addFriend", el);
     if (af) af.onclick = () => modal(`<h2>Add a friend</h2>
-      <p class="muted">They'll appear on the roster as <b>Their name (${esc(me.name)})</b>. You pay their ${P$}${me.family ? " by bank transfer" : ", by card or bank transfer"}.</p>
+      <p class="muted">They'll appear on the roster as <b>Their name (${esc(me.name)})</b>. ${me.family ? `You pay their ${P$} by bank transfer.` : `Pay their ${P$} yourself, or send them a payment link. If it isn't paid ${payByText(ev, new Date())}, their place is released.`}</p>
       <label>Your friend's name</label><input id="fName" maxlength="40" placeholder="Their full name">
       <label class="check"><input type="checkbox" id="fRisk"> My friend is 16 or over and agrees they play at their own risk</label>
-      ${!me.family && Number(me.credit) >= P ? `<label>How do you want to pay?</label>
-        <label class="check"><input type="radio" name="fPay" value="card" checked> Pay ${P$} by card</label>
-        <label class="check"><input type="radio" name="fPay" value="credit"> Use ${P$} of my credit (${money(me.credit)} available)</label>` : ""}
+      ${me.family ? "" : `<label>Who pays?</label>
+        <label class="check"><input type="radio" name="fPay" value="card" checked> I'll pay ${P$} by card</label>
+        ${Number(me.credit) >= P ? `<label class="check"><input type="radio" name="fPay" value="credit"> I'll use ${P$} of my credit (${money(me.credit)} available)</label>` : ""}
+        <label class="check"><input type="radio" name="fPay" value="link"> Send my friend a payment link</label>`}
       <div class="form-actions"><button class="btn solid block" id="fGo">Add to the roster · ${P$}</button></div>`, (m) => {
       $("#fName", m).focus();
       $("#fGo", m).onclick = async () => {
         if (!$("#fName", m).value.trim()) return toast("Enter your friend's name");
         if (!$("#fRisk", m).checked) return toast("Please tick to confirm your friend plays at their own risk");
         try {
-          const b = await q(sb.rpc("book_friend", { p_event: ev.id, p_name: $("#fName", m).value.trim(), p_risk: true, p_credit: m.querySelector('[name="fPay"]:checked')?.value === "credit" }));
-          closeModal(); toast(b.paid ? (b.method === "credit" ? `Your friend is on the roster ✓ Paid ${P$} from your credit` : "Your friend is on the roster ✓") : `Friend added. Pay their ${P$} to keep the place`); await loadMe(); refresh();
+          const how = m.querySelector('[name="fPay"]:checked')?.value;
+          const b = await q(sb.rpc("book_friend", { p_event: ev.id, p_name: $("#fName", m).value.trim(), p_risk: true, p_credit: how === "credit" }));
+          await loadMe();
+          if (how === "link" && !b.paid) { refresh(); return guestLinkModal(ev, b); }
+          closeModal(); toast(b.paid ? (b.method === "credit" ? `Your friend is on the roster ✓ Paid ${P$} from your credit` : "Your friend is on the roster ✓") : `Friend added. Pay their ${P$} to keep the place`); refresh();
         } catch (e) { fail(e); }
       };
     });
@@ -532,6 +581,8 @@
       try { fc.disabled = true; await q(sb.rpc("pay_friend_credit", { p_id: bookings.find((b) => b.booked_by === me.id).id })); toast(`Paid from your credit ✓`); await loadMe(); refresh(); }
       catch (e) { fc.disabled = false; fail(e); }
     };
+    const fl = $("#friendLink", el);
+    if (fl) fl.onclick = () => guestLinkModal(ev, bookings.find((b) => b.booked_by === me.id));
     const cf = $("#cancelFriend", el);
     if (cf) cf.onclick = async () => {
       if (cf.dataset.sure !== "1") { cf.dataset.sure = "1"; cf.textContent = "Tap again to remove your friend"; return; }
@@ -1342,7 +1393,7 @@
     const b = e.target.closest("[data-pay]"); if (!b) return;
     e.preventDefault(); b.disabled = true; const label = b.textContent; b.textContent = "Opening secure payment…";
     try {
-      const r = await payApi({ code: b.dataset.pay });
+      const r = await payApi({ code: b.dataset.pay, guest: b.dataset.guest === "1" });
       if (r.url) { location.href = r.url; return; }
       if (r.paid) { toast("Already paid, thank you"); closeModal(); refresh(); }
     } catch (err) { fail(err); }
