@@ -31,6 +31,8 @@
   // ---------- helpers ----------
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const bold = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
+  // WhatsApp writes bold as *text*; the app uses **text**.
+  const fromWhatsApp = (s) => s.replace(/(^|[^*])\*([^*\n]+?)\*(?!\*)/gm, "$1**$2**");
   const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   const MONTHS_LONG = ["January","February","March","April","May","June","July","August","September","October","November","December"];
   const DAYS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
@@ -890,9 +892,19 @@
       modal(`<h2>Post options</h2>
         <button class="btn block" id="copy">Copy text</button>
         ${isOrg() ? `<div style="height:10px"></div><button class="btn block" id="pin">${p.pinned ? "Unpin" : "Pin to top"}</button>` : ""}
+        ${isOrg() ? '<div style="height:10px"></div><button class="btn block" id="edit">Edit post</button>' : ""}
         ${mine || isOrg() ? '<div style="height:10px"></div><button class="btn block danger" id="del">Delete post</button>' : ""}`, (m) => {
         $("#copy", m).onclick = async () => { try { await navigator.clipboard.writeText(p.body.replace(/\*\*/g, "")); toast("Copied"); } catch {} closeModal(); };
         const pin = $("#pin", m); if (pin) pin.onclick = async () => { try { await q(sb.from("posts").update({ pinned: !p.pinned }).eq("id", p.id)); closeModal(); refresh(); } catch (e) { fail(e); } };
+        const edit = $("#edit", m); if (edit) edit.onclick = () => {
+          modal(`<h2>Edit post</h2><p class="muted">Paste the new text. *Bold* from WhatsApp stays bold.</p><textarea id="t" style="min-height:320px"></textarea><div class="form-actions"><button class="btn solid block" id="save">Save</button></div>`, (m2) => {
+            $("#t", m2).value = p.body;
+            $("#save", m2).onclick = async () => {
+              const body = fromWhatsApp($("#t", m2).value.trim()); if (!body) return;
+              try { await q(sb.from("posts").update({ body }).eq("id", p.id)); closeModal(); toast("Post updated"); refresh(); } catch (e) { fail(e); }
+            };
+          });
+        };
         const del = $("#del", m); if (del) del.onclick = async () => { try { await q(sb.from("posts").delete().eq("id", p.id)); closeModal(); refresh(); } catch (e) { fail(e); } };
       });
     }));
@@ -914,7 +926,7 @@
       ${isOrg() && !news ? '<label class="check"><input type="checkbox" id="pinIt"> Pin as an organiser notice</label>' : ""}
       <div class="form-actions"><button class="btn solid block" id="post">Post</button></div>`, (m) => {
       $("#post", m).onclick = async () => {
-        const body = $("#t", m).value.trim();
+        const body = fromWhatsApp($("#t", m).value.trim());
         const post = { group_id: $("#g", m).value, user_id: me.id, author_name: me.name, body, pinned: !!$("#pinIt", m)?.checked };
         const file = $("#file", m)?.files?.[0];
         if (file) {
