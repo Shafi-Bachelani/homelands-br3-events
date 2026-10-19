@@ -218,6 +218,7 @@
   }
   async function events(el, alive) {
     loading(el);
+    await sb.rpc("expire_unpaid"); // so the booked numbers don't count places already released
     const [list, places, mine] = await Promise.all([
       q(sb.from("events").select("*")),
       q(sb.rpc("event_places")),
@@ -269,7 +270,8 @@
     const fb = ev.kind === "football";
     const pills = `<div class="pills"><span class="tag">${fb ? `${money(ev.price)} or kitty` : Number(ev.price) > 0 ? money(ev.price) : "Free"}</span>
       <span class="tag">${ev.access === "public" ? "Open to invited guests" : "Members only"}</span>
-      ${ev.weekly ? `<span class="tag gold">Every ${DAYS[d.getDay()]}</span>` : !past ? `<span class="tag ${left ? "" : "warn"}">${left ? `${left} of ${ev.capacity} places left` : "Full"}</span>` : ""}</div>`;
+      ${ev.weekly ? `<span class="tag gold">Every ${DAYS[d.getDay()]}</span>` : !past ? `<span class="tag ${left ? "" : "warn"}">${left ? `${left} of ${ev.capacity} places left` : "Full"}</span>` : ""}
+      ${!past && !ev.group_id ? `<span class="tag gold">${taken} booked</span>` : ""}</div>`;
     let action;
     if (past) action = '<button class="off" style="color:var(--muted)" disabled>Event has ended</button>';
     else if (ev.group_id && !me) action = '<button class="go" data-go="account">Sign in to sign up</button>';
@@ -397,8 +399,23 @@
       <p class="muted">This is not for profit. Any money over costs is used to bring us all together on a more social footing.</p>
     </details>`;
   }
+  // Signed out: anyone can see how many are booked for the next game, then sign in to book.
+  async function footballGuest(el, alive) {
+    loading(el);
+    await sb.rpc("expire_unpaid");
+    const [games, places] = await Promise.all([
+      q(sb.from("events").select("*").eq("kind", "football").not("day", "is", null).order("day")),
+      q(sb.rpc("event_places")),
+    ]);
+    if (!alive()) return;
+    const ev = games.find((g) => eventEnd(g) > new Date());
+    const n = ev ? Number((places.find((p) => p.event_id === ev.id) || {}).taken || 0) : 0;
+    needSignIn(el, "book football");
+    if (ev) el.insertAdjacentHTML("afterbegin", `<div class="events"><div class="card fb"><h2>${esc(ev.title)}</h2><p class="muted">${fmtEvent(ev)} · ${esc(ev.location)}</p>
+      <p style="font-size:20px"><b>${n} booked</b> so far${n < ev.capacity ? `, ${ev.capacity - n} places left` : ", it's full"}.</p></div></div>`);
+  }
   async function football(el, alive) {
-    if (!me) return needSignIn(el, "book football");
+    if (!me) return footballGuest(el, alive);
     loading(el);
     await sb.rpc("expire_unpaid");
     const now = new Date();
