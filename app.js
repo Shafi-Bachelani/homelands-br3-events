@@ -637,13 +637,13 @@
       <button class="btn small" id="addGame">Add game for ${short(nextFri)}</button>
       ${current ? `<h3>Who's turned up · ${short(parseDay(current.day))}</h3>
       <p class="muted">Tap a name when they arrive. ${currentBookings.filter((b) => b.checked_in).length} of ${currentBookings.length} here.</p>
-      <div class="attend">${currentBookings.map((b) => `<label class="check"><input type="checkbox" data-here="${b.id}" ${b.checked_in ? "checked" : ""} ${current.accounts_posted ? "disabled" : ""}> ${esc(b.display_name)}${b.paid ? "" : ' <span class="tag warn">Unpaid</span>'}</label>`).join("") || '<p class="muted">No one has booked yet.</p>'}</div>
+      <div class="attend">${currentBookings.map((b) => `<label class="check"><input type="checkbox" data-here="${b.id}" ${b.checked_in ? "checked" : ""} ${current.accounts_posted ? "disabled" : ""}> ${esc(b.display_name)}${b.paid ? "" : ' <span class="tag warn">Unpaid</span>'}${current.accounts_posted ? "" : ` <button class="btn small" data-drop="${b.id}" style="margin-left:auto">Remove</button>`}</label>`).join("") || '<p class="muted">No one has booked yet.</p>'}</div>
       <p class="muted">Anyone paid for pay and play who isn't ticked when the accounts are posted keeps what they paid as credit on their account for their next booking.</p>
       ${current.accounts_posted ? "" : `<h3>Add someone who wasn't on the list</h3>
       <div class="grid2">
         <div><label>Member</label><select id="wiUser"><option value="">Not a member (type name)</option>${people.filter((p) => !onList.has(p.id)).map((p) => `<option value="${p.id}" data-credit="${Number(p.credit) || 0}">${esc(p.name)}${Number(p.credit) > 0 ? ` (${money(p.credit)} credit)` : ""}</option>`).join("")}</select></div>
         <div><label>Name</label><input id="wiName" placeholder="Their name"></div>
-        <div><label>Paid ${money(current.price)} by</label><select id="wiMeth">${Object.entries(METHODS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}<option value="credit" disabled>Account credit</option></select></div>
+        <div><label id="wiPrice">Paid ${money(Math.max(Number(current.price), 6))} by</label><select id="wiMeth">${Object.entries(METHODS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}<option value="credit" disabled>Account credit</option></select></div>
       </div>
       <div class="form-actions"><button class="btn solid block" id="wiAdd">Add and mark as here</button></div>`}` : ""}
       ${target ? `<h3>Payments · ${esc(target.title)} ${short(parseDay(target.day))}${target.accounts_posted ? " (accounts posted)" : ""}</h3>
@@ -693,6 +693,8 @@
     const wu = $("#wiUser", box);
     if (wu) {
       const sync = () => { const o = wu.selectedOptions[0], cr = Number(o.dataset.credit || 0), c = $("#wiMeth", box).querySelector('[value="credit"]');
+        // Offer prices are for members; anyone else pays the full £6.
+        $("#wiPrice", box).textContent = `Paid ${money(wu.value ? Number(current.price) : Math.max(Number(current.price), 6))} by`;
         $("#wiName", box).disabled = !!wu.value; c.disabled = cr < Number(current.price); if (c.disabled && $("#wiMeth", box).value === "credit") $("#wiMeth", box).value = "cash"; };
       wu.onchange = sync; sync();
       $("#wiAdd", box).onclick = async () => {
@@ -704,6 +706,11 @@
         } catch (e) { $("#wiAdd", box).disabled = false; fail(e); }
       };
     }
+    box.querySelectorAll("[data-drop]").forEach((d) => (d.onclick = async (e) => {
+      e.preventDefault();
+      if (d.dataset.sure !== "1") { d.dataset.sure = "1"; d.textContent = "Tap again to remove"; return; }
+      try { d.disabled = true; await q(sb.rpc("cancel_booking", { p_id: d.dataset.drop })); toast("Removed from the list"); refresh(); } catch (err) { d.disabled = false; fail(err); }
+    }));
     box.querySelectorAll("[data-here]").forEach((c) => (c.onchange = async () => {
       try { await q(sb.from("bookings").update({ checked_in: c.checked }).eq("id", c.dataset.here)); toast(c.checked ? "Marked as here" : "Unmarked"); refresh(); } catch (e) { c.checked = !c.checked; fail(e); }
     }));
