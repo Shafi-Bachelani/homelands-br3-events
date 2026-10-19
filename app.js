@@ -134,7 +134,8 @@
     if (TABS.includes(route)) lastTab = route;
     const active = TABS.includes(route) ? route : (PARENT[route] || lastTab);
     document.querySelectorAll("#tabbar button").forEach((b) => b.classList.toggle("active", b.dataset.tab === active));
-    $("#backBtn").hidden = TABS.includes(route) || route === "home";
+    // Chat screens keep the logo header; their subhead link already goes back.
+    $("#backBtn").hidden = TABS.includes(route) || ["home", "chat", "grouplist"].includes(route);
     $("#brand").hidden = !$("#backBtn").hidden;
     $("#bellDot").hidden = state.seenNotes >= D.announcements.length;
     const token = ++seq, alive = () => token === seq;
