@@ -41,6 +41,8 @@ create table public.events (
   capacity int not null default 50 check (capacity > 0),
   access text not null default 'members' check (access in ('public', 'members')),
   accounts_posted boolean not null default false,
+  image text,                                     -- picture as a data URL, shrunk on the phone
+  link text,                                      -- e.g. the debate's page in Let's Debate
   created_at timestamptz not null default now()
 );
 

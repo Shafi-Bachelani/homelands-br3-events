@@ -252,9 +252,9 @@
     const detail = (ev) => {
       const card = el.querySelector(`[data-event="${ev.id}"]`)?.closest("article");
       const act = card?.querySelector(".event-foot .go");
-      modal(`<h2>${esc(ev.title)}</h2><p class="muted">${ev.day ? fmtEvent(ev) : "Date to be confirmed"}<br>${esc(ev.location || "")}</p><p style="line-height:1.5;white-space:pre-wrap">${esc(ev.details || "")}</p>
+      modal(`${ev.image ? `<img class="event-pic modal-pic" src="${esc(ev.image)}" alt="">` : ""}<h2>${esc(ev.title)}</h2><p class="muted">${ev.day ? fmtEvent(ev) : "Date to be confirmed"}<br>${esc(ev.location || "")}</p><p style="line-height:1.5;white-space:pre-wrap">${esc(ev.details || "")}</p>
         <div class="form-actions">${act ? `<button class="btn solid block" id="dGo">${act.textContent}</button>` : ""}${isOrg() ? '<button class="btn block" id="dQr">QR code poster</button>' : ""}</div>`, (m) => {
-        if (act) $("#dGo", m).onclick = () => { closeModal(); act.click(); };
+        if (act) $("#dGo", m).onclick = () => { closeModal(); if (act.href) window.open(act.href, "_blank", "noopener"); else act.click(); };
         if (isOrg()) $("#dQr", m).onclick = () => posterModal(ev);
       });
     };
@@ -272,23 +272,28 @@
       <span>${onFootball ? "Book below in the app. " : ""}Only for bookings made in the app.${onFootball ? "" : " Tap to book →"}</span></a>`;
   }
   function fmtEvent(ev) { if (!ev.day) return "Date to be confirmed"; const d = parseDay(ev.day); return `${DAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()} | ${hhmm(ev.time).replace(/^0(\d)/, "$1")}`; }
+  // An event can link elsewhere, e.g. to its debate in Let's Debate, instead of being booked here.
+  const linkLabel = (url) => (/ourhomelands\.co\.uk\/debates\//.test(url) ? "Open in Let's Debate" : "Open link");
+  const linkButton = (ev) => `<a class="go" href="${esc(ev.link)}" target="_blank" rel="noopener">${linkLabel(ev.link)}</a>`;
+  const eventPic = (ev) => (ev.image ? `<img class="event-pic" src="${esc(ev.image)}" alt="" data-event="${ev.id}">` : "");
   function eventCard(ev, taken, mine) {
-    if (!ev.day) return `<article class="card">
+    if (!ev.day) return `<article class="card">${eventPic(ev)}
       <div class="event-body" data-event="${ev.id}" style="cursor:pointer">
         <div class="event-date tbc"><div class="d">TBC</div><div class="m">Date</div></div>
         <div><h2>${esc(ev.title)}</h2><p>Date to be confirmed</p>${ev.location ? `<p>${esc(ev.location)}</p>` : ""}
           <div class="pills"><span class="tag">${Number(ev.price) > 0 ? money(ev.price) : "Free"}</span><span class="tag">${ACCESS_TAG[ev.access] || "Members only"}</span></div></div>
       </div>
-      <div class="event-foot"><button data-invite="${ev.id}">${ICON.share.replace("viewBox", 'style="width:20px;height:20px" viewBox')} Share</button><button class="off" disabled>Booking opens soon</button></div>
+      <div class="event-foot"><button data-invite="${ev.id}">${ICON.share.replace("viewBox", 'style="width:20px;height:20px" viewBox')} Share</button>${ev.link ? linkButton(ev) : '<button class="off" disabled>Booking opens soon</button>'}</div>
     </article>`;
     const d = parseDay(ev.day), past = eventEnd(ev) < new Date(), left = Math.max(0, ev.capacity - taken);
     const fb = ev.kind === "football";
     const pills = `<div class="pills"><span class="tag">${fb ? `${money(ev.price)} or kitty` : Number(ev.price) > 0 ? money(ev.price) : "Free"}</span>
       <span class="tag">${ACCESS_TAG[ev.access] || "Members only"}</span>
-      ${ev.weekly ? `<span class="tag gold">Every ${DAYS[d.getDay()]}</span>` : !past ? `<span class="tag ${left ? "" : "warn"}">${left ? `${left} of ${ev.capacity} places left` : "Full"}</span>` : ""}
-      ${!past && !ev.group_id ? `<span class="tag gold">${taken} booked</span>` : ""}</div>`;
+      ${ev.weekly ? `<span class="tag gold">Every ${DAYS[d.getDay()]}</span>` : !past && !ev.link ? `<span class="tag ${left ? "" : "warn"}">${left ? `${left} of ${ev.capacity} places left` : "Full"}</span>` : ""}
+      ${!past && !ev.group_id && !ev.link ? `<span class="tag gold">${taken} booked</span>` : ""}</div>`;
     let action;
     if (past) action = '<button class="off" style="color:var(--muted)" disabled>Event has ended</button>';
+    else if (ev.link) action = linkButton(ev);
     else if (ev.group_id && !me) action = '<button class="go" data-go="account">Sign in to sign up</button>';
     else if (pending() && !fb) action = '<button class="off" style="color:var(--muted)" disabled>Bookable once approved</button>';
     else if (ev.group_id) action = joined.includes(ev.group_id) ? '<button class="go" data-go="groups">Signed up ✓ · Open chat</button>' : `<button class="go" data-join="${esc(ev.group_id)}">Sign up · Free</button>`;
@@ -296,7 +301,7 @@
     else if (mine) action = `<button class="go" data-ticket="${mine.code}">${mine.status === "waitlist" ? "On waitlist · Ticket" : "Booked ✓ · Ticket"}</button>`;
     else if (!me && ev.access === "members") action = '<button class="go" data-go="account">Members only · Sign in</button>';
     else action = `<button class="go" data-book="${ev.id}">${left ? "Book" : "Join waitlist"}</button>`;
-    return `<article class="card">
+    return `<article class="card">${eventPic(ev)}
       <div class="event-body" data-event="${ev.id}" style="cursor:pointer">
         <div class="event-date"><div class="d">${d.getDate()}</div><div class="m">${MONTHS[d.getMonth()]}</div></div>
         <div><h2>${esc(ev.title)}</h2><p>${fmtEvent(ev)}</p><p>${esc(ev.location)}</p>${pills}</div>
@@ -1082,6 +1087,10 @@
       };
     });
   }
+  // An event's picture from the phone's photos, shrunk like post photos.
+  function picture(file) {
+    return new Promise((res) => { const rd = new FileReader(); rd.onload = async () => res(await shrink(rd.result, 1000)); rd.readAsDataURL(file); });
+  }
   // Downscale photos so posts stay small
   function shrink(dataUrl, max = 1000) {
     return new Promise((res) => {
@@ -1416,6 +1425,8 @@
       <div class="grid2"><div><label>Price per place (£, 0 = free)</label><input id="pr" type="number" min="0" step="0.5" value="0"></div><div><label>Places</label><input id="cap" type="number" min="1" value="30"></div></div>
       <label>Who can book</label><select id="acc">${accessOpts("members")}</select>
       <label>Details</label><textarea id="det"></textarea>
+      <label>Picture (optional)</label><input id="pic" type="file" accept="image/*">
+      <label>Link instead of booking here (optional, e.g. the debate's page in Let's Debate)</label><input id="lnk" type="url" placeholder="https://debate.ourhomelands.co.uk/debates/…">
       <div class="form-actions"><button class="btn solid block" id="add">Add event</button></div>
       <h2 style="margin-top:28px">Events and bookings</h2>
       <button class="btn block" id="csv">Download all event bookings (opens in Google Sheets or Excel)</button>
@@ -1427,7 +1438,9 @@
           </tbody></table></div>
           ${e.kind === "event" ? `<div class="grid2" data-edit="${e.id}"><div><label>Date</label><input data-f="day" type="date" value="${e.day || ""}"></div><div><label>Start time</label><input data-f="time" type="time" value="${hhmm(e.time)}"></div>
             <div><label>Price (£)</label><input data-f="price" type="number" min="0" step="0.5" value="${Number(e.price)}"></div><div><label>Places</label><input data-f="capacity" type="number" min="1" value="${e.capacity}"></div>
-            <div style="grid-column:1/-1"><label>Who can book</label><select data-f="access">${accessOpts(e.access)}</select></div></div>
+            <div style="grid-column:1/-1"><label>Who can book</label><select data-f="access">${accessOpts(e.access)}</select></div>
+            <div style="grid-column:1/-1"><label>Link instead of booking here (optional)</label><input data-f="link" type="url" value="${esc(e.link || "")}" placeholder="https://debate.ourhomelands.co.uk/debates/…"></div>
+            <div style="grid-column:1/-1"><label>Picture</label>${e.image ? `<img class="event-pic" src="${esc(e.image)}" alt="">` : ""}<input data-pic="${e.id}" type="file" accept="image/*">${e.image ? `<button class="btn small" data-nopic="${e.id}" style="margin-top:8px">Remove picture</button>` : ""}</div></div>
             <div class="row" style="margin:12px 0"><button class="btn small" data-upd="${e.id}">Save changes</button><button class="btn small" data-poster="${e.id}">QR code poster</button></div>` : ""}
           <button class="btn small danger" data-del="${e.id}">Remove event</button></details>`;
       }).join("")}
@@ -1458,9 +1471,13 @@
     $("#ciScan", el).onclick = () => scanTicket(checkIn);
     $("#add", el).onclick = async () => {
       const ev = { kind: "event", title: $("#t", el).value.trim(), day: $("#d", el).value, time: $("#tm", el).value, location: $("#loc", el).value.trim(),
-        price: Number($("#pr", el).value) || 0, capacity: Number($("#cap", el).value) || 1, access: $("#acc", el).value, details: $("#det", el).value.trim() };
+        price: Number($("#pr", el).value) || 0, capacity: Number($("#cap", el).value) || 1, access: $("#acc", el).value, details: $("#det", el).value.trim(),
+        link: $("#lnk", el).value.trim() || null };
       if (!ev.title || !ev.time) return toast("Fill in at least the name and start time");
+      if (ev.link && !/^https?:\/\//.test(ev.link)) return toast("The link should start with https://");
       if (!ev.day) ev.day = null; // date to be confirmed
+      const file = $("#pic", el).files[0];
+      if (file) ev.image = await picture(file);
       try { await q(sb.from("events").insert(ev)); toast("Event added"); refresh(); } catch (e) { fail(e); }
     };
     $("#csv", el).onclick = () => {
@@ -1484,8 +1501,14 @@
     el.querySelectorAll("[data-poster]").forEach((b) => (b.onclick = () => posterModal(evs.find((x) => x.id === b.dataset.poster))));
     el.querySelectorAll("[data-upd]").forEach((b) => (b.onclick = async () => {
       const box = $(`[data-edit="${b.dataset.upd}"]`, el), f = (k) => $(`[data-f="${k}"]`, box).value;
-      const upd = { day: f("day") || null, time: f("time"), price: Number(f("price")) || 0, capacity: Number(f("capacity")) || 1, access: f("access") };
+      const upd = { day: f("day") || null, time: f("time"), price: Number(f("price")) || 0, capacity: Number(f("capacity")) || 1, access: f("access"), link: f("link").trim() || null };
+      if (upd.link && !/^https?:\/\//.test(upd.link)) return toast("The link should start with https://");
+      const file = $(`[data-pic="${b.dataset.upd}"]`, box).files[0];
+      if (file) upd.image = await picture(file);
       try { await q(sb.from("events").update(upd).eq("id", b.dataset.upd)); toast(upd.day ? "Saved" : "Saved, date still to be confirmed"); refresh(); } catch (e) { fail(e); }
+    }));
+    el.querySelectorAll("[data-nopic]").forEach((b) => (b.onclick = async () => {
+      try { await q(sb.from("events").update({ image: null }).eq("id", b.dataset.nopic)); toast("Picture removed"); refresh(); } catch (e) { fail(e); }
     }));
     el.querySelectorAll("[data-del]").forEach((b) => (b.onclick = async () => {
       if (b.dataset.sure !== "1") { b.dataset.sure = "1"; b.textContent = "Tap again to remove it and its bookings"; return; }
