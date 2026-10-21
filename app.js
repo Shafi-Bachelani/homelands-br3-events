@@ -22,6 +22,7 @@
   const isAdmin = () => !!me && me.role === "admin";
   // New members wait for the admin's approval before they can book or post.
   const pending = () => !!me && me.approved === false;
+  const eventsOnly = () => !!me && me.football === false && !me.family; // events-only membership, no football
   const APPLY_FORM = "https://form.jotform.com/262877635236064";
   const applyUrl = () => `${APPLY_FORM}?memberId=${encodeURIComponent(me.id)}&email=${encodeURIComponent(me.email || "")}`;
   async function loadMe() {
@@ -92,8 +93,8 @@
     else el.textContent = text;
   }
 
-  async function share(title, text) {
-    const url = location.href.split("#")[0];
+  async function share(title, text, link) {
+    const url = link || location.href.split("#")[0];
     if (navigator.share) { try { await navigator.share({ title, text, url }); } catch {} return; }
     try { await navigator.clipboard.writeText(`${text} ${url}`); toast("Link copied"); } catch { toast(url); }
   }
@@ -183,6 +184,7 @@
           <div><b>${esc(C.location)}</b><span class="muted">Location</span></div>${ICON.pin}
         </a>
         <div class="socials">${socials}</div>
+        <p class="muted" style="font-size:14px;line-height:1.5;margin-top:18px">${DISCLAIMER}</p>
       </div>`;
     $("#invite", el).onclick = () => share(C.name, `Join ${C.name} – ${C.tagline}`);
     $("#info", el).onclick = (e) => { e.preventDefault(); modal(`<h2>General Info</h2><p style="line-height:1.5">${esc(C.generalInfo)}</p>`); };
@@ -220,7 +222,7 @@
   async function joinGroup(id) {
     try { await q(sb.from("group_members").insert({ group_id: id, user_id: me.id })); toast("You're signed up ✓"); go("grouplist"); } catch (e) { fail(e); }
   }
-  async function events(el, alive) {
+  async function events(el, alive, arg) {
     loading(el);
     await sb.rpc("expire_unpaid"); // so the booked numbers don't count places already released
     const [list, places, mine] = await Promise.all([
@@ -242,15 +244,24 @@
       ${isOrg() ? `<a class="btn block" href="#admin">${ICON.tools} Add or manage events</a>` : ""}
       ${list.map((ev) => eventCard(ev, taken[ev.id] || 0, myBk[ev.id])).join("") || '<div class="empty"><h2>No events yet</h2></div>'}</div>`;
     el.querySelectorAll("[data-invite]").forEach((b) => (b.onclick = () => {
-      const ev = list.find((x) => x.id === b.dataset.invite); share(ev.title, `${ev.title} – ${fmtEvent(ev)}`);
+      shareEvent(list.find((x) => x.id === b.dataset.invite));
     }));
     el.querySelectorAll("[data-book]").forEach((b) => (b.onclick = () => bookSheet(list.find((x) => x.id === b.dataset.book), taken[b.dataset.book] || 0)));
     el.querySelectorAll("[data-ticket]").forEach((b) => (b.onclick = () => showTicket(b.dataset.ticket)));
     el.querySelectorAll("[data-join]").forEach((b) => (b.onclick = () => joinGroup(b.dataset.join)));
-    el.querySelectorAll("[data-event]").forEach((b) => (b.onclick = () => {
-      const ev = list.find((x) => x.id === b.dataset.event);
-      modal(`<h2>${esc(ev.title)}</h2><p class="muted">${fmtEvent(ev)}<br>${esc(ev.location)}</p><p style="line-height:1.5;white-space:pre-wrap">${esc(ev.details || "")}</p>`);
-    }));
+    const detail = (ev) => {
+      const card = el.querySelector(`[data-event="${ev.id}"]`)?.closest("article");
+      const act = card?.querySelector(".event-foot .go");
+      modal(`<h2>${esc(ev.title)}</h2><p class="muted">${ev.day ? fmtEvent(ev) : "Date to be confirmed"}<br>${esc(ev.location || "")}</p><p style="line-height:1.5;white-space:pre-wrap">${esc(ev.details || "")}</p>
+        <div class="form-actions">${act ? `<button class="btn solid block" id="dGo">${act.textContent}</button>` : ""}${isOrg() ? '<button class="btn block" id="dQr">QR code poster</button>' : ""}</div>`, (m) => {
+        if (act) $("#dGo", m).onclick = () => { closeModal(); act.click(); };
+        if (isOrg()) $("#dQr", m).onclick = () => posterModal(ev);
+      });
+    };
+    el.querySelectorAll("[data-event]").forEach((b) => (b.onclick = () => detail(list.find((x) => x.id === b.dataset.event))));
+    // A shared link or QR code opens that event straight away.
+    const linked = arg && list.find((x) => x.id === arg);
+    if (linked) { history.replaceState(null, "", location.pathname + "#events"); detail(linked); }
   }
   // A football game priced below the usual £6 gets a big banner on Events and Football.
   function offerBanner(games, onFootball) {
@@ -266,14 +277,14 @@
       <div class="event-body" data-event="${ev.id}" style="cursor:pointer">
         <div class="event-date tbc"><div class="d">TBC</div><div class="m">Date</div></div>
         <div><h2>${esc(ev.title)}</h2><p>Date to be confirmed</p>${ev.location ? `<p>${esc(ev.location)}</p>` : ""}
-          <div class="pills"><span class="tag">${Number(ev.price) > 0 ? money(ev.price) : "Free"}</span><span class="tag">${ev.access === "public" ? "Open to invited guests" : "Members only"}</span></div></div>
+          <div class="pills"><span class="tag">${Number(ev.price) > 0 ? money(ev.price) : "Free"}</span><span class="tag">${ACCESS_TAG[ev.access] || "Members only"}</span></div></div>
       </div>
       <div class="event-foot"><button data-invite="${ev.id}">${ICON.share.replace("viewBox", 'style="width:20px;height:20px" viewBox')} Share</button><button class="off" disabled>Booking opens soon</button></div>
     </article>`;
     const d = parseDay(ev.day), past = eventEnd(ev) < new Date(), left = Math.max(0, ev.capacity - taken);
     const fb = ev.kind === "football";
     const pills = `<div class="pills"><span class="tag">${fb ? `${money(ev.price)} or kitty` : Number(ev.price) > 0 ? money(ev.price) : "Free"}</span>
-      <span class="tag">${ev.access === "public" ? "Open to invited guests" : "Members only"}</span>
+      <span class="tag">${ACCESS_TAG[ev.access] || "Members only"}</span>
       ${ev.weekly ? `<span class="tag gold">Every ${DAYS[d.getDay()]}</span>` : !past ? `<span class="tag ${left ? "" : "warn"}">${left ? `${left} of ${ev.capacity} places left` : "Full"}</span>` : ""}
       ${!past && !ev.group_id ? `<span class="tag gold">${taken} booked</span>` : ""}</div>`;
     let action;
@@ -283,7 +294,7 @@
     else if (ev.group_id) action = joined.includes(ev.group_id) ? '<button class="go" data-go="groups">Signed up ✓ · Open chat</button>' : `<button class="go" data-join="${esc(ev.group_id)}">Sign up · Free</button>`;
     else if (fb) action = `<button class="go" data-go="football">${mine ? "Booked ✓ · Open" : "Open football"}</button>`;
     else if (mine) action = `<button class="go" data-ticket="${mine.code}">${mine.status === "waitlist" ? "On waitlist · Ticket" : "Booked ✓ · Ticket"}</button>`;
-    else if (!me && ev.access !== "public") action = '<button class="go" data-go="account">Members only · Sign in</button>';
+    else if (!me && ev.access === "members") action = '<button class="go" data-go="account">Members only · Sign in</button>';
     else action = `<button class="go" data-book="${ev.id}">${left ? "Book" : "Join waitlist"}</button>`;
     return `<article class="card">
       <div class="event-body" data-event="${ev.id}" style="cursor:pointer">
@@ -294,44 +305,74 @@
     </article>`;
   }
 
+  const ACCESS = { members: "Members only", public: "Members and invited guests", open: "Open to everyone (anyone with the link or QR code)" };
+  const ACCESS_TAG = { members: "Members only", public: "Open to invited guests", open: "Open to everyone" };
+  const accessOpts = (v) => Object.entries(ACCESS).map(([k, t]) => `<option value="${k}" ${k === v ? "selected" : ""}>${t}</option>`).join("");
+  const PRIVACY = "We keep your name, email and bookings only to run the association's events. For events open to the public, guests' details (name, age, gender and email) are kept only for the event and deleted 7 days after it. Ask the organiser and we'll delete your details sooner.";
+  const DISCLAIMER = `This organisation is an unincorporated association of people with similar values. To see our values, see About us in the app and visit <a href="https://www.ourhomelands.co.uk/" target="_blank" rel="noopener">ourhomelands.co.uk</a>.`;
+  const eventLink = (ev) => `${location.origin}${location.pathname}#events:${ev.id}`;
+  // A printable poster with a QR code that opens the event in the app.
+  function posterModal(ev) {
+    modal(`<button class="close" aria-label="Close">×</button>
+      <div class="poster" style="text-align:center">
+        <h2 style="margin:0 0 6px">${esc(ev.title)}</h2>
+        <p class="muted" style="margin:0 0 14px">${ev.day ? fmtEvent(ev) : "Date to be confirmed"}${ev.location ? ` · ${esc(ev.location)}` : ""}<br>${Number(ev.price) > 0 ? money(ev.price) : "Free"} · ${ACCESS_TAG[ev.access] || "Members only"}</p>
+        <div id="pq" style="display:inline-block;background:#fff;padding:12px;border-radius:12px"></div>
+        <p style="font-size:18px;margin:12px 0 0"><b>Scan to book</b></p>
+      </div>
+      ${ev.access === "open" ? "" : `<p class="note">This event is ${ev.access === "public" ? "for members and guests with an invite code" : "for members only"}, so people who scan it will need ${ev.access === "public" ? "an invite code" : "to be members"}. Choose "Open to everyone" in Organiser tools to let anyone book.</p>`}
+      <div class="form-actions"><button class="btn solid block" id="pDl">Save QR code image</button><button class="btn block" id="pSh">Share the link</button></div>`, (m) => {
+      qr($("#pq", m), eventLink(ev), 240);
+      $("#pDl", m).onclick = () => {
+        const c = $("#pq canvas", m), img = $("#pq img", m);
+        const a = document.createElement("a"); a.download = `${ev.title.replace(/[^a-z0-9]+/gi, "-")}-qr.png`;
+        a.href = c ? c.toDataURL("image/png") : img?.src; if (a.href) a.click();
+      };
+      $("#pSh", m).onclick = () => shareEvent(ev);
+    });
+  }
+  const shareEvent = (ev) => share(ev.title, `${ev.title} – ${ev.day ? fmtEvent(ev) : "date to be confirmed"}. Book here:`, eventLink(ev));
+
   function bookSheet(ev, taken) {
     const left = ev.capacity - taken, price = Number(ev.price);
     const placeOpts = [1, 2, 3, 4, 5, 6].map((n) => `<option>${n}</option>`).join("");
     const guest = !me;
     modal(`<h2>Book: ${esc(ev.title)}</h2>
       <p class="muted">${fmtEvent(ev)} · ${esc(ev.location)}<br>${price > 0 ? `${money(price)} per place, paid to the organiser.` : "Free."} ${left > 0 ? `${left} places left.` : "It's full, so you'll join the waitlist."}</p>
-      ${guest ? `<p class="note">Booking as a guest needs an invite code from a member. Members, <a href="#account" data-close>sign in</a> first.</p>
+      ${guest ? `<p class="note">${ev.access === "open" ? "Anyone can ask to book this event. An organiser checks each request before it's confirmed." : "Booking as a guest needs an invite code from a member."} Members, <a href="#account" data-close>sign in</a> first.</p>
         <label>Email</label><input id="ge" type="email" autocomplete="email">
-        <label>Invite code</label><input id="gc" placeholder="e.g. INV-7Q4KA" style="text-transform:uppercase">`
+        ${ev.access === "open" ? "" : '<label>Invite code</label><input id="gc" placeholder="e.g. INV-7Q4KA" style="text-transform:uppercase">'}`
         : ""}
       <label>Name</label><input id="gn" autocomplete="name" value="${guest ? "" : esc(me.name || "")}">
       <label>Age</label><input id="ga" type="number" min="1" max="120" inputmode="numeric">
       <label>Male or female</label><div class="radios" id="gg">
         <label class="check"><input type="radio" name="gg" value="Male"> Male</label>
         <label class="check"><input type="radio" name="gg" value="Female"> Female</label></div>
+      <label class="check" id="parentRow" hidden><input type="checkbox" id="parent"> I'm under 16 and my parent or guardian has given permission</label>
       <label>Places</label><select id="pl">${placeOpts}</select>
-      <label>Anything we should know? (optional)</label><textarea id="bn" maxlength="500" placeholder="For example health needs, allergies or access needs"></textarea>
-      <label>Special requests (optional)</label><textarea id="br" maxlength="500" placeholder="For example seating, dietary or who you'd like to sit with"></textarea>
+      <p class="muted" style="font-size:14px;line-height:1.5">${DISCLAIMER} ${PRIVACY}</p>
       <div class="form-actions"><button class="btn solid block" id="ok">${left > 0 ? "Book" : "Join waitlist"}</button></div>`, (m) => {
       m.querySelectorAll("[data-close]").forEach((a) => (a.onclick = closeModal));
+      const young = () => { const a = Number($("#ga", m).value); return a > 0 && a < 16; };
+      $("#ga", m).oninput = () => ($("#parentRow", m).hidden = !young());
       $("#ok", m).onclick = async () => {
         const places = Number($("#pl", m).value);
         const name = $("#gn", m).value.trim(), age = Number($("#ga", m).value) || null, gender = m.querySelector('[name="gg"]:checked')?.value || "";
         if (!name) return toast("Please add your name");
         if (!age) return toast("Please add your age");
         if (!gender) return toast("Please choose male or female");
+        if (young() && !$("#parent", m).checked) return toast("Under 16s need permission from a parent or guardian to book");
         try {
           $("#ok", m).disabled = true;
           let code;
           if (guest) {
             const r = await q(sb.rpc("guest_book", { p_event: ev.id, p_name: name, p_age: age,
-              p_email: $("#ge", m).value.trim(), p_code: $("#gc", m).value, p_places: places }));
+              p_email: $("#ge", m).value.trim(), p_code: $("#gc", m)?.value || "", p_places: places }));
             code = r[0].code; state.guestTickets.push(code); save();
           } else {
             code = (await q(sb.rpc("book_event", { p_event: ev.id, p_places: places }))).code;
           }
-          await q(sb.rpc("set_booking_details", { p_code: code, p_name: name, p_age: age, p_gender: gender,
-            p_note: $("#bn", m).value, p_request: $("#br", m).value })).catch(() => {});
+          await q(sb.rpc("set_booking_details", { p_code: code, p_name: name, p_age: age, p_gender: gender, p_parent: young() ? $("#parent", m).checked : null })).catch(() => {});
           closeModal(); await refresh(); showTicket(code);
         } catch (e) { $("#ok", m).disabled = false; fail(e); }
       };
@@ -345,13 +386,15 @@
       modal(`<h2>${esc(t.title)}</h2>
         <p class="muted">${short(parseDay(t.day))} · ${hhmm(t.time)} · ${esc(t.location)}</p>
         <div class="ticket">
-          <div class="stamp ${t.status}">${t.status === "waitlist" ? "On the waitlist" : t.status === "cancelled" ? "Cancelled" : t.checked_in ? "Checked in" : "Confirmed"}</div>
+          <div class="stamp ${t.status}">${t.status === "waitlist" ? "On the waitlist" : t.status === "cancelled" ? "Cancelled" : t.status === "pending" ? "Waiting for approval" : t.status === "declined" ? "Not approved" : t.checked_in ? "Checked in" : "Confirmed"}</div>
           <div class="qr" id="qr"></div>
           <div class="code">${esc(t.code)}</div>
           <div>${esc(t.display_name)} · ${t.places} place${t.places > 1 ? "s" : ""}</div>
         </div>
         ${!t.paid && Number(t.amount) > 0 && t.status === "booked" ? `<p class="note">${money(t.amount)} still to pay.</p><button class="btn solid block" data-pay="${esc(t.code)}">Pay ${money(t.amount)} by card</button>` : ""}
-        <p class="muted" style="font-size:14px">Show this at the door. A screenshot works too.</p>`, (m) => { if (t.status !== "waitlist") qr($("#qr", m), t.code); });
+        ${t.status === "pending" ? '<p class="note">Thanks, your request has been received. An organiser will check it, and your QR ticket appears here once it\'s approved. Open Schedule on this phone to check.</p>'
+          : t.status === "declined" ? '<p class="note">Sorry, we can\'t offer you a place at this event.</p>'
+          : '<p class="muted" style="font-size:14px">Show this at the door. A screenshot works too.</p>'}`, (m) => { if (["booked", "cancelled"].includes(t.status)) qr($("#qr", m), t.code); });
       // If they paid by card but didn't come back through Square's return link, check with Square now.
       if (!t.paid && Number(t.amount) > 0 && !recheck) payApi({ code: t.code, confirm: true }).then((r) => { if (r.paid) { toast("Payment received, thank you!"); showTicket(t.code, true); } }).catch(() => {});
     } catch (e) { fail(e); }
@@ -475,6 +518,7 @@
   }
   async function football(el, alive) {
     if (!me) return footballGuest(el, alive);
+    if (eventsOnly()) { el.innerHTML = `<div class="empty"><h2>Friday football</h2><p class="muted" style="font-size:17px;line-height:1.5">Your membership is for events only. If you'd like to play football, ask an organiser to add it to your membership.</p></div>`; return; }
     loading(el);
     await sb.rpc("expire_unpaid");
     const now = new Date();
@@ -831,7 +875,7 @@
   const ANNOUNCE = "announcements";
   const ORG_POSTS = ["football-accounts"]; // chats only organisers can post in
   const AUTO_GROUPS = ["football-accounts"]; // every approved member is in these, no sign-up
-  const inGroup = (id) => joined.includes(id) || isOrg() || (AUTO_GROUPS.includes(id) && !!me && !pending());
+  const inGroup = (id) => joined.includes(id) || isOrg() || (AUTO_GROUPS.includes(id) && !!me && !pending() && !eventsOnly());
   const PENDING_NOTE = '<p class="note">You can join in once the admin has approved your membership.</p>';
   // Chats: open, informal chats anyone can join in. Joined: sign-up chats (like the Quran target).
   // Announcements are pinned at the top of both.
@@ -1199,7 +1243,7 @@
       <h2 style="margin-top:24px">Your name</h2>
       <div class="row"><input id="nm" value="${esc(me.name)}"><button class="btn small" id="saveNm">Save</button></div>
       <div class="form-actions"><button class="btn block" id="out">Sign out</button></div>
-      <p class="muted" style="font-size:14px;line-height:1.5">We keep your name, email and bookings only to run the association's events. Ask the organiser and we'll delete your details.</p>
+      <p class="muted" style="font-size:14px;line-height:1.5">${PRIVACY}</p>
     </div>`;
     el.querySelectorAll("[data-ticket]").forEach((b) => (b.onclick = () => showTicket(b.dataset.ticket)));
     $("#newInv", el).onclick = async () => {
@@ -1222,7 +1266,10 @@
       <div class="seg"><button data-mode="in" class="on">Sign in</button><button data-mode="up">Join</button></div>
       <div id="nameRow" hidden><label>Your full name</label><input id="nm" autocomplete="name">
         <label>Your postcode</label><input id="pc" autocomplete="postal-code" placeholder="e.g. BR3 1AA" style="text-transform:uppercase">
-        <p class="muted" style="font-size:14px">Membership is for people living within ${HOME_MILES} miles of BR3. Only the admin can see your postcode.</p></div>
+        <p class="muted" style="font-size:14px">Membership is for people living within ${HOME_MILES} miles of BR3. Only the admin can see your postcode.</p>
+        <label>What would you like to join for?</label><div class="radios">
+          <label class="check"><input type="radio" name="lvl" value="all" checked> Events and Friday football</label>
+          <label class="check"><input type="radio" name="lvl" value="events"> Events only</label></div></div>
       <label>Email</label><input id="em" type="email" autocomplete="email">
       <label>Password</label><input id="pw" type="password" autocomplete="current-password" minlength="6">
       <div class="form-actions"><button class="btn solid block" id="go">Sign in</button></div>
@@ -1250,6 +1297,7 @@
           const miles = await milesFromHome(postcode);
           if (miles === false) { $("#go", el).disabled = false; return toast("We couldn't find that postcode. Please check it"); }
           const r = await q(sb.auth.signUp({ email, password, options: { data: { name, postcode, miles: miles == null ? "" : miles.toFixed(1) } } }));
+          if (r.session && el.querySelector('[name="lvl"]:checked')?.value === "events") await q(sb.rpc("set_my_football", { p_on: false })).catch(() => {});
           const far = miles == null || miles > HOME_MILES;
           const uid = r.user?.id || r.session?.user?.id;
           const form = `${APPLY_FORM}?memberId=${encodeURIComponent(uid || "")}&email=${encodeURIComponent(email)}`;
@@ -1278,7 +1326,7 @@
     try {
       const t = await q(sb.rpc("check_in_details", { p_code: code }));
       const ok = t.status === "booked" && !t.already;
-      const head = t.status === "waitlist" ? "On the waitlist, not booked" : t.status === "cancelled" ? "This booking was cancelled" : t.already ? "Already checked in" : "Checked in ✓";
+      const head = t.status === "pending" ? "Not approved yet, not booked" : t.status === "declined" ? "This booking was declined" : t.status === "waitlist" ? "On the waitlist, not booked" : t.status === "cancelled" ? "This booking was cancelled" : t.already ? "Already checked in" : "Checked in ✓";
       const row = (k, v) => `<div class="list-row"><span class="muted">${k}</span><b style="text-align:right">${v}</b></div>`;
       modal(`<button class="close" aria-label="Close">×</button>
         <p class="${ok ? "" : "note"}" style="font-size:18px;margin:0 0 6px"><b>${head}</b></p>
@@ -1288,8 +1336,7 @@
         ${t.age || t.gender ? row("Age", `${t.age ? esc(t.age) : "?"}${t.gender ? ` · ${esc(t.gender)}` : ""}`) : ""}
         ${t.guest ? row("Guest", t.booked_by ? `invited by ${esc(t.booked_by)}` : "yes") : t.booked_by ? row("Booked by", esc(t.booked_by)) : ""}
         ${Number(t.amount) > 0 ? row("Payment", t.paid ? `Paid ${money(t.amount)}${t.method ? ` (${esc(t.method)})` : ""}` : `<span style="color:var(--warn,#e0a030)">${money(t.amount)} to pay</span>`) : row("Payment", "Free")}
-        <h3>Anything we should know</h3><p class="${t.note ? "note" : "muted"}" style="white-space:pre-wrap">${t.note ? esc(t.note) : "Nothing added."}</p>
-        ${t.request ? `<h3>Special requests</h3><p class="note" style="white-space:pre-wrap">${esc(t.request)}</p>` : ""}
+        ${t.age && t.age < 16 ? row("Under 16", t.parent_ok ? "Parent permission given" : '<span style="color:var(--warn,#e0a030)">No parent permission recorded</span>') : ""}
         <div class="form-actions"><button class="btn solid block" id="ciNext">${again ? "Scan the next ticket" : "Done"}</button></div>`, (m) => {
         $("#ciNext", m).onclick = () => { closeModal(); if (again) scanTicket(checkIn); };
       });
@@ -1367,27 +1414,30 @@
       <div class="grid2"><div><label>Date (leave empty if not decided)</label><input id="d" type="date"></div><div><label>Start time</label><input id="tm" type="time" value="19:00"></div></div>
       <label>Where</label><input id="loc">
       <div class="grid2"><div><label>Price per place (£, 0 = free)</label><input id="pr" type="number" min="0" step="0.5" value="0"></div><div><label>Places</label><input id="cap" type="number" min="1" value="30"></div></div>
-      <label>Who can book</label><select id="acc"><option value="members">Members only</option><option value="public">Members and invited guests</option></select>
+      <label>Who can book</label><select id="acc">${accessOpts("members")}</select>
       <label>Details</label><textarea id="det"></textarea>
       <div class="form-actions"><button class="btn solid block" id="add">Add event</button></div>
       <h2 style="margin-top:28px">Events and bookings</h2>
+      <button class="btn block" id="csv">Download all event bookings (opens in Google Sheets or Excel)</button>
       ${evs.map((e) => {
         const list = bks.filter((b) => b.event_id === e.id);
-        return `<details class="card adm"><summary><b>${esc(e.title)}</b> <span class="muted">${e.day ? short(parseDay(e.day)) : "Date TBC"} · ${list.reduce((t, b) => t + (b.status === "booked" ? b.places : 0), 0)}/${e.capacity}</span></summary>
+        return `<details class="card adm" ${list.some((b) => b.status === "pending") ? "open" : ""}><summary><b>${esc(e.title)}</b> <span class="muted">${e.day ? short(parseDay(e.day)) : "Date TBC"} · ${list.reduce((t, b) => t + (b.status === "booked" ? b.places : 0), 0)}/${e.capacity}</span>${list.some((b) => b.status === "pending") ? ` <span class="tag warn">${list.filter((b) => b.status === "pending").length} to approve</span>` : ""}</summary>
           <div class="scroll"><table><thead><tr><th>Name</th><th>Who</th><th>Places</th><th>Status</th><th>Code</th></tr></thead><tbody>
-          ${list.map((b) => `<tr><td>${esc(b.display_name)}</td><td>${g[b.id] ? `Guest, age ${g[b.id].age}, ${esc(g[b.id].email)}, invited by ${esc(g[b.id].profiles?.name || "?")}` : "Member"}</td><td>${b.places}</td><td>${b.status}${b.checked_in ? ", in" : ""}${b.paid ? "" : ", unpaid"}</td><td class="mono">${b.code}</td></tr>`).join("") || '<tr><td colspan="5" class="muted">No bookings yet.</td></tr>'}
+          ${list.map((b) => `<tr><td>${esc(b.display_name)}</td><td>${g[b.id] ? `Guest, age ${g[b.id].age}, ${esc(g[b.id].email)}, invited by ${esc(g[b.id].profiles?.name || "?")}` : "Member"}</td><td>${b.places}</td><td>${b.status === "pending" ? `<b>Waiting for approval</b><br><button class="btn small" data-ok="${b.id}">Approve</button> <button class="btn small danger" data-no="${b.id}">Decline</button>` : b.status}${b.checked_in ? ", in" : ""}${b.paid || b.status === "pending" ? "" : ", unpaid"}${b.age < 16 && b.age ? `<br>Under 16, parent permission: ${b.parent_ok ? "yes" : "no"}` : ""}</td><td class="mono">${b.code}</td></tr>`).join("") || '<tr><td colspan="5" class="muted">No bookings yet.</td></tr>'}
           </tbody></table></div>
           ${e.kind === "event" ? `<div class="grid2" data-edit="${e.id}"><div><label>Date</label><input data-f="day" type="date" value="${e.day || ""}"></div><div><label>Start time</label><input data-f="time" type="time" value="${hhmm(e.time)}"></div>
-            <div><label>Price (£)</label><input data-f="price" type="number" min="0" step="0.5" value="${Number(e.price)}"></div><div><label>Places</label><input data-f="capacity" type="number" min="1" value="${e.capacity}"></div></div>
-            <div class="row" style="margin:12px 0"><button class="btn small" data-upd="${e.id}">Save changes</button></div>` : ""}
+            <div><label>Price (£)</label><input data-f="price" type="number" min="0" step="0.5" value="${Number(e.price)}"></div><div><label>Places</label><input data-f="capacity" type="number" min="1" value="${e.capacity}"></div>
+            <div style="grid-column:1/-1"><label>Who can book</label><select data-f="access">${accessOpts(e.access)}</select></div></div>
+            <div class="row" style="margin:12px 0"><button class="btn small" data-upd="${e.id}">Save changes</button><button class="btn small" data-poster="${e.id}">QR code poster</button></div>` : ""}
           <button class="btn small danger" data-del="${e.id}">Remove event</button></details>`;
       }).join("")}
       <h2 style="margin-top:28px">Members</h2>
-      <p class="muted">Family members pay by transfer and never by card. Tick Kitty for anyone who has already paid £15 for the current kitty.${isAdmin() ? " Only you, as admin, can change roles." : ""}</p>
+      <p class="muted">Family members pay by transfer and never by card. Tick Kitty for anyone who has already paid £15 for the current kitty. Untick Football for events-only members.${isAdmin() ? " Only you, as admin, can change roles." : ""}</p>
       ${members.map((m) => `<div class="member-row" data-mid="${m.id}"><b>${esc(m.name)}</b>
         <div class="row" style="flex-wrap:wrap;gap:8px">
           <select data-f="role" ${isAdmin() ? "" : "disabled"}>${ROLES.map((r) => `<option ${m.role === r ? "selected" : ""}>${r}</option>`).join("")}</select>
           <label class="check"><input type="checkbox" data-f="family" ${m.family ? "checked" : ""}> Family</label>
+          <label class="check"><input type="checkbox" data-f="football" ${m.football !== false || m.family ? "checked" : ""}> Football</label>
           <label class="check"><input type="checkbox" data-f="kitty" ${m.kitty_session === fs.session_no ? "checked" : ""}> Kitty ${fs.session_no}</label>
           <label class="check">Credit £<input data-f="credit" type="number" step="1" min="0" value="${Number(m.credit)}" style="width:70px"></label>
           <button class="btn small" data-save="${m.id}">Save</button></div></div>`).join("")}
@@ -1413,9 +1463,28 @@
       if (!ev.day) ev.day = null; // date to be confirmed
       try { await q(sb.from("events").insert(ev)); toast("Event added"); refresh(); } catch (e) { fail(e); }
     };
+    $("#csv", el).onclick = () => {
+      const evMap = Object.fromEntries(evs.map((e) => [e.id, e])), who = Object.fromEntries(members.map((x) => [x.id, x.name]));
+      const head = ["Event", "Date", "Time", "Name", "Age", "Male/Female", "Places", "Member or guest", "Guest email", "Invited or booked by", "Status", "Paid", "Amount £", "Checked in", "Under 16 parent permission", "Ticket code", "Booked on"];
+      const rows = bks.filter((b) => evMap[b.event_id]?.kind === "event")
+        .sort((a, b) => (evMap[a.event_id].day || "9").localeCompare(evMap[b.event_id].day || "9") || evMap[a.event_id].title.localeCompare(evMap[b.event_id].title) || a.display_name.localeCompare(b.display_name))
+        .map((b) => { const e = evMap[b.event_id], gu = g[b.id];
+          return [e.title, e.day || "TBC", hhmm(e.time), b.display_name, b.age ?? gu?.age ?? "", b.gender || "", b.places, gu ? "Guest" : "Member", gu?.email || "",
+            gu ? gu.profiles?.name || "" : b.booked_by ? who[b.booked_by] || "" : "", b.status, b.paid ? "Yes" : "No", Number(b.amount || 0).toFixed(2), b.checked_in ? "Yes" : "No",
+            b.age && b.age < 16 ? (b.parent_ok ? "Yes" : "No") : "", b.code, (b.created_at || "").slice(0, 10)]; });
+      const cell = (v) => { const t = String(v ?? ""); return /[",\n\r]/.test(t) || /^[=+\-@]/.test(t) ? `"${(/^[=+\-@]/.test(t) ? "'" : "") + t.replace(/"/g, '""')}"` : t; };
+      const csv = "\ufeff" + [head, ...rows].map((r) => r.map(cell).join(",")).join("\r\n");
+      const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+      a.download = `event-bookings-${dayKey(new Date())}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      if (!rows.length) toast("No event bookings yet, the file only has headings");
+    };
+    const decide = (id, ok) => q(sb.rpc("decide_booking", { p_id: id, p_ok: ok })).then((v) => { toast(ok ? (v === "waitlist" ? "Approved, but it's full so they're on the waitlist" : "Approved") : "Declined"); refresh(); }).catch(fail);
+    el.querySelectorAll("[data-ok]").forEach((b) => (b.onclick = () => decide(b.dataset.ok, true)));
+    el.querySelectorAll("[data-no]").forEach((b) => (b.onclick = () => confirm("Decline this booking?") && decide(b.dataset.no, false)));
+    el.querySelectorAll("[data-poster]").forEach((b) => (b.onclick = () => posterModal(evs.find((x) => x.id === b.dataset.poster))));
     el.querySelectorAll("[data-upd]").forEach((b) => (b.onclick = async () => {
       const box = $(`[data-edit="${b.dataset.upd}"]`, el), f = (k) => $(`[data-f="${k}"]`, box).value;
-      const upd = { day: f("day") || null, time: f("time"), price: Number(f("price")) || 0, capacity: Number(f("capacity")) || 1 };
+      const upd = { day: f("day") || null, time: f("time"), price: Number(f("price")) || 0, capacity: Number(f("capacity")) || 1, access: f("access") };
       try { await q(sb.from("events").update(upd).eq("id", b.dataset.upd)); toast(upd.day ? "Saved" : "Saved, date still to be confirmed"); refresh(); } catch (e) { fail(e); }
     }));
     el.querySelectorAll("[data-del]").forEach((b) => (b.onclick = async () => {
@@ -1427,6 +1496,7 @@
       try {
         await q(sb.rpc("update_member", { p_id: b.dataset.save, p_role: isAdmin() ? f("role").value : null, p_family: f("family").checked, p_credit: Number(f("credit").value) || 0 }));
         const m = members.find((x) => x.id === b.dataset.save);
+        if (f("football").checked !== (m.football !== false)) await q(sb.rpc("set_member_football", { p_id: m.id, p_on: f("football").checked }));
         if (f("kitty").checked !== (m.kitty_session === fs.session_no)) await q(sb.rpc("set_kitty", { p_id: m.id, p_on: f("kitty").checked }));
         if (b.dataset.save === me.id) await loadMe();
         toast("Saved");
