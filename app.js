@@ -301,26 +301,37 @@
     modal(`<h2>Book: ${esc(ev.title)}</h2>
       <p class="muted">${fmtEvent(ev)} · ${esc(ev.location)}<br>${price > 0 ? `${money(price)} per place, paid to the organiser.` : "Free."} ${left > 0 ? `${left} places left.` : "It's full, so you'll join the waitlist."}</p>
       ${guest ? `<p class="note">Booking as a guest needs an invite code from a member. Members, <a href="#account" data-close>sign in</a> first.</p>
-        <label>Your full name</label><input id="gn" autocomplete="name">
-        <label>Age</label><input id="ga" type="number" min="1" max="120">
         <label>Email</label><input id="ge" type="email" autocomplete="email">
         <label>Invite code</label><input id="gc" placeholder="e.g. INV-7Q4KA" style="text-transform:uppercase">`
-        : `<p>Booking as <b>${esc(me.name)}</b>.</p>`}
+        : ""}
+      <label>Name</label><input id="gn" autocomplete="name" value="${guest ? "" : esc(me.name || "")}">
+      <label>Age</label><input id="ga" type="number" min="1" max="120" inputmode="numeric">
+      <label>Male or female</label><div class="radios" id="gg">
+        <label class="check"><input type="radio" name="gg" value="Male"> Male</label>
+        <label class="check"><input type="radio" name="gg" value="Female"> Female</label></div>
       <label>Places</label><select id="pl">${placeOpts}</select>
+      <label>Anything we should know? (optional)</label><textarea id="bn" maxlength="500" placeholder="For example health needs, allergies or access needs"></textarea>
+      <label>Special requests (optional)</label><textarea id="br" maxlength="500" placeholder="For example seating, dietary or who you'd like to sit with"></textarea>
       <div class="form-actions"><button class="btn solid block" id="ok">${left > 0 ? "Book" : "Join waitlist"}</button></div>`, (m) => {
       m.querySelectorAll("[data-close]").forEach((a) => (a.onclick = closeModal));
       $("#ok", m).onclick = async () => {
         const places = Number($("#pl", m).value);
+        const name = $("#gn", m).value.trim(), age = Number($("#ga", m).value) || null, gender = m.querySelector('[name="gg"]:checked')?.value || "";
+        if (!name) return toast("Please add your name");
+        if (!age) return toast("Please add your age");
+        if (!gender) return toast("Please choose male or female");
         try {
           $("#ok", m).disabled = true;
           let code;
           if (guest) {
-            const r = await q(sb.rpc("guest_book", { p_event: ev.id, p_name: $("#gn", m).value, p_age: Number($("#ga", m).value) || null,
+            const r = await q(sb.rpc("guest_book", { p_event: ev.id, p_name: name, p_age: age,
               p_email: $("#ge", m).value.trim(), p_code: $("#gc", m).value, p_places: places }));
             code = r[0].code; state.guestTickets.push(code); save();
           } else {
             code = (await q(sb.rpc("book_event", { p_event: ev.id, p_places: places }))).code;
           }
+          await q(sb.rpc("set_booking_details", { p_code: code, p_name: name, p_age: age, p_gender: gender,
+            p_note: $("#bn", m).value, p_request: $("#br", m).value })).catch(() => {});
           closeModal(); await refresh(); showTicket(code);
         } catch (e) { $("#ok", m).disabled = false; fail(e); }
       };
@@ -1261,6 +1272,62 @@
     };
   }
 
+  // ---------- CHECK-IN AT THE DOOR ----------
+  // Checks a ticket in and shows who it is, what they booked, whether they've paid and any note.
+  async function checkIn(code, again) {
+    try {
+      const t = await q(sb.rpc("check_in_details", { p_code: code }));
+      const ok = t.status === "booked" && !t.already;
+      const head = t.status === "waitlist" ? "On the waitlist, not booked" : t.status === "cancelled" ? "This booking was cancelled" : t.already ? "Already checked in" : "Checked in ✓";
+      const row = (k, v) => `<div class="list-row"><span class="muted">${k}</span><b style="text-align:right">${v}</b></div>`;
+      modal(`<button class="close" aria-label="Close">×</button>
+        <p class="${ok ? "" : "note"}" style="font-size:18px;margin:0 0 6px"><b>${head}</b></p>
+        <h2 style="font-size:26px;margin:0 0 12px">${esc(t.guest_name || t.name)}</h2>
+        ${row("Event", `${esc(t.title)} · ${short(parseDay(t.day))} ${hhmm(t.time)}`)}
+        ${row("Places", t.places)}
+        ${t.age || t.gender ? row("Age", `${t.age ? esc(t.age) : "?"}${t.gender ? ` · ${esc(t.gender)}` : ""}`) : ""}
+        ${t.guest ? row("Guest", t.booked_by ? `invited by ${esc(t.booked_by)}` : "yes") : t.booked_by ? row("Booked by", esc(t.booked_by)) : ""}
+        ${Number(t.amount) > 0 ? row("Payment", t.paid ? `Paid ${money(t.amount)}${t.method ? ` (${esc(t.method)})` : ""}` : `<span style="color:var(--warn,#e0a030)">${money(t.amount)} to pay</span>`) : row("Payment", "Free")}
+        <h3>Anything we should know</h3><p class="${t.note ? "note" : "muted"}" style="white-space:pre-wrap">${t.note ? esc(t.note) : "Nothing added."}</p>
+        ${t.request ? `<h3>Special requests</h3><p class="note" style="white-space:pre-wrap">${esc(t.request)}</p>` : ""}
+        <div class="form-actions"><button class="btn solid block" id="ciNext">${again ? "Scan the next ticket" : "Done"}</button></div>`, (m) => {
+        $("#ciNext", m).onclick = () => { closeModal(); if (again) scanTicket(checkIn); };
+      });
+    } catch (e) { fail(e); if (again) setTimeout(() => scanTicket(checkIn), 1200); }
+  }
+  // Opens the camera and reads a ticket's QR code. Uses the phone's own reader where it has one.
+  async function scanTicket(onCode) {
+    if (!navigator.mediaDevices?.getUserMedia) return toast("This phone can't open the camera here. Type the code instead");
+    modal(`<button class="close" aria-label="Close">×</button><h2>Scan a ticket</h2>
+      <video id="cam" playsinline muted style="width:100%;border-radius:12px;background:#000;aspect-ratio:1;object-fit:cover"></video>
+      <p class="muted">Point the camera at the QR code on their ticket.</p>`);
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false }); }
+    catch { closeModal(); return toast("Camera not allowed. Allow camera access, or type the code instead"); }
+    const video = $("#cam"); video.srcObject = stream; await video.play().catch(() => {});
+    let detect;
+    if ("BarcodeDetector" in window) {
+      const bd = new BarcodeDetector({ formats: ["qr_code"] });
+      detect = async () => (await bd.detect(video))[0]?.rawValue;
+    } else {
+      if (!window.jsQR) await new Promise((ok, no) => { const s = document.createElement("script"); s.src = "vendor/jsqr.js"; s.onload = ok; s.onerror = no; document.head.appendChild(s); }).catch(() => {});
+      const c = document.createElement("canvas"), cx = c.getContext("2d", { willReadFrequently: true });
+      detect = async () => {
+        if (!window.jsQR || !video.videoWidth) return null;
+        c.width = video.videoWidth; c.height = video.videoHeight; cx.drawImage(video, 0, 0);
+        return window.jsQR(cx.getImageData(0, 0, c.width, c.height).data, c.width, c.height)?.data;
+      };
+    }
+    const stop = () => stream.getTracks().forEach((t) => t.stop());
+    const tick = async () => {
+      if ($("#modal").hidden || !$("#cam")) return stop();
+      const code = await detect().catch(() => null);
+      if (code) { stop(); closeModal(); return onCode(code.trim(), true); }
+      setTimeout(tick, 250);
+    };
+    tick();
+  }
+
   // ---------- ORGANISER TOOLS ----------
   async function admin(el, alive) {
     if (!isOrg()) { el.innerHTML = '<div class="empty"><h2>Organisers only</h2></div>'; return; }
@@ -1293,7 +1360,8 @@
           <div class="row" style="gap:8px"><button class="btn solid small" data-approve="${m.id}">Approve</button><button class="btn small" data-decline="${m.id}" data-name="${esc(m.name)}">Decline</button></div></div>`;
       }).join("")}` : ""}
       <h2>Check someone in</h2>
-      <div class="row"><input id="ci" placeholder="Ticket code, e.g. AA-7K2QX" style="text-transform:uppercase"><button class="btn small" id="ciGo">Check in</button></div>
+      <button class="btn solid block" id="ciScan" style="margin-bottom:10px">Scan a ticket's QR code</button>
+      <div class="row"><input id="ci" placeholder="Or type the code, e.g. AA-7K2QX" style="text-transform:uppercase"><button class="btn small" id="ciGo">Check in</button></div>
       <h2 style="margin-top:28px">Add an event</h2>
       <label>Event name</label><input id="t">
       <div class="grid2"><div><label>Date (leave empty if not decided)</label><input id="d" type="date"></div><div><label>Start time</label><input id="tm" type="time" value="19:00"></div></div>
@@ -1336,7 +1404,8 @@
       if (!confirm(`Decline ${b.dataset.name}? Their account will be removed.`)) return;
       try { await q(sb.rpc("decline_member", { p_id: b.dataset.decline })); toast("Declined and removed"); refresh(); } catch (e) { fail(e); }
     }));
-    $("#ciGo", el).onclick = async () => { try { modal(`<h2>Check in</h2><p style="font-size:18px">${esc(await q(sb.rpc("check_in", { p_code: $("#ci", el).value })))}</p>`); $("#ci", el).value = ""; } catch (e) { fail(e); } };
+    $("#ciGo", el).onclick = () => { const c = $("#ci", el).value.trim(); if (!c) return toast("Type the ticket code"); $("#ci", el).value = ""; checkIn(c); };
+    $("#ciScan", el).onclick = () => scanTicket(checkIn);
     $("#add", el).onclick = async () => {
       const ev = { kind: "event", title: $("#t", el).value.trim(), day: $("#d", el).value, time: $("#tm", el).value, location: $("#loc", el).value.trim(),
         price: Number($("#pr", el).value) || 0, capacity: Number($("#cap", el).value) || 1, access: $("#acc", el).value, details: $("#det", el).value.trim() };
