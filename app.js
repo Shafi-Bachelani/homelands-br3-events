@@ -532,9 +532,9 @@
           ${friend.paid ? "" : `<p class="note">Please pay <b>${money(friend.amount)}</b> for your friend ${new Date(friend.created_at) > payBy ? "within <b>30 minutes</b>" : "before <b>Thursday 11pm</b>"}, or their place is released.${me.family ? " Pay the organiser by bank transfer." : ""}</p>
             ${me.family ? "" : `<button class="btn solid" data-pay="${esc(friend.code)}" style="margin-bottom:10px">Pay ${money(friend.amount)} for your friend</button>`}
             ${!me.family && Number(me.credit) >= Number(friend.amount) ? `<button class="btn" id="friendCredit" style="margin-bottom:10px">Use ${money(friend.amount)} of my credit</button>` : ""}
-            ${me.family ? "" : `<button class="btn" id="friendLink" style="margin-bottom:10px">${ICON.share} Send your friend a payment link</button>`}`}
+            <button class="btn" id="friendLink" style="margin-bottom:10px">${ICON.share} Send your friend a payment link</button>`}
           <button class="btn" id="cancelFriend">Remove my friend</button>`
-        : canAdd && bookings.length < ev.capacity ? `<h3>Bring a friend</h3><p class="muted">You can add one friend per game. ${me.family ? `You pay their ${F$} by transfer` : `Pay their ${F$} yourself${Number(me.credit) >= F ? ", by card or from your credit," : ""} or send them a payment link`}.</p><button class="btn" id="addFriend">Add a friend</button>` : "";
+        : canAdd && bookings.length < ev.capacity ? `<h3>Bring a friend</h3><p class="muted">You can add one friend per game. ${me.family ? `Pay their ${F$} by transfer, or send them a payment link` : `Pay their ${F$} yourself${Number(me.credit) >= F ? ", by card or from your credit," : ""} or send them a payment link`}.</p><button class="btn" id="addFriend">Add a friend</button>` : "";
       you = `<div class="card fb"><h2>You</h2>${pills}${body}${friendBox}</div>`;
 
       const paidCount = bookings.filter((b) => b.paid).length;
@@ -557,13 +557,13 @@
     el.querySelectorAll("[data-choice]").forEach((b) => (b.onclick = () => riskOk() && bookFootball(ev, b.dataset.choice)));
     const af = $("#addFriend", el);
     if (af) af.onclick = () => modal(`<h2>Add a friend</h2>
-      <p class="muted">They'll appear on the roster as <b>Their name (${esc(me.name)})</b>. ${me.family ? `You pay their ${F$} by bank transfer.` : `Pay their ${F$} yourself, or send them a payment link. If it isn't paid ${payByText(ev, new Date())}, their place is released.`}</p>
+      <p class="muted">They'll appear on the roster as <b>Their name (${esc(me.name)})</b>. Pay their ${F$} yourself${me.family ? " by bank transfer" : ""}, or send them a payment link. If it isn't paid ${payByText(ev, new Date())}, their place is released.</p>
       <label>Your friend's name</label><input id="fName" maxlength="40" placeholder="Their full name">
       <label class="check"><input type="checkbox" id="fRisk"> My friend is 16 or over and agrees they play at their own risk</label>
-      ${me.family ? "" : `<label>Who pays?</label>
-        <label class="check"><input type="radio" name="fPay" value="card" checked> I'll pay ${F$} by card</label>
-        ${Number(me.credit) >= F ? `<label class="check"><input type="radio" name="fPay" value="credit"> I'll use ${F$} of my credit (${money(me.credit)} available)</label>` : ""}
-        <label class="check"><input type="radio" name="fPay" value="link"> Send my friend a payment link</label>`}
+      <label>Who pays?</label>
+        <label class="check"><input type="radio" name="fPay" value="card" checked> I'll pay ${F$} ${me.family ? "by bank transfer" : "by card"}</label>
+        ${!me.family && Number(me.credit) >= F ? `<label class="check"><input type="radio" name="fPay" value="credit"> I'll use ${F$} of my credit (${money(me.credit)} available)</label>` : ""}
+        <label class="check"><input type="radio" name="fPay" value="link"> Send my friend a payment link</label>
       <div class="form-actions"><button class="btn solid block" id="fGo">Add to the roster · ${F$}</button></div>`, (m) => {
       $("#fName", m).focus();
       $("#fGo", m).onclick = async () => {
@@ -571,7 +571,7 @@
         if (!$("#fRisk", m).checked) return toast("Please tick to confirm your friend plays at their own risk");
         try {
           const how = m.querySelector('[name="fPay"]:checked')?.value;
-          const b = await q(sb.rpc("book_friend", { p_event: ev.id, p_name: $("#fName", m).value.trim(), p_risk: true, p_credit: how === "credit" }));
+          const b = await q(sb.rpc("book_friend", { p_event: ev.id, p_name: $("#fName", m).value.trim(), p_risk: true, p_credit: how === "credit", p_link: how === "link" }));
           await loadMe();
           if (how === "link" && !b.paid) { refresh(); return guestLinkModal(ev, b); }
           closeModal(); toast(b.paid ? (b.method === "credit" ? `Your friend is on the roster ✓ Paid ${F$} from your credit` : "Your friend is on the roster ✓") : `Friend added. Pay their ${F$} to keep the place`); refresh();
