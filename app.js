@@ -93,8 +93,21 @@
     else el.textContent = text;
   }
 
-  async function share(title, text, link) {
+  // Posters are loaded ahead of time, so sharing one still counts as part of the tap.
+  const picFiles = {};
+  const picFile = (src) => (picFiles[src] ||= fetch(src).then((r) => r.blob()).then((b) => new File([b], src.split("/").pop(), { type: b.type })));
+  async function share(title, text, link, pic) {
     const url = link || location.href.split("#")[0];
+    // With a poster, the link goes in the text so apps that keep only the picture and caption still get it.
+    if (pic && navigator.canShare) {
+      try {
+        const files = [await picFile(pic)];
+        if (navigator.canShare({ files })) {
+          try { await navigator.share({ title, text: `${text} ${url}`, files }); return; }
+          catch (e) { if (e.name === "AbortError") return; } // otherwise fall back to sharing just the link
+        }
+      } catch {}
+    }
     if (navigator.share) { try { await navigator.share({ title, text, url }); } catch {} return; }
     try { await navigator.clipboard.writeText(`${text} ${url}`); toast("Link copied"); } catch { toast(url); }
   }
@@ -243,6 +256,7 @@
       ${offerBanner(list, false)}
       ${isOrg() ? `<a class="btn block" href="#admin">${ICON.tools} Add or manage events</a>` : ""}
       ${list.map((ev) => eventCard(ev, taken[ev.id] || 0, myBk[ev.id])).join("") || '<div class="empty"><h2>No events yet</h2></div>'}</div>`;
+    if (navigator.canShare) [FOOTIE, QURAN].forEach((src) => picFile(src).catch(() => {}));
     el.querySelectorAll("[data-invite]").forEach((b) => (b.onclick = () => {
       shareEvent(list.find((x) => x.id === b.dataset.invite));
     }));
@@ -252,7 +266,7 @@
     const detail = (ev) => {
       const card = el.querySelector(`[data-event="${ev.id}"]`)?.closest("article");
       const act = card?.querySelector(".event-foot .go");
-      modal(`${ev.image ? `<img class="event-pic modal-pic" src="${esc(ev.image)}" alt="">` : ""}<h2>${esc(ev.title)}</h2><p class="muted">${ev.day ? fmtEvent(ev) : "Date to be confirmed"}<br>${esc(ev.location || "")}</p><p style="line-height:1.5;white-space:pre-wrap">${esc(ev.details || "")}</p>
+      modal(`${picOf(ev) ? `<img class="event-pic modal-pic" src="${esc(ev.image || (ev.kind === "football" ? FOOTIE : picOf(ev)))}" alt="">` : ""}<h2>${esc(ev.title)}</h2><p class="muted">${ev.day ? fmtEvent(ev) : "Date to be confirmed"}<br>${esc(ev.location || "")}</p><p style="line-height:1.5;white-space:pre-wrap">${esc(ev.details || "")}</p>
         <div class="form-actions">${act ? `<button class="btn solid block" id="dGo">${act.textContent}</button>` : ""}${isOrg() ? '<button class="btn block" id="dQr">QR code poster</button>' : ""}</div>`, (m) => {
         if (act) $("#dGo", m).onclick = () => { closeModal(); if (act.href) window.open(act.href, "_blank", "noopener"); else act.click(); };
         if (isOrg()) $("#dQr", m).onclick = () => posterModal(ev);
@@ -275,7 +289,10 @@
   // An event can link elsewhere, e.g. to its debate in Let's Debate, instead of being booked here.
   const linkLabel = (url) => (/ourhomelands\.co\.uk\/debates\//.test(url) ? "Open in Let's Debate" : "Open link");
   const linkButton = (ev) => `<a class="go" href="${esc(ev.link)}" target="_blank" rel="noopener">${linkLabel(ev.link)}</a>`;
-  const eventPic = (ev) => (ev.image ? `<img class="event-pic" src="${esc(ev.image)}" alt="" data-event="${ev.id}">` : "");
+  // Friday football and the Quran group have their own posters, used when an event has no picture of its own.
+  const FOOTIE = "images/footie.jpg", FOOTIE_BANNER = "images/footie-banner.jpg", QURAN = "images/quran.jpg", QURAN_BANNER = "images/quran-banner.jpg";
+  const picOf = (ev) => ev.image || (ev.kind === "football" ? FOOTIE_BANNER : ev.group_id === "quran" ? QURAN_BANNER : "");
+  const eventPic = (ev) => (picOf(ev) ? `<img class="event-pic" src="${esc(picOf(ev))}" alt="" data-event="${ev.id}">` : "");
   function eventCard(ev, taken, mine) {
     if (!ev.day) return `<article class="card">${eventPic(ev)}
       <div class="event-body" data-event="${ev.id}" style="cursor:pointer">
@@ -301,7 +318,7 @@
     else if (mine) action = `<button class="go" data-ticket="${mine.code}">${mine.status === "waitlist" ? "On waitlist · Ticket" : "Booked ✓ · Ticket"}</button>`;
     else if (!me && ev.access === "members") action = '<button class="go" data-go="account">Members only · Sign in</button>';
     else action = `<button class="go" data-book="${ev.id}">${left ? "Book" : "Join waitlist"}</button>`;
-    return `<article class="card">${eventPic(ev)}
+    return `<article class="card${fb ? " footie-card" : ""}">${eventPic(ev)}
       <div class="event-body" data-event="${ev.id}" style="cursor:pointer">
         <div class="event-date"><div class="d">${d.getDate()}</div><div class="m">${MONTHS[d.getMonth()]}</div></div>
         <div><h2>${esc(ev.title)}</h2><p>${fmtEvent(ev)}</p><p>${esc(ev.location)}</p>${pills}</div>
@@ -336,7 +353,7 @@
       $("#pSh", m).onclick = () => shareEvent(ev);
     });
   }
-  const shareEvent = (ev) => share(ev.title, `${ev.title} – ${ev.day ? fmtEvent(ev) : "date to be confirmed"}. Book here:`, eventLink(ev));
+  const shareEvent = (ev) => share(ev.title, `${ev.title} – ${ev.day ? fmtEvent(ev) : "date to be confirmed"}. Book here:`, eventLink(ev), ev.kind === "football" ? FOOTIE : ev.group_id === "quran" ? QURAN : null);
 
   function bookSheet(ev, taken) {
     const left = ev.capacity - taken, price = Number(ev.price);
@@ -473,7 +490,7 @@
       return;
     }
     const ev = g.event, open = new Date() < placePayBy(ev, g.created_at);
-    el.innerHTML = `<div class="events"><div class="card fb">
+    el.innerHTML = `<div class="events footie">${footieHero()}<div class="card fb">
       <h2>${esc(ev.title || "Football")}</h2><p class="muted">${short(parseDay(ev.day))} · ${hhmm(ev.time)}</p>
       <p style="font-size:18px"><b>${esc(g.guest)}</b>, booked by <b>${esc(g.member)}</b></p>
       ${g.paid ? `<p class="note">Paid, thank you. See you on the pitch!</p>`
@@ -482,6 +499,17 @@
         : `<p class="note">The time to pay has passed, so this place is being released.</p>`}
       <p class="muted">6-a-side at Goals, Beckenham, Elmers End Road, BR3 4EJ. Get together at ${hhmm(ev.time)} next to Pitch 1. Players must be 16 or over, and play is at your own risk.</p>
     </div></div>`;
+    wirePoster(el);
+  }
+  // The Friday Weekly Footie banner tops every football screen; tapping it shows the whole poster.
+  const footieHero = () => `<button class="footie-hero" data-poster aria-label="Friday Weekly Footie poster"><img src="${FOOTIE_BANNER}" alt="Friday Weekly Footie"></button>`;
+  function wirePoster(el, ev) {
+    if (navigator.canShare) picFile(FOOTIE).catch(() => {});
+    el.querySelectorAll("[data-poster]").forEach((b) => (b.onclick = () => modal(`<button class="close" aria-label="Close">×</button>
+      <img class="poster-full" src="${FOOTIE}" alt="Friday Weekly Footie: 6-a-side sudden death or 5 team tournament, max 10-minute games, everyone welcome, on 5-a-side pitches at Goals">
+      <div class="form-actions"><button class="btn solid block footie-btn" id="posterShare">${ICON.share} Share the poster</button></div>`, (m) => {
+      $("#posterShare", m).onclick = () => (ev ? shareEvent(ev) : share("Friday Weekly Footie", "Friday Weekly Footie. Everyone welcome! Book your place here:", `${location.origin}${location.pathname}#football`, FOOTIE));
+    })));
   }
   function footballInfo(ev, fs) {
     const t = hhmm(ev.time);
@@ -518,12 +546,13 @@
     const ev = games.find((g) => eventEnd(g) > new Date());
     const n = ev ? Number((places.find((p) => p.event_id === ev.id) || {}).taken || 0) : 0;
     needSignIn(el, "book football");
-    if (ev) el.insertAdjacentHTML("afterbegin", `<div class="events"><div class="card fb"><h2>${esc(ev.title)}</h2><p class="muted">${fmtEvent(ev)} · ${esc(ev.location)}</p>
-      <p style="font-size:20px"><b>${n} booked</b> so far${n < ev.capacity ? `, ${ev.capacity - n} places left` : ", it's full"}.</p></div></div>`);
+    el.insertAdjacentHTML("afterbegin", `<div class="events footie">${footieHero()}${ev ? `<div class="card fb"><h2>${esc(ev.title)}</h2><p class="muted">${fmtEvent(ev)} · ${esc(ev.location)}</p>
+      <p style="font-size:20px"><b>${n} booked</b> so far${n < ev.capacity ? `, ${ev.capacity - n} places left` : ", it's full"}.</p></div>` : ""}</div>`);
+    wirePoster(el, ev);
   }
   async function football(el, alive) {
     if (!me) return footballGuest(el, alive);
-    if (eventsOnly()) { el.innerHTML = `<div class="empty"><h2>Friday football</h2><p class="muted" style="font-size:17px;line-height:1.5">Your membership is for events only. If you'd like to play football, ask an organiser to add it to your membership.</p></div>`; return; }
+    if (eventsOnly()) { el.innerHTML = `<div class="events footie">${footieHero()}</div><div class="empty"><h2>Friday Weekly Footie</h2><p class="muted" style="font-size:17px;line-height:1.5">Your membership is for events only. If you'd like to play football, ask an organiser to add it to your membership.</p></div>`; wirePoster(el); return; }
     loading(el);
     await sb.rpc("expire_unpaid");
     const now = new Date();
@@ -614,8 +643,9 @@
       <div class="form-actions"><button class="btn block" data-go="funds">See all fund changes</button></div>
     </div>`;
 
-    el.innerHTML = `<div class="events">${offerBanner(allGames, true)}${top}${ev ? footballInfo(ev, fs) : ""}${you}${players}${fund}${isOrg() ? '<div id="org"></div>' : ""}</div>`;
+    el.innerHTML = `<div class="events footie">${footieHero()}${offerBanner(allGames, true)}${top}${ev ? footballInfo(ev, fs) : ""}${you}${players}${fund}${isOrg() ? '<div id="org"></div>' : ""}</div>`;
 
+    wirePoster(el, ev);
     const riskOk = () => { const r = $("#riskOk", el); if (r && r.checked) return true; toast("Please tick to confirm you play at your own risk"); return false; };
     el.querySelectorAll("[data-choice]").forEach((b) => (b.onclick = () => riskOk() && bookFootball(ev, b.dataset.choice)));
     const af = $("#addFriend", el);
@@ -748,7 +778,7 @@
 
     $("#addGame", box).onclick = async () => {
       try {
-        await q(sb.from("events").insert({ kind: "football", title: "Weekly Friday Footie", day: dayKey(nextFri), time: "21:15", location: "Goals Beckenham, Elmers End",
+        await q(sb.from("events").insert({ kind: "football", title: "Friday Weekly Footie", day: dayKey(nextFri), time: "21:15", location: "Goals Beckenham, Elmers End",
           details: "Weekly 5-a-side every Friday night. All abilities welcome. £6 pay as you play, or £15 for the kitty.", price: 6, capacity: 36, access: "members" }));
         toast("Game added"); refresh();
       } catch (e) { fail(e); }
@@ -885,6 +915,10 @@
   // Chats: open, informal chats anyone can join in. Joined: sign-up chats (like the Quran target).
   // Announcements are pinned at the top of both.
   function chat(el, alive, id) { return groups(el, alive, "", id); }
+  // Chats with their own look: Friday football's accounts and the Quran Recitation Group.
+  const GROUP_LOOK = { "football-accounts": "footie-club", quran: "quran-club" };
+  const GROUP_PIC = { "football-accounts": FOOTIE_BANNER, quran: QURAN_BANNER };
+  const groupHero = (id, link) => (GROUP_PIC[id] ? `<${link ? `a href="#chat:${encodeURIComponent(id)}"` : "div"} class="group-hero ${GROUP_LOOK[id]}"><img src="${GROUP_PIC[id]}" alt=""></${link ? "a" : "div"}>` : "");
   function grouplist(el, alive) { return groups(el, alive, "", null, true); }
   async function groups(el, alive, filter = "", only = null, joinedTab = false) {
     if (!me) return needSignIn(el, "see the groups");
@@ -911,6 +945,7 @@
       const canPost = canRead && !pending() && (g.id !== ANNOUNCE || isAdmin()) && (!ORG_POSTS.includes(g.id) || isOrg());
       const gp = posts.filter((p) => p.group_id === g.id);
       el.innerHTML = `<div class="subhead"><h2>${esc(g.name)}</h2>${g.members_only ? '<a href="#grouplist">Joined events</a>' : '<a href="#groups">Chats</a>'}</div>
+        ${groupHero(g.id)}
         ${g.about ? `<p class="muted pad" style="padding-top:10px">${esc(g.about)}</p>` : ""}
         ${!canRead ? `<div class="pad">${pending() ? PENDING_NOTE : `<button class="btn solid" data-join="${esc(g.id)}">Sign up · Free</button>`}</div>` : `
         ${pending() && g.id !== ANNOUNCE ? `<div class="pad">${PENDING_NOTE}</div>` : ""}
@@ -933,7 +968,8 @@
     const clubs = gs.filter((g) => g.members_only).sort((a, b) => firstIn(a) - firstIn(b)).map((g) => {
       const inIt = inGroup(g.id);
       const gp = posts.filter((p) => p.group_id === g.id).slice(0, 4);
-      return `<section class="news club"><div class="row" style="justify-content:space-between"><h2>${inIt ? `<a href="#chat:${encodeURIComponent(g.id)}" style="color:inherit">📖 ${esc(g.name)}</a>` : `📖 ${esc(g.name)}`}</h2><span class="row" style="gap:8px">${inIt && !joined.includes(g.id) && !AUTO_GROUPS.includes(g.id) && !pending() ? `<button class="btn small" data-join="${esc(g.id)}">Sign up</button>` : ""}${inIt && (!ORG_POSTS.includes(g.id) || isOrg()) ? `<button class="btn small" data-compose="text" data-group="${esc(g.id)}">Post</button>` : ""}</span></div>
+      const icon = g.id === "football-accounts" ? "⚽" : "📖";
+      return `<section class="news club${GROUP_LOOK[g.id] ? ` ${GROUP_LOOK[g.id]}` : ""}">${groupHero(g.id, inIt)}<div class="row" style="justify-content:space-between"><h2>${inIt ? `<a href="#chat:${encodeURIComponent(g.id)}" style="color:inherit">${icon} ${esc(g.name)}</a>` : `${icon} ${esc(g.name)}`}</h2><span class="row" style="gap:8px">${inIt && !joined.includes(g.id) && !AUTO_GROUPS.includes(g.id) && !pending() ? `<button class="btn small" data-join="${esc(g.id)}">Sign up</button>` : ""}${inIt && (!ORG_POSTS.includes(g.id) || isOrg()) ? `<button class="btn small" data-compose="text" data-group="${esc(g.id)}">Post</button>` : ""}</span></div>
         ${inIt ? gp.map((p) => postHtml(p, comments.filter((c) => c.post_id === p.id), votes.filter((v) => v.post_id === p.id))).join("") || '<p class="muted">Nothing posted yet.</p>'
           : `<p class="muted">${esc(g.about)}</p>${pending() ? PENDING_NOTE : `<button class="btn solid" data-join="${esc(g.id)}">Sign up · Free</button>`}`}</section>`;
     }).join("");
@@ -1163,7 +1199,7 @@
   function more(el) {
     el.innerHTML = `
       <button class="menu-row" data-to="account">${ICON.user}<span>${me ? "My account & tickets" : "Sign in or join"} ${ICON.chev}</span></button>
-      <button class="menu-row" data-to="football">${ICON.ball}<span>Friday Football ${ICON.chev}</span></button>
+      <button class="menu-row" data-to="football">${ICON.ball}<span>Friday Weekly Footie ${ICON.chev}</span></button>
       <button class="menu-row" data-to="funds">${ICON.poll}<span>Funds ${ICON.chev}</span></button>
       ${isOrg() ? `<button class="menu-row" data-to="admin">${ICON.tools}<span>Organiser tools ${ICON.chev}</span></button>` : ""}
       <button class="menu-row" data-to="counselling">${ICON.star}<span>Counselling ${ICON.chev}</span></button>`;
