@@ -92,8 +92,8 @@
     else el.textContent = text;
   }
 
-  async function share(title, text) {
-    const url = location.href.split("#")[0];
+  async function share(title, text, link) {
+    const url = link || location.href.split("#")[0];
     if (navigator.share) { try { await navigator.share({ title, text, url }); } catch {} return; }
     try { await navigator.clipboard.writeText(`${text} ${url}`); toast("Link copied"); } catch { toast(url); }
   }
@@ -220,7 +220,7 @@
   async function joinGroup(id) {
     try { await q(sb.from("group_members").insert({ group_id: id, user_id: me.id })); toast("You're signed up ✓"); go("grouplist"); } catch (e) { fail(e); }
   }
-  async function events(el, alive) {
+  async function events(el, alive, arg) {
     loading(el);
     await sb.rpc("expire_unpaid"); // so the booked numbers don't count places already released
     const [list, places, mine] = await Promise.all([
@@ -242,15 +242,24 @@
       ${isOrg() ? `<a class="btn block" href="#admin">${ICON.tools} Add or manage events</a>` : ""}
       ${list.map((ev) => eventCard(ev, taken[ev.id] || 0, myBk[ev.id])).join("") || '<div class="empty"><h2>No events yet</h2></div>'}</div>`;
     el.querySelectorAll("[data-invite]").forEach((b) => (b.onclick = () => {
-      const ev = list.find((x) => x.id === b.dataset.invite); share(ev.title, `${ev.title} – ${fmtEvent(ev)}`);
+      shareEvent(list.find((x) => x.id === b.dataset.invite));
     }));
     el.querySelectorAll("[data-book]").forEach((b) => (b.onclick = () => bookSheet(list.find((x) => x.id === b.dataset.book), taken[b.dataset.book] || 0)));
     el.querySelectorAll("[data-ticket]").forEach((b) => (b.onclick = () => showTicket(b.dataset.ticket)));
     el.querySelectorAll("[data-join]").forEach((b) => (b.onclick = () => joinGroup(b.dataset.join)));
-    el.querySelectorAll("[data-event]").forEach((b) => (b.onclick = () => {
-      const ev = list.find((x) => x.id === b.dataset.event);
-      modal(`<h2>${esc(ev.title)}</h2><p class="muted">${fmtEvent(ev)}<br>${esc(ev.location)}</p><p style="line-height:1.5;white-space:pre-wrap">${esc(ev.details || "")}</p>`);
-    }));
+    const detail = (ev) => {
+      const card = el.querySelector(`[data-event="${ev.id}"]`)?.closest("article");
+      const act = card?.querySelector(".event-foot .go");
+      modal(`<h2>${esc(ev.title)}</h2><p class="muted">${ev.day ? fmtEvent(ev) : "Date to be confirmed"}<br>${esc(ev.location || "")}</p><p style="line-height:1.5;white-space:pre-wrap">${esc(ev.details || "")}</p>
+        <div class="form-actions">${act ? `<button class="btn solid block" id="dGo">${act.textContent}</button>` : ""}${isOrg() ? '<button class="btn block" id="dQr">QR code poster</button>' : ""}</div>`, (m) => {
+        if (act) $("#dGo", m).onclick = () => { closeModal(); act.click(); };
+        if (isOrg()) $("#dQr", m).onclick = () => posterModal(ev);
+      });
+    };
+    el.querySelectorAll("[data-event]").forEach((b) => (b.onclick = () => detail(list.find((x) => x.id === b.dataset.event))));
+    // A shared link or QR code opens that event straight away.
+    const linked = arg && list.find((x) => x.id === arg);
+    if (linked) { history.replaceState(null, "", location.pathname + "#events"); detail(linked); }
   }
   // A football game priced below the usual £6 gets a big banner on Events and Football.
   function offerBanner(games, onFootball) {
@@ -266,14 +275,14 @@
       <div class="event-body" data-event="${ev.id}" style="cursor:pointer">
         <div class="event-date tbc"><div class="d">TBC</div><div class="m">Date</div></div>
         <div><h2>${esc(ev.title)}</h2><p>Date to be confirmed</p>${ev.location ? `<p>${esc(ev.location)}</p>` : ""}
-          <div class="pills"><span class="tag">${Number(ev.price) > 0 ? money(ev.price) : "Free"}</span><span class="tag">${ev.access === "public" ? "Open to invited guests" : "Members only"}</span></div></div>
+          <div class="pills"><span class="tag">${Number(ev.price) > 0 ? money(ev.price) : "Free"}</span><span class="tag">${ACCESS_TAG[ev.access] || "Members only"}</span></div></div>
       </div>
       <div class="event-foot"><button data-invite="${ev.id}">${ICON.share.replace("viewBox", 'style="width:20px;height:20px" viewBox')} Share</button><button class="off" disabled>Booking opens soon</button></div>
     </article>`;
     const d = parseDay(ev.day), past = eventEnd(ev) < new Date(), left = Math.max(0, ev.capacity - taken);
     const fb = ev.kind === "football";
     const pills = `<div class="pills"><span class="tag">${fb ? `${money(ev.price)} or kitty` : Number(ev.price) > 0 ? money(ev.price) : "Free"}</span>
-      <span class="tag">${ev.access === "public" ? "Open to invited guests" : "Members only"}</span>
+      <span class="tag">${ACCESS_TAG[ev.access] || "Members only"}</span>
       ${ev.weekly ? `<span class="tag gold">Every ${DAYS[d.getDay()]}</span>` : !past ? `<span class="tag ${left ? "" : "warn"}">${left ? `${left} of ${ev.capacity} places left` : "Full"}</span>` : ""}
       ${!past && !ev.group_id ? `<span class="tag gold">${taken} booked</span>` : ""}</div>`;
     let action;
@@ -283,7 +292,7 @@
     else if (ev.group_id) action = joined.includes(ev.group_id) ? '<button class="go" data-go="groups">Signed up ✓ · Open chat</button>' : `<button class="go" data-join="${esc(ev.group_id)}">Sign up · Free</button>`;
     else if (fb) action = `<button class="go" data-go="football">${mine ? "Booked ✓ · Open" : "Open football"}</button>`;
     else if (mine) action = `<button class="go" data-ticket="${mine.code}">${mine.status === "waitlist" ? "On waitlist · Ticket" : "Booked ✓ · Ticket"}</button>`;
-    else if (!me && ev.access !== "public") action = '<button class="go" data-go="account">Members only · Sign in</button>';
+    else if (!me && ev.access === "members") action = '<button class="go" data-go="account">Members only · Sign in</button>';
     else action = `<button class="go" data-book="${ev.id}">${left ? "Book" : "Join waitlist"}</button>`;
     return `<article class="card">
       <div class="event-body" data-event="${ev.id}" style="cursor:pointer">
@@ -294,15 +303,41 @@
     </article>`;
   }
 
+  const ACCESS = { members: "Members only", public: "Members and invited guests", open: "Open to everyone (anyone with the link or QR code)" };
+  const ACCESS_TAG = { members: "Members only", public: "Open to invited guests", open: "Open to everyone" };
+  const accessOpts = (v) => Object.entries(ACCESS).map(([k, t]) => `<option value="${k}" ${k === v ? "selected" : ""}>${t}</option>`).join("");
+  const eventLink = (ev) => `${location.origin}${location.pathname}#events:${ev.id}`;
+  // A printable poster with a QR code that opens the event in the app.
+  function posterModal(ev) {
+    modal(`<button class="close" aria-label="Close">×</button>
+      <div class="poster" style="text-align:center">
+        <h2 style="margin:0 0 6px">${esc(ev.title)}</h2>
+        <p class="muted" style="margin:0 0 14px">${ev.day ? fmtEvent(ev) : "Date to be confirmed"}${ev.location ? ` · ${esc(ev.location)}` : ""}<br>${Number(ev.price) > 0 ? money(ev.price) : "Free"} · ${ACCESS_TAG[ev.access] || "Members only"}</p>
+        <div id="pq" style="display:inline-block;background:#fff;padding:12px;border-radius:12px"></div>
+        <p style="font-size:18px;margin:12px 0 0"><b>Scan to book</b></p>
+      </div>
+      ${ev.access === "open" ? "" : `<p class="note">This event is ${ev.access === "public" ? "for members and guests with an invite code" : "for members only"}, so people who scan it will need ${ev.access === "public" ? "an invite code" : "to be members"}. Choose "Open to everyone" in Organiser tools to let anyone book.</p>`}
+      <div class="form-actions"><button class="btn solid block" id="pDl">Save QR code image</button><button class="btn block" id="pSh">Share the link</button></div>`, (m) => {
+      qr($("#pq", m), eventLink(ev), 240);
+      $("#pDl", m).onclick = () => {
+        const c = $("#pq canvas", m), img = $("#pq img", m);
+        const a = document.createElement("a"); a.download = `${ev.title.replace(/[^a-z0-9]+/gi, "-")}-qr.png`;
+        a.href = c ? c.toDataURL("image/png") : img?.src; if (a.href) a.click();
+      };
+      $("#pSh", m).onclick = () => shareEvent(ev);
+    });
+  }
+  const shareEvent = (ev) => share(ev.title, `${ev.title} – ${ev.day ? fmtEvent(ev) : "date to be confirmed"}. Book here:`, eventLink(ev));
+
   function bookSheet(ev, taken) {
     const left = ev.capacity - taken, price = Number(ev.price);
     const placeOpts = [1, 2, 3, 4, 5, 6].map((n) => `<option>${n}</option>`).join("");
     const guest = !me;
     modal(`<h2>Book: ${esc(ev.title)}</h2>
       <p class="muted">${fmtEvent(ev)} · ${esc(ev.location)}<br>${price > 0 ? `${money(price)} per place, paid to the organiser.` : "Free."} ${left > 0 ? `${left} places left.` : "It's full, so you'll join the waitlist."}</p>
-      ${guest ? `<p class="note">Booking as a guest needs an invite code from a member. Members, <a href="#account" data-close>sign in</a> first.</p>
+      ${guest ? `<p class="note">${ev.access === "open" ? "Anyone can book this event. We'll need your details below." : "Booking as a guest needs an invite code from a member."} Members, <a href="#account" data-close>sign in</a> first.</p>
         <label>Email</label><input id="ge" type="email" autocomplete="email">
-        <label>Invite code</label><input id="gc" placeholder="e.g. INV-7Q4KA" style="text-transform:uppercase">`
+        ${ev.access === "open" ? "" : '<label>Invite code</label><input id="gc" placeholder="e.g. INV-7Q4KA" style="text-transform:uppercase">'}`
         : ""}
       <label>Name</label><input id="gn" autocomplete="name" value="${guest ? "" : esc(me.name || "")}">
       <label>Age</label><input id="ga" type="number" min="1" max="120" inputmode="numeric">
@@ -325,7 +360,7 @@
           let code;
           if (guest) {
             const r = await q(sb.rpc("guest_book", { p_event: ev.id, p_name: name, p_age: age,
-              p_email: $("#ge", m).value.trim(), p_code: $("#gc", m).value, p_places: places }));
+              p_email: $("#ge", m).value.trim(), p_code: $("#gc", m)?.value || "", p_places: places }));
             code = r[0].code; state.guestTickets.push(code); save();
           } else {
             code = (await q(sb.rpc("book_event", { p_event: ev.id, p_places: places }))).code;
@@ -1367,7 +1402,7 @@
       <div class="grid2"><div><label>Date (leave empty if not decided)</label><input id="d" type="date"></div><div><label>Start time</label><input id="tm" type="time" value="19:00"></div></div>
       <label>Where</label><input id="loc">
       <div class="grid2"><div><label>Price per place (£, 0 = free)</label><input id="pr" type="number" min="0" step="0.5" value="0"></div><div><label>Places</label><input id="cap" type="number" min="1" value="30"></div></div>
-      <label>Who can book</label><select id="acc"><option value="members">Members only</option><option value="public">Members and invited guests</option></select>
+      <label>Who can book</label><select id="acc">${accessOpts("members")}</select>
       <label>Details</label><textarea id="det"></textarea>
       <div class="form-actions"><button class="btn solid block" id="add">Add event</button></div>
       <h2 style="margin-top:28px">Events and bookings</h2>
@@ -1378,8 +1413,9 @@
           ${list.map((b) => `<tr><td>${esc(b.display_name)}</td><td>${g[b.id] ? `Guest, age ${g[b.id].age}, ${esc(g[b.id].email)}, invited by ${esc(g[b.id].profiles?.name || "?")}` : "Member"}</td><td>${b.places}</td><td>${b.status}${b.checked_in ? ", in" : ""}${b.paid ? "" : ", unpaid"}</td><td class="mono">${b.code}</td></tr>`).join("") || '<tr><td colspan="5" class="muted">No bookings yet.</td></tr>'}
           </tbody></table></div>
           ${e.kind === "event" ? `<div class="grid2" data-edit="${e.id}"><div><label>Date</label><input data-f="day" type="date" value="${e.day || ""}"></div><div><label>Start time</label><input data-f="time" type="time" value="${hhmm(e.time)}"></div>
-            <div><label>Price (£)</label><input data-f="price" type="number" min="0" step="0.5" value="${Number(e.price)}"></div><div><label>Places</label><input data-f="capacity" type="number" min="1" value="${e.capacity}"></div></div>
-            <div class="row" style="margin:12px 0"><button class="btn small" data-upd="${e.id}">Save changes</button></div>` : ""}
+            <div><label>Price (£)</label><input data-f="price" type="number" min="0" step="0.5" value="${Number(e.price)}"></div><div><label>Places</label><input data-f="capacity" type="number" min="1" value="${e.capacity}"></div>
+            <div style="grid-column:1/-1"><label>Who can book</label><select data-f="access">${accessOpts(e.access)}</select></div></div>
+            <div class="row" style="margin:12px 0"><button class="btn small" data-upd="${e.id}">Save changes</button><button class="btn small" data-poster="${e.id}">QR code poster</button></div>` : ""}
           <button class="btn small danger" data-del="${e.id}">Remove event</button></details>`;
       }).join("")}
       <h2 style="margin-top:28px">Members</h2>
@@ -1413,9 +1449,10 @@
       if (!ev.day) ev.day = null; // date to be confirmed
       try { await q(sb.from("events").insert(ev)); toast("Event added"); refresh(); } catch (e) { fail(e); }
     };
+    el.querySelectorAll("[data-poster]").forEach((b) => (b.onclick = () => posterModal(evs.find((x) => x.id === b.dataset.poster))));
     el.querySelectorAll("[data-upd]").forEach((b) => (b.onclick = async () => {
       const box = $(`[data-edit="${b.dataset.upd}"]`, el), f = (k) => $(`[data-f="${k}"]`, box).value;
-      const upd = { day: f("day") || null, time: f("time"), price: Number(f("price")) || 0, capacity: Number(f("capacity")) || 1 };
+      const upd = { day: f("day") || null, time: f("time"), price: Number(f("price")) || 0, capacity: Number(f("capacity")) || 1, access: f("access") };
       try { await q(sb.from("events").update(upd).eq("id", b.dataset.upd)); toast(upd.day ? "Saved" : "Saved, date still to be confirmed"); refresh(); } catch (e) { fail(e); }
     }));
     el.querySelectorAll("[data-del]").forEach((b) => (b.onclick = async () => {
