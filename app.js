@@ -144,11 +144,11 @@
     $("#bellDot").hidden = state.seenNotes >= D.announcements.length;
     const token = ++seq, alive = () => token === seq;
     view.innerHTML = "";
-    window.scrollTo(0, 0);
+    view.scrollTo(0, 0);
     try { await fn(view, alive, arg); } catch (e) { if (alive()) view.innerHTML = `<div class="empty"><h2>Something went wrong</h2><p class="muted">${esc(e.message)}</p><button class="btn solid" data-go="${route}" style="margin-top:16px">Try again</button></div>`; }
   }
   // Re-renders the current screen in place, keeping the scroll position.
-  async function refresh() { const y = window.scrollY; await render(); window.scrollTo(0, y); }
+  async function refresh() { const y = view.scrollTop; await render(); view.scrollTo(0, y); }
   window.addEventListener("hashchange", render);
   document.querySelectorAll("#tabbar button").forEach((b) => b.addEventListener("click", () => go(b.dataset.tab)));
   document.addEventListener("click", (e) => { const g = e.target.closest("[data-go]"); if (g) { e.preventDefault(); go(g.dataset.go); } });
