@@ -5,6 +5,9 @@
   const C = D.community;
   const $ = (sel, el = document) => el.querySelector(sel);
   const view = $("#view");
+  // Read a password-reset link's details before Supabase tidies them out of the address.
+  const AUTH_HASH = new URLSearchParams(location.hash.slice(1).replace(/^[^=&]*#/, ""));
+  const RECOVERY = AUTH_HASH.get("type") === "recovery", AUTH_ERROR = AUTH_HASH.get("error_description");
   const sb = supabase.createClient(APP_CONFIG.supabaseUrl, APP_CONFIG.supabaseKey);
 
   // ---------- small things kept on this device ----------
@@ -1254,7 +1257,7 @@
     $("#forgot", el).onclick = async (e) => {
       e.preventDefault();
       const email = $("#em", el).value.trim(); if (!email) return toast("Type your email above first");
-      try { await q(sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname + "#reset" })); modal(`<h2>Check your email</h2><p>We've sent a password reset link to <b>${esc(email)}</b>.</p>`); } catch (e2) { fail(e2); }
+      try { await q(sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname })); modal(`<h2>Check your email</h2><p>We've sent a password reset link to <b>${esc(email)}</b>.</p>`); } catch (e2) { fail(e2); }
     };
   }
 
@@ -1390,15 +1393,15 @@
   }
 
   // A password-reset link lands here with a temporary session.
-  sb.auth.onAuthStateChange((event) => {
-    if (event === "PASSWORD_RECOVERY") {
+  function newPassword() {
+    if (newPassword.shown) return; newPassword.shown = true;
       modal(`<h2>Choose a new password</h2><input id="np" type="password" minlength="6" autocomplete="new-password"><div class="form-actions"><button class="btn solid block" id="ok">Save password</button></div>`, (m) => {
         $("#ok", m).onclick = async () => {
           try { await q(sb.auth.updateUser({ password: $("#np", m).value })); closeModal(); toast("Password changed"); await loadMe(); go("events"); } catch (e) { fail(e); }
         };
       });
-    }
-  });
+  }
+  sb.auth.onAuthStateChange((event) => { if (event === "PASSWORD_RECOVERY") setTimeout(newPassword); });
 
   // Card payments: "Pay by card" opens Square's checkout, which sends people back here with ?paid=CODE.
   document.addEventListener("click", async (e) => {
@@ -1426,7 +1429,12 @@
     } catch (err) { fail(err); }
   }
 
-  loadMe().catch(() => {}).then(confirmReturn).finally(render);
+  loadMe().catch(() => {}).then(confirmReturn).finally(async () => {
+    if (RECOVERY || AUTH_ERROR) history.replaceState(null, "", location.pathname + location.search);
+    await render();
+    if (AUTH_ERROR) modal(`<h2>That link didn't work</h2><p class="muted" style="line-height:1.5">${esc(AUTH_ERROR)}. Reset links work once and expire after an hour, so tap "Forgot your password?" on the sign-in page to get a new one.</p>`);
+    else if (RECOVERY && (await sb.auth.getSession()).data.session) newPassword();
+  });
 
   // "Add to home screen" pop-up. Android/Chrome installs with one tap; iPhone needs the Share menu.
   let installEvt = null;
