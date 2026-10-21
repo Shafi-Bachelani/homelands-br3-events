@@ -183,6 +183,7 @@
           <div><b>${esc(C.location)}</b><span class="muted">Location</span></div>${ICON.pin}
         </a>
         <div class="socials">${socials}</div>
+        <p class="muted" style="font-size:14px;line-height:1.5;margin-top:18px">${DISCLAIMER}</p>
       </div>`;
     $("#invite", el).onclick = () => share(C.name, `Join ${C.name} – ${C.tagline}`);
     $("#info", el).onclick = (e) => { e.preventDefault(); modal(`<h2>General Info</h2><p style="line-height:1.5">${esc(C.generalInfo)}</p>`); };
@@ -306,6 +307,7 @@
   const ACCESS = { members: "Members only", public: "Members and invited guests", open: "Open to everyone (anyone with the link or QR code)" };
   const ACCESS_TAG = { members: "Members only", public: "Open to invited guests", open: "Open to everyone" };
   const accessOpts = (v) => Object.entries(ACCESS).map(([k, t]) => `<option value="${k}" ${k === v ? "selected" : ""}>${t}</option>`).join("");
+  const DISCLAIMER = `This organisation is an unincorporated association of people with similar values. To see our values, see About us in the app and visit <a href="https://www.ourhomelands.co.uk/" target="_blank" rel="noopener">ourhomelands.co.uk</a>.`;
   const eventLink = (ev) => `${location.origin}${location.pathname}#events:${ev.id}`;
   // A printable poster with a QR code that opens the event in the app.
   function posterModal(ev) {
@@ -347,6 +349,7 @@
       <label>Places</label><select id="pl">${placeOpts}</select>
       <label>Anything we should know? (optional)</label><textarea id="bn" maxlength="500" placeholder="For example health needs, allergies or access needs"></textarea>
       <label>Special requests (optional)</label><textarea id="br" maxlength="500" placeholder="For example seating, dietary or who you'd like to sit with"></textarea>
+      <p class="muted" style="font-size:14px;line-height:1.5">${DISCLAIMER}</p>
       <div class="form-actions"><button class="btn solid block" id="ok">${left > 0 ? "Book" : "Join waitlist"}</button></div>`, (m) => {
       m.querySelectorAll("[data-close]").forEach((a) => (a.onclick = closeModal));
       $("#ok", m).onclick = async () => {
@@ -1406,6 +1409,7 @@
       <label>Details</label><textarea id="det"></textarea>
       <div class="form-actions"><button class="btn solid block" id="add">Add event</button></div>
       <h2 style="margin-top:28px">Events and bookings</h2>
+      <button class="btn block" id="csv">Download all event bookings (opens in Google Sheets or Excel)</button>
       ${evs.map((e) => {
         const list = bks.filter((b) => b.event_id === e.id);
         return `<details class="card adm"><summary><b>${esc(e.title)}</b> <span class="muted">${e.day ? short(parseDay(e.day)) : "Date TBC"} · ${list.reduce((t, b) => t + (b.status === "booked" ? b.places : 0), 0)}/${e.capacity}</span></summary>
@@ -1448,6 +1452,21 @@
       if (!ev.title || !ev.time) return toast("Fill in at least the name and start time");
       if (!ev.day) ev.day = null; // date to be confirmed
       try { await q(sb.from("events").insert(ev)); toast("Event added"); refresh(); } catch (e) { fail(e); }
+    };
+    $("#csv", el).onclick = () => {
+      const evMap = Object.fromEntries(evs.map((e) => [e.id, e])), who = Object.fromEntries(members.map((x) => [x.id, x.name]));
+      const head = ["Event", "Date", "Time", "Name", "Age", "Male/Female", "Places", "Member or guest", "Guest email", "Invited or booked by", "Status", "Paid", "Amount £", "Checked in", "Anything we should know", "Special requests", "Ticket code", "Booked on"];
+      const rows = bks.filter((b) => evMap[b.event_id]?.kind === "event")
+        .sort((a, b) => (evMap[a.event_id].day || "9").localeCompare(evMap[b.event_id].day || "9") || evMap[a.event_id].title.localeCompare(evMap[b.event_id].title) || a.display_name.localeCompare(b.display_name))
+        .map((b) => { const e = evMap[b.event_id], gu = g[b.id];
+          return [e.title, e.day || "TBC", hhmm(e.time), b.display_name, b.age ?? gu?.age ?? "", b.gender || "", b.places, gu ? "Guest" : "Member", gu?.email || "",
+            gu ? gu.profiles?.name || "" : b.booked_by ? who[b.booked_by] || "" : "", b.status, b.paid ? "Yes" : "No", Number(b.amount || 0).toFixed(2), b.checked_in ? "Yes" : "No",
+            b.note || "", b.request || "", b.code, (b.created_at || "").slice(0, 10)]; });
+      const cell = (v) => { const t = String(v ?? ""); return /[",\n\r]/.test(t) || /^[=+\-@]/.test(t) ? `"${(/^[=+\-@]/.test(t) ? "'" : "") + t.replace(/"/g, '""')}"` : t; };
+      const csv = "\ufeff" + [head, ...rows].map((r) => r.map(cell).join(",")).join("\r\n");
+      const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+      a.download = `event-bookings-${dayKey(new Date())}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      if (!rows.length) toast("No event bookings yet, the file only has headings");
     };
     el.querySelectorAll("[data-poster]").forEach((b) => (b.onclick = () => posterModal(evs.find((x) => x.id === b.dataset.poster))));
     el.querySelectorAll("[data-upd]").forEach((b) => (b.onclick = async () => {
