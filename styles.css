@@ -131,7 +131,7 @@ h2 { font-size: 20px; margin: 0; }
 .post { padding: 18px 20px 0; border-bottom: 8px solid #0a100e; }
 .post .head { display: flex; gap: 12px; align-items: flex-start; }
 .post .head .who { flex: 1; line-height: 1.35; }
-.post .text { line-height: 1.5; margin: 14px 0; white-space: pre-wrap; }
+.post .text { line-height: 1.5; margin: 14px 0; white-space: pre-wrap; unicode-bidi: plaintext; }
 .post img { width: 100%; border-radius: 8px; margin-bottom: 12px; }
 .pill { height: 38px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--line); display: inline-flex; align-items: center; gap: 6px; font-size: 17px; }
 .pill.on { background: var(--green); color: var(--ink); border-color: var(--green); }
@@ -219,7 +219,7 @@ h3 { font-size: 17px; margin: 18px 0 8px; }
 .amt.neg { color: var(--warn); }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 label.check { display: flex; align-items: center; gap: 8px; font-weight: 400; margin: 8px 0; }
-label.check input[type=checkbox] { width: 20px; height: 20px; flex: none; }
+label.check input[type=checkbox], label.check input[type=radio] { width: 20px; height: 20px; flex: none; }
 .seg { display: flex; background: var(--field); border-radius: 999px; padding: 4px; margin: 10px 0 6px; }
 .seg button { flex: 1; height: 38px; border-radius: 999px; font-weight: 700; color: var(--muted); }
 .seg button.on { background: var(--green); color: var(--ink); }
