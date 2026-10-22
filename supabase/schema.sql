@@ -2091,6 +2091,35 @@ create trigger bookings_football_members_only before insert on public.bookings
 
 -- ---------- football check-in by QR code, and payment links for people added at the pitch (also in schema.sql) ----------
 
+-- ---------- organisers do door duty only (also in schema.sql) ----------
+-- is_door(): organisers and the admin, for scanning, who's in, ticking people in and adding people at the pitch.
+-- is_organiser() now means the admin only, so everything else organisers could do (events, payments,
+-- accounts, members, approving guest bookings, pinning posts) is for the admin.
+create or replace function public.is_door() returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from profiles where id = auth.uid() and role in ('organiser', 'admin'))
+$$;
+create or replace function public.is_organiser() returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from profiles where id = auth.uid() and role = 'admin')
+$$;
+
+-- Ticking someone in (or out) on the football page.
+create or replace function public.set_here(p_id uuid, p_on boolean) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not is_door() then raise exception 'Only organisers can tick people in.'; end if;
+  update bookings b set checked_in = p_on from events e
+   where b.id = p_id and e.id = b.event_id and not e.accounts_posted;
+end $$;
+revoke execute on function public.set_here(uuid, boolean) from public, anon;
+grant execute on function public.set_here(uuid, boolean) to authenticated;
+
+-- Organisers can see guests' names in the who's-in list.
+drop policy if exists "door staff see guests" on public.guests;
+create policy "door staff see guests" on public.guests for select to authenticated using (is_door());
+
+
 -- Anyone who has turned up (checked in) is never released for not paying; they pay or owe on the day.
 create or replace function public.expire_unpaid() returns int
 language plpgsql security definer set search_path = public as $$
@@ -2118,7 +2147,7 @@ create or replace function public.add_walkin(p_event uuid, p_user uuid, p_name t
 language plpgsql security definer set search_path = public as $$
 declare e events; p profiles; b bookings; fs fund_state; v_price numeric;
 begin
-  if not is_organiser() then raise exception 'Only organisers can add players.'; end if;
+  if not is_door() then raise exception 'Only organisers can add players.'; end if;
   select * into e from events where id = p_event and kind = 'football';
   if not found then raise exception 'That game no longer exists.'; end if;
   if e.accounts_posted then raise exception 'Accounts for this game are already posted.'; end if;
@@ -2158,7 +2187,7 @@ create or replace function public.check_in_details(p_code text) returns json
 language plpgsql security definer set search_path = public as $$
 declare b bookings; e events; g guests; v_by text; v_was boolean;
 begin
-  if not is_organiser() then raise exception 'Only organisers can check people in.'; end if;
+  if not is_door() then raise exception 'Only organisers can check people in.'; end if;
   select * into b from bookings where code = upper(trim(p_code));
   if not found then raise exception 'No ticket found with code %.', upper(trim(p_code)); end if;
   select * into e from events where id = b.event_id;

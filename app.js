@@ -18,8 +18,11 @@
 
   // ---------- who is signed in ----------
   let me = null; // { id, email, name, role, family, credit, kitty_session }
-  const isOrg = () => !!me && (me.role === "organiser" || me.role === "admin");
+  // Organisers do door duty only (scan tickets, see who's in, tick people in, add people at the pitch).
+  // Everything else in the organiser screens is for the admin.
   const isAdmin = () => !!me && me.role === "admin";
+  const isOrg = isAdmin;
+  const isDoor = () => !!me && (me.role === "organiser" || me.role === "admin");
   // New members wait for the admin's approval before they can book or post.
   const pending = () => !!me && me.approved === false;
   const eventsOnly = () => !!me && me.football === false && !me.family; // events-only membership, no football
@@ -639,7 +642,7 @@
       <div class="form-actions"><button class="btn block" data-go="funds">See all fund changes</button></div>
     </div>`;
 
-    el.innerHTML = `<div class="events">${offerBanner(allGames, true)}${top}${ev ? footballInfo(ev, fs) : ""}${you}${players}${fund}${isOrg() ? '<div id="org"></div>' : ""}</div>`;
+    el.innerHTML = `<div class="events">${offerBanner(allGames, true)}${top}${ev ? footballInfo(ev, fs) : ""}${you}${players}${fund}${isDoor() ? '<div id="org"></div>' : ""}</div>`;
     el.querySelectorAll("[data-ticket]").forEach((b) => (b.onclick = () => showTicket(b.dataset.ticket)));
 
     const riskOk = () => { const r = $("#riskOk", el); if (r && r.checked) return true; toast("Please tick to confirm you play at your own risk"); return false; };
@@ -693,7 +696,7 @@
       if (cx.dataset.sure !== "1") { cx.dataset.sure = "1"; cx.textContent = "Tap again to remove yourself"; return; }
       try { toast(await q(sb.rpc("cancel_booking", { p_id: mine.id }))); await loadMe(); refresh(); } catch (e) { fail(e); }
     };
-    if (isOrg()) organiserFootball($("#org", el), ev, bookings, fs, awaiting, games);
+    if (isDoor()) organiserFootball($("#org", el), ev, bookings, fs, awaiting, games);
   }
   async function bookFootball(ev, choice) {
     try {
@@ -710,12 +713,13 @@
     const bookings = target && target !== current ? await q(sb.from("bookings").select("*").eq("event_id", target.id).neq("status", "cancelled").order("created_at")) : currentBookings;
     const people = current && !current.accounts_posted ? await q(sb.from("profiles").select("id,name,credit").order("name")) : [];
     const onList = new Set(currentBookings.map((b) => b.user_id).filter(Boolean));
-    const debts = await q(sb.from("debts").select("*, profiles(name)").eq("cleared", false).order("on_date"));
+    const full = isAdmin(); // organisers get door duty only
+    const debts = full ? await q(sb.from("debts").select("*, profiles(name)").eq("cleared", false).order("on_date")) : [];
     // cancelled before Friday 6pm: their money is in this game's takings but now belongs to the credits fund
-    const cancelled = target ? (await q(sb.from("bookings").select("*").eq("event_id", target.id).eq("status", "cancelled")))
+    const cancelled = full && target ? (await q(sb.from("bookings").select("*").eq("event_id", target.id).eq("status", "cancelled")))
       .filter((b) => b.status === "cancelled" && b.charge === "payg" && b.paid && ["card", "transfer", "cash"].includes(b.method)) : [];
     // credits check: every credit change since the last accounts, and the credit on members' accounts now
-    const [creditMoves, creditRows] = target && !target.accounts_posted ? await Promise.all([
+    const [creditMoves, creditRows] = full && target && !target.accounts_posted ? await Promise.all([
       fs.posted_at ? q(sb.from("ledger").select("*").eq("fund", "credits").gt("created_at", fs.posted_at).order("id")) : [],
       q(sb.from("profiles").select("credit"))]) : [[], []];
     const fromCredit = target ? bookings.filter((b) => b.charge === "payg" && b.paid && b.method === "credit" && b.checked_in).reduce((t, b) => t + Number(b.amount), 0) : 0;
@@ -724,10 +728,10 @@
     const METHODS = { card: "Card", transfer: "Transfer", cash: "Cash", owes: "Owes" };
     box.innerHTML = `<div class="card fb"><h2>Organiser</h2>
       ${current && !current.accounts_posted ? `<button class="btn solid block" id="fbScan">Scan tickets to check people in</button><div id="fbIn"></div>` : ""}
-      <button class="btn small" id="addGame">Add game for ${short(nextFri)}</button>
+      ${full ? `<button class="btn small" id="addGame">Add game for ${short(nextFri)}</button>` : ""}
       ${current ? `<h3>Who's turned up · ${short(parseDay(current.day))}</h3>
       <p class="muted">Tap a name when they arrive. ${currentBookings.filter((b) => b.checked_in).length} of ${currentBookings.length} here.</p>
-      <div class="attend">${currentBookings.map((b) => `<label class="check"><input type="checkbox" data-here="${b.id}" ${b.checked_in ? "checked" : ""} ${current.accounts_posted ? "disabled" : ""}> ${esc(b.display_name)}${b.paid ? "" : ' <span class="tag warn">Unpaid</span>'}${current.accounts_posted ? "" : ` <button class="btn small" data-drop="${b.id}" style="margin-left:auto">Remove</button>`}</label>`).join("") || '<p class="muted">No one has booked yet.</p>'}</div>
+      <div class="attend">${currentBookings.map((b) => `<label class="check"><input type="checkbox" data-here="${b.id}" ${b.checked_in ? "checked" : ""} ${current.accounts_posted ? "disabled" : ""}> ${esc(b.display_name)}${b.paid ? "" : ' <span class="tag warn">Unpaid</span>'}${current.accounts_posted || !full ? "" : ` <button class="btn small" data-drop="${b.id}" style="margin-left:auto">Remove</button>`}</label>`).join("") || '<p class="muted">No one has booked yet.</p>'}</div>
       <p class="muted">Anyone paid for pay and play who isn't ticked when the accounts are posted keeps what they paid as credit on their account for their next booking.</p>
       ${current.accounts_posted ? "" : `<h3>Add someone who wasn't on the list</h3>
       <div class="grid2">
@@ -736,7 +740,7 @@
         <div><label id="wiPrice">Pays ${money(Math.max(Number(current.price), 6))} by</label><select id="wiMeth">${Object.entries(METHODS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}<option value="credit" disabled>Account credit</option><option value="link">Send them a payment link</option></select></div>
       </div>
       <div class="form-actions"><button class="btn solid block" id="wiAdd">Add and mark as here</button></div>`}` : ""}
-      ${target ? `<h3>Payments · ${esc(target.title)} ${short(parseDay(target.day))}${target.accounts_posted ? " (accounts posted)" : ""}</h3>
+      ${full && target ? `<h3>Payments · ${esc(target.title)} ${short(parseDay(target.day))}${target.accounts_posted ? " (accounts posted)" : ""}</h3>
       <p class="muted">Set how each person paid. Picking a method marks them paid straight away.</p>
       <div class="scroll"><table><thead><tr><th>Player</th><th>Type</th><th>Paid by</th></tr></thead><tbody>
         ${charged.map((b) => `<tr><td>${esc(b.display_name)}</td><td>${b.charge === "kitty" ? "Kitty £15" : `Pay & play ${money(b.amount)}`}</td><td>${b.method === "credit" ? "Credit" :
@@ -777,7 +781,7 @@
       $("#fbScan", box).onclick = () => scanTicket(checkIn);
       whosIn($("#fbIn", box), current.id, (t) => { const c = box.querySelector(`[data-here="${t.id}"]`); if (c && t.status === "booked") c.checked = true; });
     }
-    $("#addGame", box).onclick = async () => {
+    if ($("#addGame", box)) $("#addGame", box).onclick = async () => {
       try {
         await q(sb.from("events").insert({ kind: "football", title: "Friday Weekly Footie", day: dayKey(nextFri), time: "21:15", location: "Goals Beckenham, Elmers End",
           details: "Weekly 5-a-side every Friday night. All abilities welcome. £6 pay as you play, or £15 for the kitty.", price: 6, capacity: 36, access: "members" }));
@@ -807,7 +811,7 @@
       try { d.disabled = true; await q(sb.rpc("cancel_booking", { p_id: d.dataset.drop })); toast("Removed from the list"); refresh(); } catch (err) { d.disabled = false; fail(err); }
     }));
     box.querySelectorAll("[data-here]").forEach((c) => (c.onchange = async () => {
-      try { await q(sb.from("bookings").update({ checked_in: c.checked }).eq("id", c.dataset.here)); toast(c.checked ? "Marked as here" : "Unmarked"); refresh(); } catch (e) { c.checked = !c.checked; fail(e); }
+      try { await q(sb.rpc("set_here", { p_id: c.dataset.here, p_on: c.checked })); toast(c.checked ? "Marked as here" : "Unmarked"); refresh(); } catch (e) { c.checked = !c.checked; fail(e); }
     }));
     box.querySelectorAll("[data-meth]").forEach((s) => (s.onchange = async () => {
       try { await q(sb.from("bookings").update({ method: s.value || null, paid: !!s.value && s.value !== "owes" }).eq("id", s.dataset.meth)); toast("Saved"); refresh(); } catch (e) { fail(e); }
@@ -1203,7 +1207,7 @@
       <button class="menu-row" data-to="account">${ICON.user}<span>${me ? "My account & tickets" : "Sign in or join"} ${ICON.chev}</span></button>
       <button class="menu-row" data-to="football">${ICON.ball}<span>Friday Football ${ICON.chev}</span></button>
       <button class="menu-row" data-to="funds">${ICON.poll}<span>Funds ${ICON.chev}</span></button>
-      ${isOrg() ? `<button class="menu-row" data-to="admin">${ICON.tools}<span>Organiser tools ${ICON.chev}</span></button>` : ""}
+      ${isDoor() ? `<button class="menu-row" data-to="admin">${ICON.tools}<span>Organiser tools ${ICON.chev}</span></button>` : ""}
       <button class="menu-row" data-to="counselling">${ICON.star}<span>Counselling ${ICON.chev}</span></button>`;
     el.querySelectorAll("[data-to]").forEach((b) => (b.onclick = () => go(b.dataset.to)));
   }
@@ -1455,8 +1459,23 @@
   }
 
   // ---------- ORGANISER TOOLS ----------
+  // What organisers see in Organiser tools: scanning and who's in.
+  async function doorTools(el) {
+    loading(el);
+    const evs = await q(sb.from("events").select("*").gte("day", dayKey(today())).order("day").limit(10));
+    const soon = evs.sort((a, b) => eventStart(a) - eventStart(b));
+    el.innerHTML = `<div class="pad" style="padding-top:24px"><h2>Check someone in</h2>
+      <button class="btn solid block" id="ciScan" style="margin-bottom:10px">Scan a ticket's QR code</button>
+      <div class="row"><input id="ci" placeholder="Or type the code, e.g. AA-7K2QX" style="text-transform:uppercase"><button class="btn small" id="ciGo">Check in</button></div>
+      ${soon.length ? `<label>Show who's in for</label><select id="ciEv">${soon.map((e) => `<option value="${e.id}">${esc(e.title)} · ${short(parseDay(e.day))}</option>`).join("")}</select><div id="ciList"></div>` : '<p class="muted">No events coming up.</p>'}
+      <p class="muted">For Friday football you can also tick people in and add people at the pitch on the Football page.</p></div>`;
+    $("#ciGo", el).onclick = () => { const c = $("#ci", el).value.trim(); if (!c) return toast("Type the ticket code"); $("#ci", el).value = ""; checkIn(c); };
+    $("#ciScan", el).onclick = () => scanTicket(checkIn);
+    if (soon.length) { const pick = () => whosIn($("#ciList", el), $("#ciEv", el).value); $("#ciEv", el).onchange = pick; pick(); }
+  }
   async function admin(el, alive) {
-    if (!isOrg()) { el.innerHTML = '<div class="empty"><h2>Organisers only</h2></div>'; return; }
+    if (!isDoor()) { el.innerHTML = '<div class="empty"><h2>Organisers only</h2></div>'; return; }
+    if (!isAdmin()) return doorTools(el);
     loading(el);
     const [evs, bks, guests, members, fs] = await Promise.all([
       q(sb.from("events").select("*").order("day", { ascending: false }).limit(40)),
