@@ -282,7 +282,7 @@
     const g = games.filter((e) => e.kind === "football" && e.day && Number(e.price) < 6 && eventEnd(e) > new Date()).sort((a, b) => eventStart(a) - eventStart(b))[0];
     if (!g) return "";
     const d = parseDay(g.day), when = `Friday ${d.getDate()} ${MONTHS_LONG[d.getMonth()]}`;
-    return `<a class="offer" href="#football"><small>Launch offer</small><b>Book here for ${when} and get your place for just ${money(g.price).replace(".00", "")}</b>
+    return `<a class="offer${onFootball ? "" : " footie-offer"}" href="#football"><small>Launch offer</small><b>Book here for ${when} and get your place for just ${money(g.price).replace(".00", "")}</b>
       <span>${onFootball ? "Book below in the app. " : ""}Only for bookings made in the app.${onFootball ? "" : " Tap to book →"}</span></a>`;
   }
   function fmtEvent(ev) { if (!ev.day) return "Date to be confirmed"; const d = parseDay(ev.day); return `${DAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()} | ${hhmm(ev.time).replace(/^0(\d)/, "$1")}`; }
@@ -490,7 +490,7 @@
       return;
     }
     const ev = g.event, open = new Date() < placePayBy(ev, g.created_at);
-    el.innerHTML = `<div class="events footie">${footieHero()}<div class="card fb">
+    el.innerHTML = `<div class="events"><div class="card fb">
       <h2>${esc(ev.title || "Football")}</h2><p class="muted">${short(parseDay(ev.day))} · ${hhmm(ev.time)}</p>
       <p style="font-size:18px"><b>${esc(g.guest)}</b>, booked by <b>${esc(g.member)}</b></p>
       ${g.paid ? `<p class="note">Paid, thank you. See you on the pitch!</p>`
@@ -499,17 +499,6 @@
         : `<p class="note">The time to pay has passed, so this place is being released.</p>`}
       <p class="muted">6-a-side at Goals, Beckenham, Elmers End Road, BR3 4EJ. Get together at ${hhmm(ev.time)} next to Pitch 1. Players must be 16 or over, and play is at your own risk.</p>
     </div></div>`;
-    wirePoster(el);
-  }
-  // The Friday Weekly Footie banner tops every football screen; tapping it shows the whole poster.
-  const footieHero = () => `<button class="footie-hero" data-poster aria-label="Friday Weekly Footie poster"><img src="${FOOTIE_BANNER}" alt="Friday Weekly Footie"></button>`;
-  function wirePoster(el, ev) {
-    if (navigator.canShare) picFile(FOOTIE).catch(() => {});
-    el.querySelectorAll("[data-poster]").forEach((b) => (b.onclick = () => modal(`<button class="close" aria-label="Close">×</button>
-      <img class="poster-full" src="${FOOTIE}" alt="Friday Weekly Footie: 6-a-side sudden death or 5 team tournament, max 10-minute games, everyone welcome, on 5-a-side pitches at Goals">
-      <div class="form-actions"><button class="btn solid block footie-btn" id="posterShare">${ICON.share} Share the poster</button></div>`, (m) => {
-      $("#posterShare", m).onclick = () => (ev ? shareEvent(ev) : share("Friday Weekly Footie", "Friday Weekly Footie. Everyone welcome! Book your place here:", `${location.origin}${location.pathname}#football`, FOOTIE));
-    })));
   }
   function footballInfo(ev, fs) {
     const t = hhmm(ev.time);
@@ -546,13 +535,12 @@
     const ev = games.find((g) => eventEnd(g) > new Date());
     const n = ev ? Number((places.find((p) => p.event_id === ev.id) || {}).taken || 0) : 0;
     needSignIn(el, "book football");
-    el.insertAdjacentHTML("afterbegin", `<div class="events footie">${footieHero()}${ev ? `<div class="card fb"><h2>${esc(ev.title)}</h2><p class="muted">${fmtEvent(ev)} · ${esc(ev.location)}</p>
-      <p style="font-size:20px"><b>${n} booked</b> so far${n < ev.capacity ? `, ${ev.capacity - n} places left` : ", it's full"}.</p></div>` : ""}</div>`);
-    wirePoster(el, ev);
+    if (ev) el.insertAdjacentHTML("afterbegin", `<div class="events"><div class="card fb"><h2>${esc(ev.title)}</h2><p class="muted">${fmtEvent(ev)} · ${esc(ev.location)}</p>
+      <p style="font-size:20px"><b>${n} booked</b> so far${n < ev.capacity ? `, ${ev.capacity - n} places left` : ", it's full"}.</p></div></div>`);
   }
   async function football(el, alive) {
     if (!me) return footballGuest(el, alive);
-    if (eventsOnly()) { el.innerHTML = `<div class="events footie">${footieHero()}</div><div class="empty"><h2>Friday Weekly Footie</h2><p class="muted" style="font-size:17px;line-height:1.5">Your membership is for events only. If you'd like to play football, ask an organiser to add it to your membership.</p></div>`; wirePoster(el); return; }
+    if (eventsOnly()) { el.innerHTML = `<div class="empty"><h2>Friday football</h2><p class="muted" style="font-size:17px;line-height:1.5">Your membership is for events only. If you'd like to play football, ask an organiser to add it to your membership.</p></div>`; return; }
     loading(el);
     await sb.rpc("expire_unpaid");
     const now = new Date();
@@ -643,9 +631,8 @@
       <div class="form-actions"><button class="btn block" data-go="funds">See all fund changes</button></div>
     </div>`;
 
-    el.innerHTML = `<div class="events footie">${footieHero()}${offerBanner(allGames, true)}${top}${ev ? footballInfo(ev, fs) : ""}${you}${players}${fund}${isOrg() ? '<div id="org"></div>' : ""}</div>`;
+    el.innerHTML = `<div class="events">${offerBanner(allGames, true)}${top}${ev ? footballInfo(ev, fs) : ""}${you}${players}${fund}${isOrg() ? '<div id="org"></div>' : ""}</div>`;
 
-    wirePoster(el, ev);
     const riskOk = () => { const r = $("#riskOk", el); if (r && r.checked) return true; toast("Please tick to confirm you play at your own risk"); return false; };
     el.querySelectorAll("[data-choice]").forEach((b) => (b.onclick = () => riskOk() && bookFootball(ev, b.dataset.choice)));
     const af = $("#addFriend", el);
@@ -1199,7 +1186,7 @@
   function more(el) {
     el.innerHTML = `
       <button class="menu-row" data-to="account">${ICON.user}<span>${me ? "My account & tickets" : "Sign in or join"} ${ICON.chev}</span></button>
-      <button class="menu-row" data-to="football">${ICON.ball}<span>Friday Weekly Footie ${ICON.chev}</span></button>
+      <button class="menu-row" data-to="football">${ICON.ball}<span>Friday Football ${ICON.chev}</span></button>
       <button class="menu-row" data-to="funds">${ICON.poll}<span>Funds ${ICON.chev}</span></button>
       ${isOrg() ? `<button class="menu-row" data-to="admin">${ICON.tools}<span>Organiser tools ${ICON.chev}</span></button>` : ""}
       <button class="menu-row" data-to="counselling">${ICON.star}<span>Counselling ${ICON.chev}</span></button>`;

@@ -279,10 +279,14 @@ details.info ul { margin: 8px 0 12px; padding-left: 20px; }
 details.info li { margin: 4px 0; }
 label.check.risk { font-weight: 700; margin: 4px 0 10px; }
 .receipt { display: block; width: 100%; border-radius: 10px; margin-top: 10px; border: 1px solid var(--line); }
-.offer { display: flex; flex-direction: column; gap: 6px; padding: 18px; border-radius: 12px; background: linear-gradient(180deg, #161616, #050505); border: 2px solid #ffd21f; border-left: 8px solid #2fa83a; color: #fff; text-decoration: none; box-shadow: 0 6px 20px rgba(255,210,31,.18); }
-.offer small { font-weight: 800; letter-spacing: .08em; text-transform: uppercase; font-size: 12px; color: #7fdc4a; }
-.offer b { font-size: 22px; line-height: 1.2; font-family: "Bricolage Grotesque", sans-serif; font-weight: 800; font-style: italic; color: #ffd21f; }
+.offer { display: flex; flex-direction: column; gap: 6px; padding: 18px; border-radius: 16px; background: linear-gradient(135deg, #e3a548, #f0c56b); color: #1a1408; text-decoration: none; box-shadow: 0 6px 20px rgba(227,165,72,.25); }
+.offer small { font-weight: 800; letter-spacing: .08em; text-transform: uppercase; font-size: 12px; }
+.offer b { font-size: 22px; line-height: 1.2; font-family: "Bricolage Grotesque", sans-serif; }
 .offer span { font-size: 14px; font-weight: 600; }
+/* on the Events page the offer wears the Friday Weekly Footie look */
+.offer.footie-offer { border-radius: 12px; background: linear-gradient(180deg, #161616, #050505); border: 2px solid #ffd21f; border-left: 8px solid #2fa83a; color: #fff; box-shadow: 0 6px 20px rgba(255,210,31,.18); }
+.footie-offer small { color: #7fdc4a; }
+.footie-offer b { font-weight: 800; font-style: italic; color: #ffd21f; }
 
 /* An event's picture, on its card and in its details */
 .event-pic { display: block; width: 100%; max-height: 240px; object-fit: cover; cursor: pointer; }
@@ -290,27 +294,7 @@ label.check.risk { font-weight: 700; margin: 4px 0 10px; }
 .event-foot a.go { flex: 1; height: 50px; display: flex; align-items: center; justify-content: center; font-size: 17px; text-decoration: none; }
 .event-foot button + a.go { border-left: 1px solid var(--line); }
 
-/* ---------- Friday Weekly Footie: night pitch green, floodlight yellow, black banners ---------- */
-.footie {
-  --green: #ffd21f; --green-dark: #e6b800; --green-soft: rgba(255,210,31,.14); --ink: #111;
-  --card: rgba(6,10,6,.86); --line: #2c4024; --field: rgba(255,255,255,.06); --gold: #7fdc4a;
-  background: linear-gradient(180deg, #0a1626 0, #0e2a17 320px, #12391b 900px, #0c2412);
-  align-content: start;
-}
-.btn.footie-btn { background: #ffd21f; border-color: #ffd21f; color: #111; }
-.footie-hero { display: block; width: 100%; padding: 0; border-radius: 12px; overflow: hidden; border: 2px solid #2fa83a; box-shadow: 0 8px 26px rgba(0,0,0,.45); }
-.footie-hero img { display: block; width: 100%; aspect-ratio: 960 / 375; object-fit: cover; }
-.footie .card.fb { border: 0; border-top: 4px solid #2fa83a; border-radius: 12px; box-shadow: 0 6px 18px rgba(0,0,0,.35); }
-.footie .card.fb h2 { color: #ffd21f; font-weight: 800; font-style: italic; letter-spacing: .01em; }
-.footie .card.fb h3 { color: #fff; font-style: italic; }
-.footie details.info summary b { color: #ffd21f; font-family: "Bricolage Grotesque", sans-serif; font-style: italic; font-size: 19px; }
-.footie .steps div.now { background: rgba(255,210,31,.12); }
-.footie .tag { background: #000; border: 1px solid rgba(255,210,31,.45); }
-.footie .tag.warn { border-color: rgba(239,124,106,.5); }
-.footie .tag.gold { border-color: rgba(127,220,74,.45); background: rgba(47,168,58,.15); }
-.footie .note { background: rgba(255,210,31,.08); border-color: rgba(255,210,31,.4); }
-.footie .players li::marker { color: #ffd21f; font-weight: 800; }
-.poster-full { display: block; width: 100%; border-radius: 10px; margin-top: 30px; }
+/* ---------- Friday Weekly Footie on the Events page ---------- */
 /* football on the events list */
 .card.footie-card { border: 2px solid #2fa83a; background: linear-gradient(180deg, #0b0f0b, #0d2414); }
 .footie-card { --green: #ffd21f; --green-soft: rgba(255,210,31,.14); --gold: #7fdc4a; }
