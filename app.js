@@ -729,9 +729,10 @@
     box.innerHTML = `<div class="card fb"><h2>Organiser</h2>
       ${current && !current.accounts_posted ? `<button class="btn solid block" id="fbScan">Scan tickets to check people in</button><div id="fbIn"></div>` : ""}
       ${full ? `<button class="btn small" id="addGame">Add game for ${short(nextFri)}</button>` : ""}
-      ${current ? `<h3>Who's turned up · ${short(parseDay(current.day))}</h3>
-      <p class="muted">Tap a name when they arrive. ${currentBookings.filter((b) => b.checked_in).length} of ${currentBookings.length} here.</p>
-      <div class="attend">${currentBookings.map((b) => `<label class="check"><input type="checkbox" data-here="${b.id}" ${b.checked_in ? "checked" : ""} ${current.accounts_posted ? "disabled" : ""}> ${esc(b.display_name)}${b.paid ? "" : ' <span class="tag warn">Unpaid</span>'}${current.accounts_posted || !full ? "" : ` <button class="btn small" data-drop="${b.id}" style="margin-left:auto">Remove</button>`}</label>`).join("") || '<p class="muted">No one has booked yet.</p>'}</div>
+      ${current ? `<h3>Who's booked · ${short(parseDay(current.day))}</h3>
+      <p class="muted">Tap a name when they arrive. ${currentBookings.filter((b) => b.checked_in).length} of ${currentBookings.length} here, ${currentBookings.filter((b) => !b.checked_in).length} still missing.</p>
+      ${[["Still missing", currentBookings.filter((b) => !b.checked_in)], ["Here", currentBookings.filter((b) => b.checked_in)]].map(([head, list]) => currentBookings.length ? `<h4>${head} (${list.length})</h4>
+      <div class="attend">${list.map((b) => `<label class="check"><input type="checkbox" data-here="${b.id}" ${b.checked_in ? "checked" : ""} ${current.accounts_posted ? "disabled" : ""}> ${esc(b.display_name)}${b.paid ? "" : ' <span class="tag warn">Unpaid</span>'}${current.accounts_posted || !full ? "" : ` <button class="btn small" data-drop="${b.id}" style="margin-left:auto">Remove</button>`}</label>`).join("") || '<p class="muted">No one.</p>'}</div>` : "").join("") || '<p class="muted">No one has booked yet.</p>'}
       <p class="muted">Anyone paid for pay and play who isn't ticked when the accounts are posted keeps what they paid as credit on their account for their next booking.</p>
       ${current.accounts_posted ? "" : `<h3>Add someone who wasn't on the list</h3>
       <div class="grid2">
@@ -779,7 +780,7 @@
 
     if ($("#fbScan", box)) {
       $("#fbScan", box).onclick = () => scanTicket(checkIn);
-      whosIn($("#fbIn", box), current.id, (t) => { const c = box.querySelector(`[data-here="${t.id}"]`); if (c && t.status === "booked") c.checked = true; });
+      whosIn($("#fbIn", box), current.id, (t) => { const c = box.querySelector(`[data-here="${t.id}"]`); if (c && t.status === "booked") refresh(); });
     }
     if ($("#addGame", box)) $("#addGame", box).onclick = async () => {
       try {
