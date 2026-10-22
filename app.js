@@ -470,10 +470,11 @@
     const guestName = b.display_name.replace(/ \([^)]*\)$/, ""), pitch = b.pitch_link;
     const url = `${location.origin}${location.pathname}#guest:${b.code}`;
     const text = pitch ? `Hi ${guestName}, please pay ${money(b.amount)} for tonight's football here:`
-      : `Hi ${guestName}, I've booked you in for football on ${short(parseDay(ev.day))} at ${hhmm(ev.time)}. Please pay ${money(b.amount)} for your place ${payByText(ev, b.created_at)}, or it's released:`;
+      : `Hi ${guestName}, I've booked you in for football on ${short(parseDay(ev.day))} at ${hhmm(ev.time)}. Please pay ${money(b.amount)} for your place ${payByText(ev, b.created_at)}, or it's released. Your QR code ticket is on the same page, so take a screenshot and show it at the game:`;
     modal(`<button class="close" aria-label="Close">×</button><h2>Send ${esc(guestName)} a payment link</h2>
       <p class="muted">${pitch ? `${esc(guestName)} pays ${money(b.amount)} on the link, and shows as Paid once it's in. Until then they show as Unpaid.`
         : `${esc(guestName)} pays ${money(b.amount)} on the link. Their payment shows your name and theirs, and they show as Paid on the roster once it's in. If it isn't paid ${payByText(ev, b.created_at)}, their place is released.`}</p>
+      ${pitch ? "" : `<p class="note">The link also shows ${esc(guestName)}'s QR code ticket. They can take a screenshot of it and show it at the game. As a back-up, you have a copy too: tap "Show my friend's ticket" on the Football page.</p>`}
       <div class="form-actions"><button class="btn solid block" id="glSend">${ICON.share} Send the link</button>
         <button class="btn block" id="glCopy" style="margin-top:10px">Copy the link</button></div>`, (m) => {
       $("#glSend", m).onclick = async () => {
@@ -498,7 +499,7 @@
     el.innerHTML = `<div class="events"><div class="card fb">
       <h2>${esc(ev.title || "Football")}</h2><p class="muted">${short(parseDay(ev.day))} · ${hhmm(ev.time)}</p>
       <p style="font-size:18px"><b>${esc(g.guest)}</b>, ${g.pitch ? "added by the organisers" : `booked by <b>${esc(g.member)}</b>`}</p>
-      ${g.pitch ? "" : `<div class="ticket"><div class="qr" id="gq"></div><div class="code">${esc(code)}</div><div class="muted">Show this QR code at the pitch</div></div>`}
+      ${g.pitch ? "" : `<div class="ticket"><div class="qr" id="gq"></div><div class="code">${esc(code)}</div><div class="muted">Take a screenshot and show this QR code at the game. The friend who booked you has a copy too.</div></div>`}
       ${g.paid ? `<p class="note">Paid, thank you. See you on the pitch!</p>`
         : g.pitch ? `<p class="note">Please pay <b>${money(g.amount)}</b> for tonight's game.</p>
           <button class="btn solid block" data-pay="${esc(code)}" data-guest="1">Pay ${money(g.amount)} by card</button>`
