@@ -20,7 +20,7 @@ export default async (req) => {
       if (!names) return json({ error: "Booking not found." }, 404);
       const ev = booking.events || {};
       const paid = booking.paid || (booking.square_order_id ? await confirmBooking(booking).catch(() => false) : false);
-      return json({ ...names, paid, status: booking.status, amount: booking.amount, created_at: booking.created_at, event: { title: ev.title, day: ev.day, time: ev.time, kind: ev.kind } });
+      return json({ ...names, pitch: !!booking.pitch_link, code: booking.code, paid, status: booking.status, amount: booking.amount, created_at: booking.created_at, event: { title: ev.title, day: ev.day, time: ev.time, kind: ev.kind } });
     }
 
     if (confirm || booking.paid) return json({ paid: await confirmBooking(booking) });

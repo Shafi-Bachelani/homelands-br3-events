@@ -18,8 +18,11 @@
 
   // ---------- who is signed in ----------
   let me = null; // { id, email, name, role, family, credit, kitty_session }
-  const isOrg = () => !!me && (me.role === "organiser" || me.role === "admin");
+  // Organisers do door duty only (scan tickets, see who's in, tick people in, add people at the pitch).
+  // Everything else in the organiser screens is for the admin.
   const isAdmin = () => !!me && me.role === "admin";
+  const isOrg = isAdmin;
+  const isDoor = () => !!me && (me.role === "organiser" || me.role === "admin");
   // New members wait for the admin's approval before they can book or post.
   const pending = () => !!me && me.approved === false;
   const eventsOnly = () => !!me && me.football === false && !me.family; // events-only membership, no football
@@ -282,7 +285,7 @@
     const g = games.filter((e) => e.kind === "football" && e.day && Number(e.price) < 6 && eventEnd(e) > new Date()).sort((a, b) => eventStart(a) - eventStart(b))[0];
     if (!g) return "";
     const d = parseDay(g.day), when = `Friday ${d.getDate()} ${MONTHS_LONG[d.getMonth()]}`;
-    return `<a class="offer" href="#football"><small>Launch offer</small><b>Book here for ${when} and get your place for just ${money(g.price).replace(".00", "")}</b>
+    return `<a class="offer${onFootball ? "" : " footie-offer"}" href="#football"><small>Launch offer</small><b>Book here for ${when} and get your place for just ${money(g.price).replace(".00", "")}</b>
       <span>${onFootball ? "Book below in the app. " : ""}Only for bookings made in the app.${onFootball ? "" : " Tap to book →"}</span></a>`;
   }
   function fmtEvent(ev) { if (!ev.day) return "Date to be confirmed"; const d = parseDay(ev.day); return `${DAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()} | ${hhmm(ev.time).replace(/^0(\d)/, "$1")}`; }
@@ -464,11 +467,13 @@
   };
   // A member sends their friend a link to pay for their own place.
   function guestLinkModal(ev, b) {
-    const guestName = b.display_name.replace(/ \([^)]*\)$/, "");
+    const guestName = b.display_name.replace(/ \([^)]*\)$/, ""), pitch = b.pitch_link;
     const url = `${location.origin}${location.pathname}#guest:${b.code}`;
-    const text = `Hi ${guestName}, I've booked you in for football on ${short(parseDay(ev.day))} at ${hhmm(ev.time)}. Please pay ${money(b.amount)} for your place ${payByText(ev, b.created_at)}, or it's released:`;
+    const text = pitch ? `Hi ${guestName}, please pay ${money(b.amount)} for tonight's football here:`
+      : `Hi ${guestName}, I've booked you in for football on ${short(parseDay(ev.day))} at ${hhmm(ev.time)}. Please pay ${money(b.amount)} for your place ${payByText(ev, b.created_at)}, or it's released:`;
     modal(`<button class="close" aria-label="Close">×</button><h2>Send ${esc(guestName)} a payment link</h2>
-      <p class="muted">${esc(guestName)} pays ${money(b.amount)} on the link. Their payment shows your name and theirs, and they show as Paid on the roster once it's in. If it isn't paid ${payByText(ev, b.created_at)}, their place is released.</p>
+      <p class="muted">${pitch ? `${esc(guestName)} pays ${money(b.amount)} on the link, and shows as Paid once it's in. Until then they show as Unpaid.`
+        : `${esc(guestName)} pays ${money(b.amount)} on the link. Their payment shows your name and theirs, and they show as Paid on the roster once it's in. If it isn't paid ${payByText(ev, b.created_at)}, their place is released.`}</p>
       <div class="form-actions"><button class="btn solid block" id="glSend">${ICON.share} Send the link</button>
         <button class="btn block" id="glCopy" style="margin-top:10px">Copy the link</button></div>`, (m) => {
       $("#glSend", m).onclick = async () => {
@@ -489,27 +494,20 @@
       el.innerHTML = `<div class="empty"><h2>This place is no longer booked</h2><p class="muted" style="font-size:17px;line-height:1.5">It wasn't paid in time, or it was removed. Ask the friend who booked you to add you again.</p></div>`;
       return;
     }
-    const ev = g.event, open = new Date() < placePayBy(ev, g.created_at);
-    el.innerHTML = `<div class="events footie">${footieHero()}<div class="card fb">
+    const ev = g.event, open = g.pitch || new Date() < placePayBy(ev, g.created_at);
+    el.innerHTML = `<div class="events"><div class="card fb">
       <h2>${esc(ev.title || "Football")}</h2><p class="muted">${short(parseDay(ev.day))} · ${hhmm(ev.time)}</p>
-      <p style="font-size:18px"><b>${esc(g.guest)}</b>, booked by <b>${esc(g.member)}</b></p>
+      <p style="font-size:18px"><b>${esc(g.guest)}</b>, ${g.pitch ? "added by the organisers" : `booked by <b>${esc(g.member)}</b>`}</p>
+      ${g.pitch ? "" : `<div class="ticket"><div class="qr" id="gq"></div><div class="code">${esc(code)}</div><div class="muted">Show this QR code at the pitch</div></div>`}
       ${g.paid ? `<p class="note">Paid, thank you. See you on the pitch!</p>`
+        : g.pitch ? `<p class="note">Please pay <b>${money(g.amount)}</b> for tonight's game.</p>
+          <button class="btn solid block" data-pay="${esc(code)}" data-guest="1">Pay ${money(g.amount)} by card</button>`
         : open ? `<p class="note">Please pay <b>${money(g.amount)}</b> ${payByText(ev, g.created_at)}, or your place is released.</p>
           <button class="btn solid block" data-pay="${esc(code)}" data-guest="1">Pay ${money(g.amount)} by card</button>`
         : `<p class="note">The time to pay has passed, so this place is being released.</p>`}
       <p class="muted">6-a-side at Goals, Beckenham, Elmers End Road, BR3 4EJ. Get together at ${hhmm(ev.time)} next to Pitch 1. Players must be 16 or over, and play is at your own risk.</p>
     </div></div>`;
-    wirePoster(el);
-  }
-  // The Friday Weekly Footie banner tops every football screen; tapping it shows the whole poster.
-  const footieHero = () => `<button class="footie-hero" data-poster aria-label="Friday Weekly Footie poster"><img src="${FOOTIE_BANNER}" alt="Friday Weekly Footie"></button>`;
-  function wirePoster(el, ev) {
-    if (navigator.canShare) picFile(FOOTIE).catch(() => {});
-    el.querySelectorAll("[data-poster]").forEach((b) => (b.onclick = () => modal(`<button class="close" aria-label="Close">×</button>
-      <img class="poster-full" src="${FOOTIE}" alt="Friday Weekly Footie: 6-a-side sudden death or 5 team tournament, max 10-minute games, everyone welcome, on 5-a-side pitches at Goals">
-      <div class="form-actions"><button class="btn solid block footie-btn" id="posterShare">${ICON.share} Share the poster</button></div>`, (m) => {
-      $("#posterShare", m).onclick = () => (ev ? shareEvent(ev) : share("Friday Weekly Footie", "Friday Weekly Footie. Everyone welcome! Book your place here:", `${location.origin}${location.pathname}#football`, FOOTIE));
-    })));
+    if ($("#gq", el)) qr($("#gq", el), code);
   }
   function footballInfo(ev, fs) {
     const t = hhmm(ev.time);
@@ -546,13 +544,12 @@
     const ev = games.find((g) => eventEnd(g) > new Date());
     const n = ev ? Number((places.find((p) => p.event_id === ev.id) || {}).taken || 0) : 0;
     needSignIn(el, "book football");
-    el.insertAdjacentHTML("afterbegin", `<div class="events footie">${footieHero()}${ev ? `<div class="card fb"><h2>${esc(ev.title)}</h2><p class="muted">${fmtEvent(ev)} · ${esc(ev.location)}</p>
-      <p style="font-size:20px"><b>${n} booked</b> so far${n < ev.capacity ? `, ${ev.capacity - n} places left` : ", it's full"}.</p></div>` : ""}</div>`);
-    wirePoster(el, ev);
+    if (ev) el.insertAdjacentHTML("afterbegin", `<div class="events"><div class="card fb"><h2>${esc(ev.title)}</h2><p class="muted">${fmtEvent(ev)} · ${esc(ev.location)}</p>
+      <p style="font-size:20px"><b>${n} booked</b> so far${n < ev.capacity ? `, ${ev.capacity - n} places left` : ", it's full"}.</p></div></div>`);
   }
   async function football(el, alive) {
     if (!me) return footballGuest(el, alive);
-    if (eventsOnly()) { el.innerHTML = `<div class="events footie">${footieHero()}</div><div class="empty"><h2>Friday Weekly Footie</h2><p class="muted" style="font-size:17px;line-height:1.5">Your membership is for events only. If you'd like to play football, ask an organiser to add it to your membership.</p></div>`; wirePoster(el); return; }
+    if (eventsOnly()) { el.innerHTML = `<div class="empty"><h2>Friday football</h2><p class="muted" style="font-size:17px;line-height:1.5">Your membership is for events only. If you'd like to play football, ask an organiser to add it to your membership.</p></div>`; return; }
     loading(el);
     await sb.rpc("expire_unpaid");
     const now = new Date();
@@ -597,6 +594,7 @@
       if (mine) {
         const st = mine.charge === "covered" ? "Booked, covered by your kitty" : mine.paid ? (mine.method === "credit" ? "Booked, paid with credit" : mine.method === "card" ? "Booked and paid by card" : "Booked and paid") : "Booked, not paid yet";
         body = `<p><b>${st}.</b> You're number ${bookings.indexOf(mine) + 1} on the list.</p>
+          <button class="btn" data-ticket="${esc(mine.code)}" style="margin-bottom:10px">Show my ticket (QR code)</button>
           ${!mine.paid ? `<p class="note">Please pay <b>${money(mine.amount)}</b> ${new Date(mine.created_at) > payBy ? "within <b>30 minutes</b> of booking" : "before <b>Thursday 11pm</b>"}, or your place is released and you can't rebook this game.${me.family ? " Pay the organiser by bank transfer." : " Pay by card here, or by bank transfer to the organiser."}</p>
             ${me.family ? "" : `<button class="btn solid" data-pay="${esc(mine.code)}" style="margin-bottom:10px">Pay ${money(mine.amount)} by card</button>`}` : ""}
           ${me.family && mine.method === "transfer" ? `<p class="muted">As family you're added automatically each week. If you can't come, remove yourself to free your place.</p>`
@@ -625,6 +623,7 @@
             ${me.family ? "" : `<button class="btn solid" data-pay="${esc(friend.code)}" style="margin-bottom:10px">Pay ${money(friend.amount)} for your friend</button>`}
             ${!me.family && Number(me.credit) >= Number(friend.amount) ? `<button class="btn" id="friendCredit" style="margin-bottom:10px">Use ${money(friend.amount)} of my credit</button>` : ""}
             <button class="btn" id="friendLink" style="margin-bottom:10px">${ICON.share} Send your friend a payment link</button>`}
+          <button class="btn" data-ticket="${esc(friend.code)}" style="margin-bottom:10px">Show my friend's ticket</button>
           <button class="btn" id="cancelFriend">Remove my friend</button>`
         : canAdd && bookings.length < ev.capacity ? `<h3>Bring a friend</h3><p class="muted">You can add one friend per game. ${me.family ? `Pay their ${F$} by transfer, or send them a payment link` : `Pay their ${F$} yourself${Number(me.credit) >= F ? ", by card or from your credit," : ""} or send them a payment link`}.</p><button class="btn" id="addFriend">Add a friend</button>` : "";
       you = `<div class="card fb"><h2>You</h2>${pills}${body}${friendBox}</div>`;
@@ -643,9 +642,9 @@
       <div class="form-actions"><button class="btn block" data-go="funds">See all fund changes</button></div>
     </div>`;
 
-    el.innerHTML = `<div class="events footie">${footieHero()}${offerBanner(allGames, true)}${top}${ev ? footballInfo(ev, fs) : ""}${you}${players}${fund}${isOrg() ? '<div id="org"></div>' : ""}</div>`;
+    el.innerHTML = `<div class="events">${offerBanner(allGames, true)}${top}${ev ? footballInfo(ev, fs) : ""}${you}${players}${fund}${isDoor() ? '<div id="org"></div>' : ""}</div>`;
+    el.querySelectorAll("[data-ticket]").forEach((b) => (b.onclick = () => showTicket(b.dataset.ticket)));
 
-    wirePoster(el, ev);
     const riskOk = () => { const r = $("#riskOk", el); if (r && r.checked) return true; toast("Please tick to confirm you play at your own risk"); return false; };
     el.querySelectorAll("[data-choice]").forEach((b) => (b.onclick = () => riskOk() && bookFootball(ev, b.dataset.choice)));
     const af = $("#addFriend", el);
@@ -697,7 +696,7 @@
       if (cx.dataset.sure !== "1") { cx.dataset.sure = "1"; cx.textContent = "Tap again to remove yourself"; return; }
       try { toast(await q(sb.rpc("cancel_booking", { p_id: mine.id }))); await loadMe(); refresh(); } catch (e) { fail(e); }
     };
-    if (isOrg()) organiserFootball($("#org", el), ev, bookings, fs, awaiting, games);
+    if (isDoor()) organiserFootball($("#org", el), ev, bookings, fs, awaiting, games);
   }
   async function bookFootball(ev, choice) {
     try {
@@ -714,12 +713,13 @@
     const bookings = target && target !== current ? await q(sb.from("bookings").select("*").eq("event_id", target.id).neq("status", "cancelled").order("created_at")) : currentBookings;
     const people = current && !current.accounts_posted ? await q(sb.from("profiles").select("id,name,credit").order("name")) : [];
     const onList = new Set(currentBookings.map((b) => b.user_id).filter(Boolean));
-    const debts = await q(sb.from("debts").select("*, profiles(name)").eq("cleared", false).order("on_date"));
+    const full = isAdmin(); // organisers get door duty only
+    const debts = full ? await q(sb.from("debts").select("*, profiles(name)").eq("cleared", false).order("on_date")) : [];
     // cancelled before Friday 6pm: their money is in this game's takings but now belongs to the credits fund
-    const cancelled = target ? (await q(sb.from("bookings").select("*").eq("event_id", target.id).eq("status", "cancelled")))
+    const cancelled = full && target ? (await q(sb.from("bookings").select("*").eq("event_id", target.id).eq("status", "cancelled")))
       .filter((b) => b.status === "cancelled" && b.charge === "payg" && b.paid && ["card", "transfer", "cash"].includes(b.method)) : [];
     // credits check: every credit change since the last accounts, and the credit on members' accounts now
-    const [creditMoves, creditRows] = target && !target.accounts_posted ? await Promise.all([
+    const [creditMoves, creditRows] = full && target && !target.accounts_posted ? await Promise.all([
       fs.posted_at ? q(sb.from("ledger").select("*").eq("fund", "credits").gt("created_at", fs.posted_at).order("id")) : [],
       q(sb.from("profiles").select("credit"))]) : [[], []];
     const fromCredit = target ? bookings.filter((b) => b.charge === "payg" && b.paid && b.method === "credit" && b.checked_in).reduce((t, b) => t + Number(b.amount), 0) : 0;
@@ -727,19 +727,20 @@
     const charged = bookings.filter((b) => b.charge !== "covered");
     const METHODS = { card: "Card", transfer: "Transfer", cash: "Cash", owes: "Owes" };
     box.innerHTML = `<div class="card fb"><h2>Organiser</h2>
-      <button class="btn small" id="addGame">Add game for ${short(nextFri)}</button>
+      ${current && !current.accounts_posted ? `<button class="btn solid block" id="fbScan">Scan tickets to check people in</button><div id="fbIn"></div>` : ""}
+      ${full ? `<button class="btn small" id="addGame">Add game for ${short(nextFri)}</button>` : ""}
       ${current ? `<h3>Who's turned up · ${short(parseDay(current.day))}</h3>
       <p class="muted">Tap a name when they arrive. ${currentBookings.filter((b) => b.checked_in).length} of ${currentBookings.length} here.</p>
-      <div class="attend">${currentBookings.map((b) => `<label class="check"><input type="checkbox" data-here="${b.id}" ${b.checked_in ? "checked" : ""} ${current.accounts_posted ? "disabled" : ""}> ${esc(b.display_name)}${b.paid ? "" : ' <span class="tag warn">Unpaid</span>'}${current.accounts_posted ? "" : ` <button class="btn small" data-drop="${b.id}" style="margin-left:auto">Remove</button>`}</label>`).join("") || '<p class="muted">No one has booked yet.</p>'}</div>
+      <div class="attend">${currentBookings.map((b) => `<label class="check"><input type="checkbox" data-here="${b.id}" ${b.checked_in ? "checked" : ""} ${current.accounts_posted ? "disabled" : ""}> ${esc(b.display_name)}${b.paid ? "" : ' <span class="tag warn">Unpaid</span>'}${current.accounts_posted || !full ? "" : ` <button class="btn small" data-drop="${b.id}" style="margin-left:auto">Remove</button>`}</label>`).join("") || '<p class="muted">No one has booked yet.</p>'}</div>
       <p class="muted">Anyone paid for pay and play who isn't ticked when the accounts are posted keeps what they paid as credit on their account for their next booking.</p>
       ${current.accounts_posted ? "" : `<h3>Add someone who wasn't on the list</h3>
       <div class="grid2">
         <div><label>Member</label><select id="wiUser"><option value="">Not a member (type name)</option>${people.filter((p) => !onList.has(p.id)).map((p) => `<option value="${p.id}" data-credit="${Number(p.credit) || 0}">${esc(p.name)}${Number(p.credit) > 0 ? ` (${money(p.credit)} credit)` : ""}</option>`).join("")}</select></div>
         <div><label>Name</label><input id="wiName" placeholder="Their name"></div>
-        <div><label id="wiPrice">Paid ${money(Math.max(Number(current.price), 6))} by</label><select id="wiMeth">${Object.entries(METHODS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}<option value="credit" disabled>Account credit</option></select></div>
+        <div><label id="wiPrice">Pays ${money(Math.max(Number(current.price), 6))} by</label><select id="wiMeth">${Object.entries(METHODS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}<option value="credit" disabled>Account credit</option><option value="link">Send them a payment link</option></select></div>
       </div>
       <div class="form-actions"><button class="btn solid block" id="wiAdd">Add and mark as here</button></div>`}` : ""}
-      ${target ? `<h3>Payments · ${esc(target.title)} ${short(parseDay(target.day))}${target.accounts_posted ? " (accounts posted)" : ""}</h3>
+      ${full && target ? `<h3>Payments · ${esc(target.title)} ${short(parseDay(target.day))}${target.accounts_posted ? " (accounts posted)" : ""}</h3>
       <p class="muted">Set how each person paid. Picking a method marks them paid straight away.</p>
       <div class="scroll"><table><thead><tr><th>Player</th><th>Type</th><th>Paid by</th></tr></thead><tbody>
         ${charged.map((b) => `<tr><td>${esc(b.display_name)}</td><td>${b.charge === "kitty" ? "Kitty £15" : `Pay & play ${money(b.amount)}`}</td><td>${b.method === "credit" ? "Credit" :
@@ -776,7 +777,11 @@
         : !target.accounts_posted ? '<p class="muted">After the game, the accounts tools appear here.</p>' : ""}` : ""}
     </div>`;
 
-    $("#addGame", box).onclick = async () => {
+    if ($("#fbScan", box)) {
+      $("#fbScan", box).onclick = () => scanTicket(checkIn);
+      whosIn($("#fbIn", box), current.id, (t) => { const c = box.querySelector(`[data-here="${t.id}"]`); if (c && t.status === "booked") c.checked = true; });
+    }
+    if ($("#addGame", box)) $("#addGame", box).onclick = async () => {
       try {
         await q(sb.from("events").insert({ kind: "football", title: "Friday Weekly Footie", day: dayKey(nextFri), time: "21:15", location: "Goals Beckenham, Elmers End",
           details: "Weekly 5-a-side every Friday night. All abilities welcome. £6 pay as you play, or £15 for the kitty.", price: 6, capacity: 36, access: "members" }));
@@ -787,7 +792,7 @@
     if (wu) {
       const sync = () => { const o = wu.selectedOptions[0], cr = Number(o.dataset.credit || 0), c = $("#wiMeth", box).querySelector('[value="credit"]');
         // Offer prices are for members; anyone else pays the full £6.
-        $("#wiPrice", box).textContent = `Paid ${money(wu.value ? Number(current.price) : Math.max(Number(current.price), 6))} by`;
+        $("#wiPrice", box).textContent = `Pays ${money(wu.value ? Number(current.price) : Math.max(Number(current.price), 6))} by`;
         $("#wiName", box).disabled = !!wu.value; c.disabled = cr < Number(current.price); if (c.disabled && $("#wiMeth", box).value === "credit") $("#wiMeth", box).value = "cash"; };
       wu.onchange = sync; sync();
       $("#wiAdd", box).onclick = async () => {
@@ -795,7 +800,8 @@
           $("#wiAdd", box).disabled = true;
           const b = (await q(sb.rpc("add_walkin", { p_event: current.id, p_user: wu.value || null, p_name: $("#wiName", box).value.trim() || null, p_method: $("#wiMeth", box).value })));
           const row = Array.isArray(b) ? b[0] : b;
-          toast(row && row.charge === "covered" ? `${row.display_name} added (in the kitty, no charge)` : "Added and marked as here"); refresh();
+          toast(row && row.charge === "covered" ? `${row.display_name} added (in the kitty, no charge)` : "Added and marked as here"); await refresh();
+          if (row && row.pitch_link && !row.paid) guestLinkModal(current, row);
         } catch (e) { $("#wiAdd", box).disabled = false; fail(e); }
       };
     }
@@ -805,7 +811,7 @@
       try { d.disabled = true; await q(sb.rpc("cancel_booking", { p_id: d.dataset.drop })); toast("Removed from the list"); refresh(); } catch (err) { d.disabled = false; fail(err); }
     }));
     box.querySelectorAll("[data-here]").forEach((c) => (c.onchange = async () => {
-      try { await q(sb.from("bookings").update({ checked_in: c.checked }).eq("id", c.dataset.here)); toast(c.checked ? "Marked as here" : "Unmarked"); refresh(); } catch (e) { c.checked = !c.checked; fail(e); }
+      try { await q(sb.rpc("set_here", { p_id: c.dataset.here, p_on: c.checked })); toast(c.checked ? "Marked as here" : "Unmarked"); refresh(); } catch (e) { c.checked = !c.checked; fail(e); }
     }));
     box.querySelectorAll("[data-meth]").forEach((s) => (s.onchange = async () => {
       try { await q(sb.from("bookings").update({ method: s.value || null, paid: !!s.value && s.value !== "owes" }).eq("id", s.dataset.meth)); toast("Saved"); refresh(); } catch (e) { fail(e); }
@@ -1199,9 +1205,9 @@
   function more(el) {
     el.innerHTML = `
       <button class="menu-row" data-to="account">${ICON.user}<span>${me ? "My account & tickets" : "Sign in or join"} ${ICON.chev}</span></button>
-      <button class="menu-row" data-to="football">${ICON.ball}<span>Friday Weekly Footie ${ICON.chev}</span></button>
+      <button class="menu-row" data-to="football">${ICON.ball}<span>Friday Football ${ICON.chev}</span></button>
       <button class="menu-row" data-to="funds">${ICON.poll}<span>Funds ${ICON.chev}</span></button>
-      ${isOrg() ? `<button class="menu-row" data-to="admin">${ICON.tools}<span>Organiser tools ${ICON.chev}</span></button>` : ""}
+      ${isDoor() ? `<button class="menu-row" data-to="admin">${ICON.tools}<span>Organiser tools ${ICON.chev}</span></button>` : ""}
       <button class="menu-row" data-to="counselling">${ICON.star}<span>Counselling ${ICON.chev}</span></button>`;
     el.querySelectorAll("[data-to]").forEach((b) => (b.onclick = () => go(b.dataset.to)));
   }
@@ -1373,6 +1379,7 @@
       const ok = t.status === "booked" && !t.already;
       const head = t.status === "pending" ? "Not approved yet, not booked" : t.status === "declined" ? "This booking was declined" : t.status === "waitlist" ? "On the waitlist, not booked" : t.status === "cancelled" ? "This booking was cancelled" : t.already ? "Already checked in" : "Checked in ✓";
       const row = (k, v) => `<div class="list-row"><span class="muted">${k}</span><b style="text-align:right">${v}</b></div>`;
+      if (onCheckedIn) onCheckedIn(t);
       modal(`<button class="close" aria-label="Close">×</button>
         <p class="${ok ? "" : "note"}" style="font-size:18px;margin:0 0 6px"><b>${head}</b></p>
         <h2 style="font-size:26px;margin:0 0 12px">${esc(t.guest_name || t.name)}</h2>
@@ -1380,12 +1387,43 @@
         ${row("Places", t.places)}
         ${t.age || t.gender ? row("Age", `${t.age ? esc(t.age) : "?"}${t.gender ? ` · ${esc(t.gender)}` : ""}`) : ""}
         ${t.guest ? row("Guest", t.booked_by ? `invited by ${esc(t.booked_by)}` : "yes") : t.booked_by ? row("Booked by", esc(t.booked_by)) : ""}
-        ${Number(t.amount) > 0 ? row("Payment", t.paid ? `Paid ${money(t.amount)}${t.method ? ` (${esc(t.method)})` : ""}` : `<span style="color:var(--warn,#e0a030)">${money(t.amount)} to pay</span>`) : row("Payment", "Free")}
+        ${row("Payment", payStatus(t))}
         ${t.age && t.age < 16 ? row("Under 16", t.parent_ok ? "Parent permission given" : '<span style="color:var(--warn,#e0a030)">No parent permission recorded</span>') : ""}
         <div class="form-actions"><button class="btn solid block" id="ciNext">${again ? "Scan the next ticket" : "Done"}</button></div>`, (m) => {
         $("#ciNext", m).onclick = () => { closeModal(); if (again) scanTicket(checkIn); };
       });
     } catch (e) { fail(e); if (again) setTimeout(() => scanTicket(checkIn), 1200); }
+  }
+  // How a booking is paid, in words: kitty, pay and play, paid or still to pay.
+  const METHOD_NAME = { card: "card", transfer: "transfer", cash: "cash", credit: "credit", owes: "owes" };
+  function payStatus(b) {
+    const warn = (t) => `<span style="color:var(--warn,#e0a030)">${t}</span>`;
+    if (b.charge === "covered") return "Kitty member, nothing to pay";
+    const what = b.charge === "kitty" ? "Kitty £15" : b.charge === "payg" ? `Pay and play ${money(b.amount)}` : money(b.amount);
+    if (!(Number(b.amount) > 0)) return "Free";
+    if (b.paid) return `${what}, paid${b.method && METHOD_NAME[b.method] ? ` by ${METHOD_NAME[b.method]}` : ""}`;
+    return warn(`${what}, ${b.method === "owes" ? "owes" : "not paid yet"}`);
+  }
+  // A list under the scan button: how many are booked, how many are here, and who's still to come.
+  let onCheckedIn = null;
+  async function whosIn(box, eventId, also) {
+    const load = async () => {
+      if (!box.isConnected) { onCheckedIn = null; return; }
+      const [bks, gs] = await Promise.all([
+        q(sb.from("bookings").select("id,display_name,places,checked_in,paid,amount,method,charge").eq("event_id", eventId).eq("status", "booked").order("display_name")),
+        q(sb.from("guests").select("booking_id,full_name")).catch(() => []),
+      ]);
+      const gn = Object.fromEntries(gs.map((x) => [x.booking_id, x.full_name]));
+      const n = (l) => l.reduce((t, b) => t + (b.places || 1), 0);
+      const here = bks.filter((b) => b.checked_in), toCome = bks.filter((b) => !b.checked_in);
+      const li = (b) => `<li>${esc(gn[b.id] || b.display_name)}${b.places > 1 ? ` (${b.places})` : ""} <span class="muted" style="font-size:14px">· ${payStatus(b)}</span></li>`;
+      box.innerHTML = `<details class="card" style="padding:12px 14px;margin:10px 0" ${box.dataset.open ? "open" : ""}><summary><b>Who's in: ${n(here)} here, ${n(toCome)} still to come</b> <span class="muted">(${n(bks)} booked)</span></summary>
+        <h3>Still to come (${n(toCome)})</h3><ul>${toCome.map(li).join("") || '<li class="muted">Everyone is here.</li>'}</ul>
+        <h3>Here (${n(here)})</h3><ul>${here.map(li).join("") || '<li class="muted">No one yet.</li>'}</ul></details>`;
+      $("details", box).ontoggle = (e) => { if (e.target.open) box.dataset.open = "1"; else delete box.dataset.open; };
+    };
+    onCheckedIn = (t) => { if (also) also(t); load().catch(() => {}); };
+    await load().catch((e) => (box.innerHTML = `<p class="muted">${esc(e.message)}</p>`));
   }
   // Opens the camera and reads a ticket's QR code. Uses the phone's own reader where it has one.
   async function scanTicket(onCode) {
@@ -1421,8 +1459,23 @@
   }
 
   // ---------- ORGANISER TOOLS ----------
+  // What organisers see in Organiser tools: scanning and who's in.
+  async function doorTools(el) {
+    loading(el);
+    const evs = await q(sb.from("events").select("*").gte("day", dayKey(today())).order("day").limit(10));
+    const soon = evs.sort((a, b) => eventStart(a) - eventStart(b));
+    el.innerHTML = `<div class="pad" style="padding-top:24px"><h2>Check someone in</h2>
+      <button class="btn solid block" id="ciScan" style="margin-bottom:10px">Scan a ticket's QR code</button>
+      <div class="row"><input id="ci" placeholder="Or type the code, e.g. AA-7K2QX" style="text-transform:uppercase"><button class="btn small" id="ciGo">Check in</button></div>
+      ${soon.length ? `<label>Show who's in for</label><select id="ciEv">${soon.map((e) => `<option value="${e.id}">${esc(e.title)} · ${short(parseDay(e.day))}</option>`).join("")}</select><div id="ciList"></div>` : '<p class="muted">No events coming up.</p>'}
+      <p class="muted">For Friday football you can also tick people in and add people at the pitch on the Football page.</p></div>`;
+    $("#ciGo", el).onclick = () => { const c = $("#ci", el).value.trim(); if (!c) return toast("Type the ticket code"); $("#ci", el).value = ""; checkIn(c); };
+    $("#ciScan", el).onclick = () => scanTicket(checkIn);
+    if (soon.length) { const pick = () => whosIn($("#ciList", el), $("#ciEv", el).value); $("#ciEv", el).onchange = pick; pick(); }
+  }
   async function admin(el, alive) {
-    if (!isOrg()) { el.innerHTML = '<div class="empty"><h2>Organisers only</h2></div>'; return; }
+    if (!isDoor()) { el.innerHTML = '<div class="empty"><h2>Organisers only</h2></div>'; return; }
+    if (!isAdmin()) return doorTools(el);
     loading(el);
     const [evs, bks, guests, members, fs] = await Promise.all([
       q(sb.from("events").select("*").order("day", { ascending: false }).limit(40)),
@@ -1433,6 +1486,8 @@
     ]);
     if (!alive()) return;
     const g = Object.fromEntries(guests.map((x) => [x.booking_id, x]));
+    // events from today on, soonest first, for the who's-in list under the scan button
+    const soon = evs.filter((e) => e.day && e.day >= dayKey(today())).sort((a, b) => eventStart(a) - eventStart(b)).slice(0, 10);
     const ROLES = ["member", "organiser", "admin"];
     const pending = isAdmin() ? members.filter((m) => m.approved === false) : [];
     const ids = pending.map((m) => m.id);
@@ -1454,6 +1509,7 @@
       <h2>Check someone in</h2>
       <button class="btn solid block" id="ciScan" style="margin-bottom:10px">Scan a ticket's QR code</button>
       <div class="row"><input id="ci" placeholder="Or type the code, e.g. AA-7K2QX" style="text-transform:uppercase"><button class="btn small" id="ciGo">Check in</button></div>
+      ${soon.length ? `<label>Show who's in for</label><select id="ciEv">${soon.map((e) => `<option value="${e.id}">${esc(e.title)} · ${short(parseDay(e.day))}</option>`).join("")}</select><div id="ciList"></div>` : ""}
       <h2 style="margin-top:28px">Add an event</h2>
       <label>Event name</label><input id="t">
       <div class="grid2"><div><label>Date (leave empty if not decided)</label><input id="d" type="date"></div><div><label>Start time</label><input id="tm" type="time" value="19:00"></div></div>
@@ -1505,6 +1561,7 @@
     }));
     $("#ciGo", el).onclick = () => { const c = $("#ci", el).value.trim(); if (!c) return toast("Type the ticket code"); $("#ci", el).value = ""; checkIn(c); };
     $("#ciScan", el).onclick = () => scanTicket(checkIn);
+    if (soon.length) { const pick = () => whosIn($("#ciList", el), $("#ciEv", el).value); $("#ciEv", el).onchange = pick; pick(); }
     $("#add", el).onclick = async () => {
       const ev = { kind: "event", title: $("#t", el).value.trim(), day: $("#d", el).value, time: $("#tm", el).value, location: $("#loc", el).value.trim(),
         price: Number($("#pr", el).value) || 0, capacity: Number($("#cap", el).value) || 1, access: $("#acc", el).value, details: $("#det", el).value.trim(),

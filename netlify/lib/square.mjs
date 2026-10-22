@@ -50,7 +50,7 @@ export async function db(path, init = {}) {
   return body;
 }
 
-const BOOKING_FIELDS = "id,code,amount,paid,method,status,charge,display_name,booked_by,created_at,square_order_id,card_fee,events(title,day,time,kind)";
+const BOOKING_FIELDS = "id,code,amount,paid,method,status,charge,display_name,booked_by,pitch_link,created_at,square_order_id,card_fee,events(title,day,time,kind)";
 export async function bookingBy(field, value) {
   const rows = await db(`bookings?${field}=eq.${encodeURIComponent(value)}&select=${BOOKING_FIELDS}`);
   return rows?.[0] || null;
@@ -79,6 +79,8 @@ export async function confirmBooking(booking) {
 
 // A friend's booking is shown as "Guest (Member)". Returns both names, or null for anyone else's booking.
 export async function guestNames(booking) {
+  // someone added at the pitch and sent a payment link by the organisers
+  if (!booking.booked_by && booking.pitch_link) return { guest: booking.display_name, member: "the organisers" };
   if (!booking.booked_by) return null;
   const rows = await db(`profiles?id=eq.${booking.booked_by}&select=name`);
   const member = rows?.[0]?.name || (booking.display_name.match(/\(([^)]*)\)\s*$/) || [])[1] || "";
