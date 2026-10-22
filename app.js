@@ -1547,7 +1547,7 @@
           <label class="check"><input type="checkbox" data-f="football" ${m.football !== false || m.family ? "checked" : ""}> Football</label>
           <label class="check"><input type="checkbox" data-f="kitty" ${m.kitty_session === fs.session_no ? "checked" : ""}> Kitty ${fs.session_no}</label>
           <label class="check">Credit £<input data-f="credit" type="number" step="1" min="0" value="${Number(m.credit)}" style="width:70px"></label>
-          <button class="btn small" data-save="${m.id}">Save</button></div></div>`).join("")}
+          <button class="btn small" data-save="${m.id}">Save</button>${isAdmin() && m.id !== me.id && m.role !== "admin" ? `<button class="btn small danger" data-rm="${m.id}">Remove member</button>` : ""}</div></div>`).join("")}
       ${isAdmin() ? `<h2 style="margin-top:28px">Starting funds</h2>
         <p class="muted">Use once to bring the balances over from WhatsApp. Kitty ${fs.session_no}, ${fs.games_played} of 5 games played.</p>
         <div class="grid2"><div><label>Kitty fund £</label><input id="fk" type="number" step="0.01" value="${fs.kitty}"></div><div><label>Events fund £</label><input id="fe" type="number" step="0.01" value="${fs.events}"></div><div><label>Credits £ (from members' accounts)</label><input id="fc" type="number" value="${fs.credits || 0}" readonly></div>
@@ -1619,6 +1619,11 @@
         if (b.dataset.save === me.id) await loadMe();
         toast("Saved");
       } catch (e) { fail(e); }
+    }));
+    el.querySelectorAll("[data-rm]").forEach((b) => (b.onclick = async () => {
+      const m = members.find((x) => x.id === b.dataset.rm);
+      if (!confirm(`Remove ${m.name} from the app? Their account is deleted and they can't sign in again. Past bookings stay in the history.${Number(m.credit) ? ` Their £${Number(m.credit)} credit is taken off the credits fund.` : ""}`)) return;
+      try { await q(sb.rpc("remove_member", { p_id: m.id })); toast(`${m.name} removed`); refresh(); } catch (e) { fail(e); }
     }));
     const sf = $("#setF", el);
     if (sf) sf.onclick = async () => {
