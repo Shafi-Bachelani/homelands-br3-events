@@ -464,11 +464,13 @@
   };
   // A member sends their friend a link to pay for their own place.
   function guestLinkModal(ev, b) {
-    const guestName = b.display_name.replace(/ \([^)]*\)$/, "");
+    const guestName = b.display_name.replace(/ \([^)]*\)$/, ""), pitch = b.pitch_link;
     const url = `${location.origin}${location.pathname}#guest:${b.code}`;
-    const text = `Hi ${guestName}, I've booked you in for football on ${short(parseDay(ev.day))} at ${hhmm(ev.time)}. Please pay ${money(b.amount)} for your place ${payByText(ev, b.created_at)}, or it's released:`;
+    const text = pitch ? `Hi ${guestName}, please pay ${money(b.amount)} for tonight's football here:`
+      : `Hi ${guestName}, I've booked you in for football on ${short(parseDay(ev.day))} at ${hhmm(ev.time)}. Please pay ${money(b.amount)} for your place ${payByText(ev, b.created_at)}, or it's released:`;
     modal(`<button class="close" aria-label="Close">×</button><h2>Send ${esc(guestName)} a payment link</h2>
-      <p class="muted">${esc(guestName)} pays ${money(b.amount)} on the link. Their payment shows your name and theirs, and they show as Paid on the roster once it's in. If it isn't paid ${payByText(ev, b.created_at)}, their place is released.</p>
+      <p class="muted">${pitch ? `${esc(guestName)} pays ${money(b.amount)} on the link, and shows as Paid once it's in. Until then they show as Unpaid.`
+        : `${esc(guestName)} pays ${money(b.amount)} on the link. Their payment shows your name and theirs, and they show as Paid on the roster once it's in. If it isn't paid ${payByText(ev, b.created_at)}, their place is released.`}</p>
       <div class="form-actions"><button class="btn solid block" id="glSend">${ICON.share} Send the link</button>
         <button class="btn block" id="glCopy" style="margin-top:10px">Copy the link</button></div>`, (m) => {
       $("#glSend", m).onclick = async () => {
@@ -489,16 +491,20 @@
       el.innerHTML = `<div class="empty"><h2>This place is no longer booked</h2><p class="muted" style="font-size:17px;line-height:1.5">It wasn't paid in time, or it was removed. Ask the friend who booked you to add you again.</p></div>`;
       return;
     }
-    const ev = g.event, open = new Date() < placePayBy(ev, g.created_at);
+    const ev = g.event, open = g.pitch || new Date() < placePayBy(ev, g.created_at);
     el.innerHTML = `<div class="events"><div class="card fb">
       <h2>${esc(ev.title || "Football")}</h2><p class="muted">${short(parseDay(ev.day))} · ${hhmm(ev.time)}</p>
-      <p style="font-size:18px"><b>${esc(g.guest)}</b>, booked by <b>${esc(g.member)}</b></p>
+      <p style="font-size:18px"><b>${esc(g.guest)}</b>, ${g.pitch ? "added by the organisers" : `booked by <b>${esc(g.member)}</b>`}</p>
+      ${g.pitch ? "" : `<div class="ticket"><div class="qr" id="gq"></div><div class="code">${esc(code)}</div><div class="muted">Show this QR code at the pitch</div></div>`}
       ${g.paid ? `<p class="note">Paid, thank you. See you on the pitch!</p>`
+        : g.pitch ? `<p class="note">Please pay <b>${money(g.amount)}</b> for tonight's game.</p>
+          <button class="btn solid block" data-pay="${esc(code)}" data-guest="1">Pay ${money(g.amount)} by card</button>`
         : open ? `<p class="note">Please pay <b>${money(g.amount)}</b> ${payByText(ev, g.created_at)}, or your place is released.</p>
           <button class="btn solid block" data-pay="${esc(code)}" data-guest="1">Pay ${money(g.amount)} by card</button>`
         : `<p class="note">The time to pay has passed, so this place is being released.</p>`}
       <p class="muted">6-a-side at Goals, Beckenham, Elmers End Road, BR3 4EJ. Get together at ${hhmm(ev.time)} next to Pitch 1. Players must be 16 or over, and play is at your own risk.</p>
     </div></div>`;
+    if ($("#gq", el)) qr($("#gq", el), code);
   }
   function footballInfo(ev, fs) {
     const t = hhmm(ev.time);
@@ -585,6 +591,7 @@
       if (mine) {
         const st = mine.charge === "covered" ? "Booked, covered by your kitty" : mine.paid ? (mine.method === "credit" ? "Booked, paid with credit" : mine.method === "card" ? "Booked and paid by card" : "Booked and paid") : "Booked, not paid yet";
         body = `<p><b>${st}.</b> You're number ${bookings.indexOf(mine) + 1} on the list.</p>
+          <button class="btn" data-ticket="${esc(mine.code)}" style="margin-bottom:10px">Show my ticket (QR code)</button>
           ${!mine.paid ? `<p class="note">Please pay <b>${money(mine.amount)}</b> ${new Date(mine.created_at) > payBy ? "within <b>30 minutes</b> of booking" : "before <b>Thursday 11pm</b>"}, or your place is released and you can't rebook this game.${me.family ? " Pay the organiser by bank transfer." : " Pay by card here, or by bank transfer to the organiser."}</p>
             ${me.family ? "" : `<button class="btn solid" data-pay="${esc(mine.code)}" style="margin-bottom:10px">Pay ${money(mine.amount)} by card</button>`}` : ""}
           ${me.family && mine.method === "transfer" ? `<p class="muted">As family you're added automatically each week. If you can't come, remove yourself to free your place.</p>`
@@ -613,6 +620,7 @@
             ${me.family ? "" : `<button class="btn solid" data-pay="${esc(friend.code)}" style="margin-bottom:10px">Pay ${money(friend.amount)} for your friend</button>`}
             ${!me.family && Number(me.credit) >= Number(friend.amount) ? `<button class="btn" id="friendCredit" style="margin-bottom:10px">Use ${money(friend.amount)} of my credit</button>` : ""}
             <button class="btn" id="friendLink" style="margin-bottom:10px">${ICON.share} Send your friend a payment link</button>`}
+          <button class="btn" data-ticket="${esc(friend.code)}" style="margin-bottom:10px">Show my friend's ticket</button>
           <button class="btn" id="cancelFriend">Remove my friend</button>`
         : canAdd && bookings.length < ev.capacity ? `<h3>Bring a friend</h3><p class="muted">You can add one friend per game. ${me.family ? `Pay their ${F$} by transfer, or send them a payment link` : `Pay their ${F$} yourself${Number(me.credit) >= F ? ", by card or from your credit," : ""} or send them a payment link`}.</p><button class="btn" id="addFriend">Add a friend</button>` : "";
       you = `<div class="card fb"><h2>You</h2>${pills}${body}${friendBox}</div>`;
@@ -632,6 +640,7 @@
     </div>`;
 
     el.innerHTML = `<div class="events">${offerBanner(allGames, true)}${top}${ev ? footballInfo(ev, fs) : ""}${you}${players}${fund}${isOrg() ? '<div id="org"></div>' : ""}</div>`;
+    el.querySelectorAll("[data-ticket]").forEach((b) => (b.onclick = () => showTicket(b.dataset.ticket)));
 
     const riskOk = () => { const r = $("#riskOk", el); if (r && r.checked) return true; toast("Please tick to confirm you play at your own risk"); return false; };
     el.querySelectorAll("[data-choice]").forEach((b) => (b.onclick = () => riskOk() && bookFootball(ev, b.dataset.choice)));
@@ -714,6 +723,7 @@
     const charged = bookings.filter((b) => b.charge !== "covered");
     const METHODS = { card: "Card", transfer: "Transfer", cash: "Cash", owes: "Owes" };
     box.innerHTML = `<div class="card fb"><h2>Organiser</h2>
+      ${current && !current.accounts_posted ? `<button class="btn solid block" id="fbScan">Scan tickets to check people in</button><div id="fbIn"></div>` : ""}
       <button class="btn small" id="addGame">Add game for ${short(nextFri)}</button>
       ${current ? `<h3>Who's turned up · ${short(parseDay(current.day))}</h3>
       <p class="muted">Tap a name when they arrive. ${currentBookings.filter((b) => b.checked_in).length} of ${currentBookings.length} here.</p>
@@ -723,7 +733,7 @@
       <div class="grid2">
         <div><label>Member</label><select id="wiUser"><option value="">Not a member (type name)</option>${people.filter((p) => !onList.has(p.id)).map((p) => `<option value="${p.id}" data-credit="${Number(p.credit) || 0}">${esc(p.name)}${Number(p.credit) > 0 ? ` (${money(p.credit)} credit)` : ""}</option>`).join("")}</select></div>
         <div><label>Name</label><input id="wiName" placeholder="Their name"></div>
-        <div><label id="wiPrice">Paid ${money(Math.max(Number(current.price), 6))} by</label><select id="wiMeth">${Object.entries(METHODS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}<option value="credit" disabled>Account credit</option></select></div>
+        <div><label id="wiPrice">Pays ${money(Math.max(Number(current.price), 6))} by</label><select id="wiMeth">${Object.entries(METHODS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}<option value="credit" disabled>Account credit</option><option value="link">Send them a payment link</option></select></div>
       </div>
       <div class="form-actions"><button class="btn solid block" id="wiAdd">Add and mark as here</button></div>`}` : ""}
       ${target ? `<h3>Payments · ${esc(target.title)} ${short(parseDay(target.day))}${target.accounts_posted ? " (accounts posted)" : ""}</h3>
@@ -763,6 +773,10 @@
         : !target.accounts_posted ? '<p class="muted">After the game, the accounts tools appear here.</p>' : ""}` : ""}
     </div>`;
 
+    if ($("#fbScan", box)) {
+      $("#fbScan", box).onclick = () => scanTicket(checkIn);
+      whosIn($("#fbIn", box), current.id, (t) => { const c = box.querySelector(`[data-here="${t.id}"]`); if (c && t.status === "booked") c.checked = true; });
+    }
     $("#addGame", box).onclick = async () => {
       try {
         await q(sb.from("events").insert({ kind: "football", title: "Friday Weekly Footie", day: dayKey(nextFri), time: "21:15", location: "Goals Beckenham, Elmers End",
@@ -774,7 +788,7 @@
     if (wu) {
       const sync = () => { const o = wu.selectedOptions[0], cr = Number(o.dataset.credit || 0), c = $("#wiMeth", box).querySelector('[value="credit"]');
         // Offer prices are for members; anyone else pays the full £6.
-        $("#wiPrice", box).textContent = `Paid ${money(wu.value ? Number(current.price) : Math.max(Number(current.price), 6))} by`;
+        $("#wiPrice", box).textContent = `Pays ${money(wu.value ? Number(current.price) : Math.max(Number(current.price), 6))} by`;
         $("#wiName", box).disabled = !!wu.value; c.disabled = cr < Number(current.price); if (c.disabled && $("#wiMeth", box).value === "credit") $("#wiMeth", box).value = "cash"; };
       wu.onchange = sync; sync();
       $("#wiAdd", box).onclick = async () => {
@@ -782,7 +796,8 @@
           $("#wiAdd", box).disabled = true;
           const b = (await q(sb.rpc("add_walkin", { p_event: current.id, p_user: wu.value || null, p_name: $("#wiName", box).value.trim() || null, p_method: $("#wiMeth", box).value })));
           const row = Array.isArray(b) ? b[0] : b;
-          toast(row && row.charge === "covered" ? `${row.display_name} added (in the kitty, no charge)` : "Added and marked as here"); refresh();
+          toast(row && row.charge === "covered" ? `${row.display_name} added (in the kitty, no charge)` : "Added and marked as here"); await refresh();
+          if (row && row.pitch_link && !row.paid) guestLinkModal(current, row);
         } catch (e) { $("#wiAdd", box).disabled = false; fail(e); }
       };
     }
@@ -1360,6 +1375,7 @@
       const ok = t.status === "booked" && !t.already;
       const head = t.status === "pending" ? "Not approved yet, not booked" : t.status === "declined" ? "This booking was declined" : t.status === "waitlist" ? "On the waitlist, not booked" : t.status === "cancelled" ? "This booking was cancelled" : t.already ? "Already checked in" : "Checked in ✓";
       const row = (k, v) => `<div class="list-row"><span class="muted">${k}</span><b style="text-align:right">${v}</b></div>`;
+      if (onCheckedIn) onCheckedIn(t);
       modal(`<button class="close" aria-label="Close">×</button>
         <p class="${ok ? "" : "note"}" style="font-size:18px;margin:0 0 6px"><b>${head}</b></p>
         <h2 style="font-size:26px;margin:0 0 12px">${esc(t.guest_name || t.name)}</h2>
@@ -1367,12 +1383,43 @@
         ${row("Places", t.places)}
         ${t.age || t.gender ? row("Age", `${t.age ? esc(t.age) : "?"}${t.gender ? ` · ${esc(t.gender)}` : ""}`) : ""}
         ${t.guest ? row("Guest", t.booked_by ? `invited by ${esc(t.booked_by)}` : "yes") : t.booked_by ? row("Booked by", esc(t.booked_by)) : ""}
-        ${Number(t.amount) > 0 ? row("Payment", t.paid ? `Paid ${money(t.amount)}${t.method ? ` (${esc(t.method)})` : ""}` : `<span style="color:var(--warn,#e0a030)">${money(t.amount)} to pay</span>`) : row("Payment", "Free")}
+        ${row("Payment", payStatus(t))}
         ${t.age && t.age < 16 ? row("Under 16", t.parent_ok ? "Parent permission given" : '<span style="color:var(--warn,#e0a030)">No parent permission recorded</span>') : ""}
         <div class="form-actions"><button class="btn solid block" id="ciNext">${again ? "Scan the next ticket" : "Done"}</button></div>`, (m) => {
         $("#ciNext", m).onclick = () => { closeModal(); if (again) scanTicket(checkIn); };
       });
     } catch (e) { fail(e); if (again) setTimeout(() => scanTicket(checkIn), 1200); }
+  }
+  // How a booking is paid, in words: kitty, pay and play, paid or still to pay.
+  const METHOD_NAME = { card: "card", transfer: "transfer", cash: "cash", credit: "credit", owes: "owes" };
+  function payStatus(b) {
+    const warn = (t) => `<span style="color:var(--warn,#e0a030)">${t}</span>`;
+    if (b.charge === "covered") return "Kitty member, nothing to pay";
+    const what = b.charge === "kitty" ? "Kitty £15" : b.charge === "payg" ? `Pay and play ${money(b.amount)}` : money(b.amount);
+    if (!(Number(b.amount) > 0)) return "Free";
+    if (b.paid) return `${what}, paid${b.method && METHOD_NAME[b.method] ? ` by ${METHOD_NAME[b.method]}` : ""}`;
+    return warn(`${what}, ${b.method === "owes" ? "owes" : "not paid yet"}`);
+  }
+  // A list under the scan button: how many are booked, how many are here, and who's still to come.
+  let onCheckedIn = null;
+  async function whosIn(box, eventId, also) {
+    const load = async () => {
+      if (!box.isConnected) { onCheckedIn = null; return; }
+      const [bks, gs] = await Promise.all([
+        q(sb.from("bookings").select("id,display_name,places,checked_in,paid,amount,method,charge").eq("event_id", eventId).eq("status", "booked").order("display_name")),
+        q(sb.from("guests").select("booking_id,full_name")).catch(() => []),
+      ]);
+      const gn = Object.fromEntries(gs.map((x) => [x.booking_id, x.full_name]));
+      const n = (l) => l.reduce((t, b) => t + (b.places || 1), 0);
+      const here = bks.filter((b) => b.checked_in), toCome = bks.filter((b) => !b.checked_in);
+      const li = (b) => `<li>${esc(gn[b.id] || b.display_name)}${b.places > 1 ? ` (${b.places})` : ""} <span class="muted" style="font-size:14px">· ${payStatus(b)}</span></li>`;
+      box.innerHTML = `<details class="card" style="padding:12px 14px;margin:10px 0" ${box.dataset.open ? "open" : ""}><summary><b>Who's in: ${n(here)} here, ${n(toCome)} still to come</b> <span class="muted">(${n(bks)} booked)</span></summary>
+        <h3>Still to come (${n(toCome)})</h3><ul>${toCome.map(li).join("") || '<li class="muted">Everyone is here.</li>'}</ul>
+        <h3>Here (${n(here)})</h3><ul>${here.map(li).join("") || '<li class="muted">No one yet.</li>'}</ul></details>`;
+      $("details", box).ontoggle = (e) => { if (e.target.open) box.dataset.open = "1"; else delete box.dataset.open; };
+    };
+    onCheckedIn = (t) => { if (also) also(t); load().catch(() => {}); };
+    await load().catch((e) => (box.innerHTML = `<p class="muted">${esc(e.message)}</p>`));
   }
   // Opens the camera and reads a ticket's QR code. Uses the phone's own reader where it has one.
   async function scanTicket(onCode) {
@@ -1420,6 +1467,8 @@
     ]);
     if (!alive()) return;
     const g = Object.fromEntries(guests.map((x) => [x.booking_id, x]));
+    // events from today on, soonest first, for the who's-in list under the scan button
+    const soon = evs.filter((e) => e.day && e.day >= dayKey(today())).sort((a, b) => eventStart(a) - eventStart(b)).slice(0, 10);
     const ROLES = ["member", "organiser", "admin"];
     const pending = isAdmin() ? members.filter((m) => m.approved === false) : [];
     const ids = pending.map((m) => m.id);
@@ -1441,6 +1490,7 @@
       <h2>Check someone in</h2>
       <button class="btn solid block" id="ciScan" style="margin-bottom:10px">Scan a ticket's QR code</button>
       <div class="row"><input id="ci" placeholder="Or type the code, e.g. AA-7K2QX" style="text-transform:uppercase"><button class="btn small" id="ciGo">Check in</button></div>
+      ${soon.length ? `<label>Show who's in for</label><select id="ciEv">${soon.map((e) => `<option value="${e.id}">${esc(e.title)} · ${short(parseDay(e.day))}</option>`).join("")}</select><div id="ciList"></div>` : ""}
       <h2 style="margin-top:28px">Add an event</h2>
       <label>Event name</label><input id="t">
       <div class="grid2"><div><label>Date (leave empty if not decided)</label><input id="d" type="date"></div><div><label>Start time</label><input id="tm" type="time" value="19:00"></div></div>
@@ -1492,6 +1542,7 @@
     }));
     $("#ciGo", el).onclick = () => { const c = $("#ci", el).value.trim(); if (!c) return toast("Type the ticket code"); $("#ci", el).value = ""; checkIn(c); };
     $("#ciScan", el).onclick = () => scanTicket(checkIn);
+    if (soon.length) { const pick = () => whosIn($("#ciList", el), $("#ciEv", el).value); $("#ciEv", el).onchange = pick; pick(); }
     $("#add", el).onclick = async () => {
       const ev = { kind: "event", title: $("#t", el).value.trim(), day: $("#d", el).value, time: $("#tm", el).value, location: $("#loc", el).value.trim(),
         price: Number($("#pr", el).value) || 0, capacity: Number($("#cap", el).value) || 1, access: $("#acc", el).value, details: $("#det", el).value.trim(),
