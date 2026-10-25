@@ -1132,6 +1132,9 @@
   const ANNOUNCE = "announcements";
   const ORG_POSTS = ["football-accounts", "events-accounts"]; // chats only organisers can post in
   const AUTO_GROUPS = ["football-accounts", "events-accounts"]; // every approved member is in these, no sign-up
+  // The accounts chats always show the newest post first; pinning doesn't apply there.
+  const byGroup = (posts, id) => { const gp = posts.filter((p) => p.group_id === id);
+    return ORG_POSTS.includes(id) ? gp.sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0)) : gp; };
   const inGroup = (id) => joined.includes(id) || isOrg() || (AUTO_GROUPS.includes(id) && !!me && !pending() && (id === "events-accounts" || !eventsOnly()));
   const PENDING_NOTE = '<p class="note">You can join in once the admin has approved your membership.</p>';
   // Chats: open, informal chats anyone can join in. Joined: sign-up chats (like the Quran target).
@@ -1165,7 +1168,7 @@
       if (!g) { el.innerHTML = '<div class="empty"><h2>Chat not found</h2></div>'; return; }
       const canRead = !g.members_only || inGroup(g.id);
       const canPost = canRead && !pending() && (g.id !== ANNOUNCE || isAdmin()) && (!ORG_POSTS.includes(g.id) || isOrg());
-      const gp = posts.filter((p) => p.group_id === g.id);
+      const gp = byGroup(posts, g.id);
       el.innerHTML = `<div class="subhead"><h2>${esc(g.name)}</h2>${g.members_only ? '<a href="#grouplist">Joined events</a>' : '<a href="#groups">Chats</a>'}</div>
         ${groupHero(g.id)}
         ${g.about ? `<p class="muted pad" style="padding-top:10px">${esc(g.about)}</p>` : ""}
@@ -1189,7 +1192,7 @@
     const firstIn = (g) => { const i = JOINED_ORDER.indexOf(g.id); return i < 0 ? JOINED_ORDER.length : i; };
     const clubs = gs.filter((g) => g.members_only).sort((a, b) => firstIn(a) - firstIn(b)).map((g) => {
       const inIt = inGroup(g.id);
-      const gp = posts.filter((p) => p.group_id === g.id).slice(0, 4);
+      const gp = byGroup(posts, g.id).slice(0, 4);
       const icon = { "football-accounts": "⚽", "events-accounts": "🧾" }[g.id] || "📖";
       return `<section class="news club${GROUP_LOOK[g.id] ? ` ${GROUP_LOOK[g.id]}` : ""}">${groupHero(g.id, inIt)}<div class="row" style="justify-content:space-between"><h2>${inIt ? `<a href="#chat:${encodeURIComponent(g.id)}" style="color:inherit">${icon} ${esc(g.name)}</a>` : `${icon} ${esc(g.name)}`}</h2><span class="row" style="gap:8px">${inIt && !joined.includes(g.id) && !AUTO_GROUPS.includes(g.id) && !pending() ? `<button class="btn small" data-join="${esc(g.id)}">Sign up</button>` : ""}${inIt && (!ORG_POSTS.includes(g.id) || isOrg()) ? `<button class="btn small" data-compose="text" data-group="${esc(g.id)}">Post</button>` : ""}</span></div>
         ${inIt ? gp.map((p) => postHtml(p, comments.filter((c) => c.post_id === p.id), votes.filter((v) => v.post_id === p.id))).join("") || '<p class="muted">Nothing posted yet.</p>'
