@@ -50,7 +50,7 @@ export async function db(path, init = {}) {
   return body;
 }
 
-const BOOKING_FIELDS = "id,code,amount,paid,method,status,charge,display_name,booked_by,pitch_link,created_at,square_order_id,card_fee,events(title,day,time,kind)";
+const BOOKING_FIELDS = "id,code,amount,credit_used,paid,method,status,charge,display_name,booked_by,pitch_link,created_at,square_order_id,card_fee,events(title,day,time,kind)";
 export async function bookingBy(field, value) {
   const rows = await db(`bookings?${field}=eq.${encodeURIComponent(value)}&select=${BOOKING_FIELDS}`);
   return rows?.[0] || null;
