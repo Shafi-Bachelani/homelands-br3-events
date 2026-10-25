@@ -1,5 +1,5 @@
 // Lets the app open even with no internet. Bump the version when you change files.
-const CACHE = "homelands-2026-10-22f";
+const CACHE = "homelands-2026-10-25a";
 const FILES = ["./", "index.html", "styles.css", "app.js", "data.js", "config.js", "vendor/supabase.js", "vendor/qrcode.min.js", "manifest.json", "images/logo.png", "images/banner.png", "images/icon-192.png", "images/icon-512.png", "images/footie.jpg", "images/footie-banner.jpg", "images/quran.jpg", "images/quran-banner.jpg"];
 
 self.addEventListener("install", (e) => e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting())));
