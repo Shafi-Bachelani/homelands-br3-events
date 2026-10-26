@@ -272,9 +272,10 @@
       const card = el.querySelector(`[data-event="${ev.id}"]`)?.closest("article");
       const act = card?.querySelector(".event-foot .go");
       modal(`${picOf(ev) ? `<img class="event-pic modal-pic" src="${esc(ev.image || (ev.kind === "football" ? FOOTIE : picOf(ev)))}" alt="">` : ""}<h2>${esc(ev.title)}</h2><p class="muted">${ev.day ? fmtEvent(ev) : "Date to be confirmed"}<br>${esc(ev.location || "")}</p><p style="line-height:1.5;white-space:pre-wrap">${esc(ev.details || "")}</p>
-        <div class="form-actions">${act ? `<button class="btn solid block" id="dGo">${act.textContent}</button>` : ""}${isOrg() ? '<button class="btn block" id="dQr">QR code poster</button>' : ""}</div>`, (m) => {
+        <div class="form-actions">${act ? `<button class="btn solid block" id="dGo">${act.textContent}</button>` : ""}${isOrg() ? '<button class="btn block" id="dQr">QR code poster</button>' : ""}${isAdmin() && ev.kind === "event" ? '<button class="btn block" id="dEdit">Edit this event</button>' : ""}</div>`, (m) => {
         if (act) $("#dGo", m).onclick = () => { closeModal(); if (act.href) window.open(act.href, "_blank", "noopener"); else act.click(); };
         if (isOrg()) $("#dQr", m).onclick = () => posterModal(ev);
+        if ($("#dEdit", m)) $("#dEdit", m).onclick = () => { closeModal(); go("admin:" + ev.id); };
       });
     };
     el.querySelectorAll("[data-event]").forEach((b) => (b.onclick = () => detail(list.find((x) => x.id === b.dataset.event))));
@@ -1679,7 +1680,7 @@
     $("#ciScan", el).onclick = () => scanTicket(checkIn);
     if (soon.length) { const pick = () => whosIn($("#ciList", el), $("#ciEv", el).value); $("#ciEv", el).onchange = pick; pick(); }
   }
-  async function admin(el, alive) {
+  async function admin(el, alive, openId) {
     if (!isDoor()) { el.innerHTML = '<div class="empty"><h2>Organisers only</h2></div>'; return; }
     if (!isAdmin()) return doorTools(el);
     loading(el);
@@ -1730,13 +1731,16 @@
       <button class="btn block" id="csv">Download all event bookings (opens in Google Sheets or Excel)</button>
       ${evs.map((e) => {
         const list = bks.filter((b) => b.event_id === e.id);
-        return `<details class="card adm" ${list.some((b) => b.status === "pending") ? "open" : ""}><summary><b>${esc(e.title)}</b> <span class="muted">${e.day ? short(parseDay(e.day)) : "Date TBC"} · ${list.reduce((t, b) => t + (b.status === "booked" ? b.places : 0), 0)}/${e.capacity}</span>${list.some((b) => b.status === "pending") ? ` <span class="tag warn">${list.filter((b) => b.status === "pending").length} to approve</span>` : ""}</summary>
+        return `<details class="card adm" data-ev="${e.id}" ${list.some((b) => b.status === "pending") || e.id === openId ? "open" : ""}><summary><b>${esc(e.title)}</b> <span class="muted">${e.day ? short(parseDay(e.day)) : "Date TBC"} · ${list.reduce((t, b) => t + (b.status === "booked" ? b.places : 0), 0)}/${e.capacity}</span>${list.some((b) => b.status === "pending") ? ` <span class="tag warn">${list.filter((b) => b.status === "pending").length} to approve</span>` : ""}</summary>
           <div class="scroll"><table><thead><tr><th>Name</th><th>Who</th><th>Places</th><th>Status</th><th>Code</th></tr></thead><tbody>
           ${list.map((b) => `<tr><td>${esc(b.display_name)}</td><td>${g[b.id] ? `Guest, age ${g[b.id].age}, ${esc(g[b.id].email)}, invited by ${esc(g[b.id].profiles?.name || "?")}` : "Member"}</td><td>${b.places}</td><td>${b.status === "pending" ? `<b>Waiting for approval</b><br><button class="btn small" data-ok="${b.id}">Approve</button> <button class="btn small danger" data-no="${b.id}">Decline</button>` : b.status}${b.checked_in ? ", in" : ""}${b.paid || b.status === "pending" ? "" : ", unpaid"}${b.age < 16 && b.age ? `<br>Under 16, parent permission: ${b.parent_ok ? "yes" : "no"}` : ""}</td><td class="mono">${b.code}</td></tr>`).join("") || '<tr><td colspan="5" class="muted">No bookings yet.</td></tr>'}
           </tbody></table></div>
-          ${e.kind === "event" ? `<div class="grid2" data-edit="${e.id}"><div><label>Date</label><input data-f="day" type="date" value="${e.day || ""}"></div><div><label>Start time</label><input data-f="time" type="time" value="${hhmm(e.time)}"></div>
+          ${e.kind === "event" ? `<div class="grid2" data-edit="${e.id}"><div style="grid-column:1/-1"><label>Event name</label><input data-f="title" value="${esc(e.title)}"></div>
+            <div><label>Date</label><input data-f="day" type="date" value="${e.day || ""}"></div><div><label>Start time</label><input data-f="time" type="time" value="${hhmm(e.time)}"></div>
             <div><label>Price (£)</label><input data-f="price" type="number" min="0" step="0.5" value="${Number(e.price)}"></div><div><label>Places</label><input data-f="capacity" type="number" min="1" value="${e.capacity}"></div>
+            <div style="grid-column:1/-1"><label>Where</label><input data-f="location" value="${esc(e.location || "")}"></div>
             <div style="grid-column:1/-1"><label>Who can book</label><select data-f="access">${accessOpts(e.access)}</select></div>
+            <div style="grid-column:1/-1"><label>Details</label><textarea data-f="details" rows="6">${esc(e.details || "")}</textarea></div>
             <div style="grid-column:1/-1"><label>Link instead of booking here (optional)</label><input data-f="link" type="url" value="${esc(e.link || "")}" placeholder="https://debate.ourhomelands.co.uk/debates/…"></div>
             <div style="grid-column:1/-1"><label>Picture</label>${e.image ? `<img class="event-pic" src="${esc(e.image)}" alt="">` : ""}<input data-pic="${e.id}" type="file" accept="image/*">${e.image ? `<button class="btn small" data-nopic="${e.id}" style="margin-top:8px">Remove picture</button>` : ""}</div></div>
             <div class="row" style="margin:12px 0"><button class="btn small" data-upd="${e.id}">Save changes</button><button class="btn small" data-poster="${e.id}">QR code poster</button></div>` : ""}
@@ -1798,9 +1802,13 @@
     el.querySelectorAll("[data-ok]").forEach((b) => (b.onclick = () => decide(b.dataset.ok, true)));
     el.querySelectorAll("[data-no]").forEach((b) => (b.onclick = () => confirm("Decline this booking?") && decide(b.dataset.no, false)));
     el.querySelectorAll("[data-poster]").forEach((b) => (b.onclick = () => posterModal(evs.find((x) => x.id === b.dataset.poster))));
+    // Opened from an event's "Edit this event" button: scroll to it, open at the top of the box.
+    const opened = openId && el.querySelector(`details[data-ev="${openId}"]`);
+    if (opened) setTimeout(() => opened.scrollIntoView({ block: "start" }), 50);
     el.querySelectorAll("[data-upd]").forEach((b) => (b.onclick = async () => {
       const box = $(`[data-edit="${b.dataset.upd}"]`, el), f = (k) => $(`[data-f="${k}"]`, box).value;
-      const upd = { day: f("day") || null, time: f("time"), price: Number(f("price")) || 0, capacity: Number(f("capacity")) || 1, access: f("access"), link: f("link").trim() || null };
+      if (!f("title").trim()) return toast("Give the event a name");
+      const upd = { title: f("title").trim(), location: f("location").trim(), details: f("details").trim(), day: f("day") || null, time: f("time"), price: Number(f("price")) || 0, capacity: Number(f("capacity")) || 1, access: f("access"), link: f("link").trim() || null };
       if (upd.link && !/^https?:\/\//.test(upd.link)) return toast("The link should start with https://");
       const file = $(`[data-pic="${b.dataset.upd}"]`, box).files[0];
       if (file) upd.image = await picture(file);
