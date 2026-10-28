@@ -248,7 +248,8 @@
       q(sb.rpc("event_places")),
       me ? q(sb.from("bookings").select("id,event_id,status,code").eq("user_id", me.id).neq("status", "cancelled")) : [],
       myGroups(),
-    ]).then(([l, p, m, g]) => { joined = g; return [l, p, m]; });
+      sb.from("fund_state").select("intro_offer").single().then((r) => !!r.data?.intro_offer, () => false),
+    ]).then(([l, p, m, g, io]) => { joined = g; introOn = io; return [l, p, m]; });
     if (!alive()) return;
     list.forEach(nextWeekly);
     const taken = Object.fromEntries(places.map((p) => [p.event_id, Number(p.taken)]));
@@ -258,7 +259,7 @@
     const rank = (e) => (!e.day ? 1 : eventEnd(e) < now ? 2 : 0);
     list.sort((a, b) => rank(a) - rank(b) || (rank(a) === 1 ? a.title.localeCompare(b.title) : rank(a) === 2 ? eventStart(b) - eventStart(a) : eventStart(a) - eventStart(b)));
     el.innerHTML = `<div class="events">
-      ${offerBanner(list, false)}
+      ${offerBanner(list, false)}${introBanner(introOn, false)}
       ${isOrg() ? `<a class="btn block" href="#admin">${ICON.tools} Add or manage events</a>` : ""}
       ${list.map((ev) => eventCard(ev, taken[ev.id] || 0, myBk[ev.id])).join("") || '<div class="empty"><h2>No events yet</h2></div>'}</div>`;
     if (navigator.canShare) [FOOTIE, QURAN].forEach((src) => picFile(src).catch(() => {}));
@@ -283,6 +284,10 @@
     const linked = arg && list.find((x) => x.id === arg);
     if (linked) { history.replaceState(null, "", location.pathname + "#events"); detail(linked); }
   }
+  // While the admin has the new member offer switched on, a banner on Events and Football says so.
+  let introOn = false;
+  const introBanner = (on, onFootball) => (on ? `<a class="offer${onFootball ? "" : " footie-offer"}" href="#football"><small>New member offer</small><b>New members, not in the kitty, pay just £1 for their first game</b>
+      <span>Whilst the offer lasts.${onFootball ? "" : " Tap to book →"}</span></a>` : "");
   // A football game priced below the usual £6 gets a big banner on Events and Football.
   function offerBanner(games, onFootball) {
     const g = games.filter((e) => e.kind === "football" && e.day && Number(e.price) < 6 && eventEnd(e) > new Date()).sort((a, b) => eventStart(a) - eventStart(b))[0];
@@ -849,7 +854,7 @@
       <div class="form-actions"><button class="btn block" data-go="funds">See all fund changes</button></div>
     </div>`;
 
-    el.innerHTML = `<div class="events">${offerBanner(allGames, true)}${top}${ev ? footballInfo(ev, fs) : ""}${you}${players}${fund}${isDoor() ? '<div id="org"></div>' : ""}</div>`;
+    el.innerHTML = `<div class="events">${offerBanner(allGames, true)}${introBanner(fs.intro_offer, true)}${top}${ev ? footballInfo(ev, fs) : ""}${you}${players}${fund}${isDoor() ? '<div id="org"></div>' : ""}</div>`;
     el.querySelectorAll("[data-ticket]").forEach((b) => (b.onclick = () => showTicket(b.dataset.ticket)));
 
     const riskOk = () => { const r = $("#riskOk", el); if (r && r.checked) return true; toast("Please tick to confirm you play at your own risk"); return false; };
