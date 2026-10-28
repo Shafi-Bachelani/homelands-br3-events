@@ -943,7 +943,7 @@
       ${current && !current.accounts_posted ? `<button class="btn solid block" id="fbScan">Scan tickets to check people in</button><div id="fbIn"></div>` : ""}
       ${full ? `<button class="btn small" id="addGame">Add game for ${short(nextFri)}</button>` : ""}
       ${isAdmin() && "intro_offer" in fs ? `<h3>New member offer · ${fs.intro_offer ? "On" : "Off"}</h3>
-      <p class="muted">${fs.intro_offer ? `Anyone who joined since ${short(new Date(fs.intro_since))} pays £1 for their first game, and the events fund pays the rest when the accounts are posted.` : "Switch it on and anyone who joins from then on pays £1 for their first game, with the rest paid by the events fund."}</p>
+      <p class="muted">${fs.intro_offer ? `Any member who joined since ${short(new Date(fs.intro_since))} and hasn't played yet pays £1 for their first game, and the events fund pays the rest when the accounts are posted.` : "Switch it on and anyone who joins from then on pays £1 for their first game, with the rest paid by the events fund."}</p>
       <button class="btn small" id="introSwitch">${fs.intro_offer ? "End the offer" : "Start the offer"}</button>` : ""}
       ${current ? `<h3>Who's booked · ${short(parseDay(current.day))}</h3>
       <p class="muted">Tap a name when they arrive. ${currentBookings.filter((b) => b.checked_in).length} of ${currentBookings.length} here, ${currentBookings.filter((b) => !b.checked_in).length} still missing.</p>

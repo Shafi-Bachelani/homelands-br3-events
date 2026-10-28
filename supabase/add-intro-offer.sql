@@ -3,18 +3,19 @@
 --  pays just £1 for their first football game (pay and play), and the
 --  events fund pays the other £5 into the kitty when the accounts are posted.
 --  The admin switches it on or off on the Football page (Organiser).
---  This file switches it ON, for people who join from the moment you run it.
+--  This file switches it ON for every member who hasn't played a game yet.
 --  Paste this whole file into Supabase → SQL Editor → New query → Run.
 --  Run add-part-credit.sql first. Safe to run more than once.
 -- =====================================================================
 
--- The switch, and from when new members count. Only switched on the first time this file runs.
+-- The switch, and from when new members count (from the app's launch, so everyone who hasn't played yet).
+-- Only switched on the first time this file runs.
 do $$ begin
   if not exists (select 1 from information_schema.columns
                   where table_schema = 'public' and table_name = 'fund_state' and column_name = 'intro_offer') then
     alter table public.fund_state add column intro_offer boolean not null default false;
     alter table public.fund_state add column intro_since timestamptz;
-    update public.fund_state set intro_offer = true, intro_since = now() where id = 1;
+    update public.fund_state set intro_offer = true, intro_since = '2026-10-01' where id = 1;
   end if;
 end $$;
 
