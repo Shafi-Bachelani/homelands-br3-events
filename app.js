@@ -760,6 +760,8 @@
     const awaiting = games.filter((g) => !g.accounts_posted && eventEnd(g) <= now);
     const bookings = ev ? await q(sb.from("bookings").select("*").eq("event_id", ev.id).neq("status", "cancelled").order("created_at")) : [];
     const removed = ev ? (await q(sb.from("football_removed").select("event_id").eq("event_id", ev.id).eq("user_id", me.id)).catch(() => [])).length > 0 : false;
+    // New member offer: their first game is £1 and the events fund pays the rest.
+    const intro = ev && fs.intro_offer && !bookings.some((b) => b.user_id === me.id) ? await q(sb.rpc("my_intro_offer")).catch(() => false) : false;
     if (!alive()) return;
     await loadMe();
     const kitty = me.kitty_session === fs.session_no;
@@ -794,7 +796,7 @@
           ${!mine.paid ? `<p class="note">Please pay <b>${money(cashPart(mine))}</b>${Number(mine.credit_used) > 0 ? ` (${money(mine.credit_used)} of the ${money(mine.amount)} came from your credit)` : ""} ${new Date(mine.created_at) > payBy ? "within <b>30 minutes</b> of booking" : "before <b>Thursday 11pm</b>"}, or your place is released and you can't rebook this game.${me.family ? " Pay the organiser by bank transfer." : " Pay by card here, or by bank transfer to the organiser."}</p>
             ${me.family ? "" : `<button class="btn solid" data-pay="${esc(mine.code)}" style="margin-bottom:10px">Pay ${money(cashPart(mine))} by card</button>`}` : ""}
           ${me.family && mine.method === "transfer" ? `<p class="muted">As family you're added automatically each week. If you can't come, remove yourself to free your place.</p>`
-            : mine.charge === "payg" && mine.paid ? `<p class="muted">${now < creditUntil ? `Remove yourself before Friday 6pm and your ${P$} becomes credit for your next game.` : "It's after Friday 6pm, so removing yourself now won't give credit."}</p>` : ""}
+            : mine.charge === "payg" && mine.paid ? `<p class="muted">${now < creditUntil ? `Remove yourself before Friday 6pm and your ${money(mine.amount).replace(".00", "")} becomes credit for your next game.` : "It's after Friday 6pm, so removing yourself now won't give credit."}</p>` : ""}
           <button class="btn" id="cancel">Remove me</button>`;
       } else if (pending()) body = `<p class="note">You can book once the admin has approved your membership.</p>`;
       else if (removed) body = `<p class="note">Your place was released because it wasn't paid in time, so you can't rebook this game. Message the organiser if something went wrong.</p>`;
@@ -808,13 +810,15 @@
         const left = (price) => Math.max(price - (use ? cr : 0), 0);
         const label = (price) => me.family ? `${money(price)} by transfer` : !use ? `Pay ${money(price)}`
           : left(price) === 0 ? `Use ${money(price)} of my credit` : `Pay ${money(left(price))} + ${money(Math.min(cr, price))} credit`;
-        const due = !me.family && left(P) > 0;
+        const MP = intro && P > 1 ? 1 : P;
+        const due = !me.family && left(MP) > 0;
         body = `${RISK}<p class="muted">How do you want to pay for this game?${due && phase === "open" ? " Pay by Thursday 11pm or your place is released, and you won't be able to rebook." : due ? " The pay deadline has passed, so pay by card straight away: unpaid places are released after 30 minutes." : ""}</p>
           ${cr > 0 ? `<div class="credit-choice"><b>You have ${money(cr)} credit</b>
             <label class="check"><input type="radio" name="useCr" value="1" ${use ? "checked" : ""}> Use it towards this booking</label>
             <label class="check"><input type="radio" name="useCr" value="0" ${use ? "" : "checked"}> Keep it for later and pay in full</label></div>` : ""}
           <div class="choices">
-            <div><b>${P$} · this game</b><span class="muted">Pay as you play, just this Friday.${P < 6 ? " Launch offer price." : ""}</span><button class="btn solid small" data-choice="payg">${label(P)}</button></div>
+            ${MP < P ? `<div><b>£1 · your first game</b><span class="muted">New member offer: your first game is just £1, and the other ${money(P - MP).replace(".00", "")} comes from the events fund.</span><button class="btn solid small" data-choice="payg">${label(MP)}</button></div>`
+              : `<div><b>${P$} · this game</b><span class="muted">Pay as you play, just this Friday.${P < 6 ? " Launch offer price." : ""}</span><button class="btn solid small" data-choice="payg">${label(P)}</button></div>`}
             <div><b>£15 · kitty</b><span class="muted">Every game until the kitty resets. This is week ${week} of up to 5.${use ? ` You pay ${money(left(15))}${left(15) ? " by card" : ""}.` : ""}</span><button class="btn small" id="kittyAsk">Choose the kitty</button></div>
           </div>`;
       }
@@ -938,6 +942,9 @@
     box.innerHTML = `<div class="card fb"><h2>Organiser</h2>
       ${current && !current.accounts_posted ? `<button class="btn solid block" id="fbScan">Scan tickets to check people in</button><div id="fbIn"></div>` : ""}
       ${full ? `<button class="btn small" id="addGame">Add game for ${short(nextFri)}</button>` : ""}
+      ${isAdmin() && "intro_offer" in fs ? `<h3>New member offer · ${fs.intro_offer ? "On" : "Off"}</h3>
+      <p class="muted">${fs.intro_offer ? `Anyone who joined since ${short(new Date(fs.intro_since))} pays £1 for their first game, and the events fund pays the rest when the accounts are posted.` : "Switch it on and anyone who joins from then on pays £1 for their first game, with the rest paid by the events fund."}</p>
+      <button class="btn small" id="introSwitch">${fs.intro_offer ? "End the offer" : "Start the offer"}</button>` : ""}
       ${current ? `<h3>Who's booked · ${short(parseDay(current.day))}</h3>
       <p class="muted">Tap a name when they arrive. ${currentBookings.filter((b) => b.checked_in).length} of ${currentBookings.length} here, ${currentBookings.filter((b) => !b.checked_in).length} still missing.</p>
       ${[["Still missing", currentBookings.filter((b) => !b.checked_in)], ["Here", currentBookings.filter((b) => b.checked_in)]].map(([head, list]) => currentBookings.length ? `<h4>${head} (${list.length})</h4>
@@ -953,7 +960,7 @@
       ${full && target ? `<h3>Payments · ${esc(target.title)} ${short(parseDay(target.day))}${target.accounts_posted ? " (accounts posted)" : ""}</h3>
       <p class="muted">Set how each person paid. Picking a method marks them paid straight away.</p>
       <div class="scroll"><table><thead><tr><th>Player</th><th>Type</th><th>Paid by</th></tr></thead><tbody>
-        ${charged.map((b) => `<tr><td>${esc(b.display_name)}</td><td>${b.charge === "kitty" ? "Kitty £15" : `Pay & play ${money(b.amount)}`}${b.method !== "credit" && Number(b.credit_used) > 0 ? `<div class="muted" style="font-size:12px">${money(b.credit_used)} from credit, ${money(cashPart(b))} to pay</div>` : ""}</td><td>${b.method === "credit" ? "Credit" :
+        ${charged.map((b) => `<tr><td>${esc(b.display_name)}</td><td>${b.charge === "kitty" ? "Kitty £15" : `Pay & play ${money(b.amount)}${Number(b.intro_cover) > 0 ? " (new member)" : ""}`}${b.method !== "credit" && Number(b.credit_used) > 0 ? `<div class="muted" style="font-size:12px">${money(b.credit_used)} from credit, ${money(cashPart(b))} to pay</div>` : ""}</td><td>${b.method === "credit" ? "Credit" :
           `<select data-meth="${b.id}" ${target.accounts_posted ? "disabled" : ""}><option value="">Not paid</option>${Object.entries(METHODS).map(([k, v]) => `<option value="${k}" ${b.method === k ? "selected" : ""}>${v}</option>`).join("")}</select>`}</td></tr>`).join("") || '<tr><td colspan="3" class="muted">No payments to check.</td></tr>'}
       </tbody></table></div>
       ${!target.accounts_posted && eventStart(target) <= new Date() ? `
@@ -991,6 +998,12 @@
       $("#fbScan", box).onclick = () => scanTicket(checkIn);
       whosIn($("#fbIn", box), current.id, (t) => { const c = box.querySelector(`[data-here="${t.id}"]`); if (c && t.status === "booked") refresh(); });
     }
+    const isw = $("#introSwitch", box);
+    if (isw) isw.onclick = async () => {
+      if (fs.intro_offer && isw.dataset.sure !== "1") { isw.dataset.sure = "1"; isw.textContent = "Tap again to end the offer"; return; }
+      try { isw.disabled = true; await q(sb.rpc("set_intro_offer", { p_on: !fs.intro_offer })); toast(fs.intro_offer ? "New member offer ended" : "New member offer started"); refresh(); }
+      catch (e) { isw.disabled = false; fail(e); }
+    };
     if ($("#addGame", box)) $("#addGame", box).onclick = async () => {
       try {
         await q(sb.from("events").insert({ kind: "football", title: "Friday Weekly Footie", day: dayKey(nextFri), time: "21:15", location: "Goals Beckenham, Elmers End",
@@ -1002,7 +1015,7 @@
     if (wu) {
       const sync = () => { const o = wu.selectedOptions[0], cr = Number(o.dataset.credit || 0), c = $("#wiMeth", box).querySelector('[value="credit"]');
         // Offer prices are for members; anyone else pays the full £6.
-        $("#wiPrice", box).textContent = `Pays ${money(wu.value ? Number(current.price) : Math.max(Number(current.price), 6))} by`;
+        $("#wiPrice", box).textContent = `Pays ${money(wu.value ? Number(current.price) : Math.max(Number(current.price), 6))}${wu.value && fs.intro_offer ? " (£1 if it's a new member's first game)" : ""} by`;
         $("#wiName", box).disabled = !!wu.value; c.disabled = cr < Number(current.price); if (c.disabled && $("#wiMeth", box).value === "credit") $("#wiMeth", box).value = "cash"; };
       wu.onchange = sync; sync();
       $("#wiAdd", box).onclick = async () => {
@@ -1064,12 +1077,14 @@
       // owed money cleared, and money from people who paid but didn't play or cancelled for credit; less deferred.
       const TP = Number(target.price);
       const friendsHere = pg.filter((b) => b.booked_by), fAmt = sum(friendsHere);
-      const expGross = kp.length * 15 + Math.max(payers - friendsHere.length, 0) * TP + fAmt;
+      // New members' £1 first games: the events fund pays the rest into the kitty.
+      const introHere = pg.filter((b) => Number(b.intro_cover) > 0), introAmt = sum(introHere), introCover = introHere.reduce((t, b) => t + Number(b.intro_cover), 0);
+      const expGross = kp.length * 15 + Math.max(payers - friendsHere.length - introHere.length, 0) * TP + fAmt + introAmt;
       const expIn = expGross + clearedAmt + toCredits - sumCash(owing);
       const diff = Math.round((receivedAll - expIn) * 100) / 100;
       // Same split as post_accounts: cleared debts go to events, unused money to credits, the rest to the kitty.
       const income = received + rCr - toCredits - clearedAmt;
-      const net = income - hire - fees, newKitty = Number(fs.kitty) + net, newEv = Number(fs.events) + clearedAmt;
+      const net = income - hire - fees, newKitty = Number(fs.kitty) + net + introCover, newEv = Number(fs.events) + clearedAmt - introCover;
       // Credits: held at the last accounts + added - used (+ no-shows credited now) must equal members' accounts.
       const oldCr = Number(fs.credits_posted ?? fs.credits ?? 0);
       const crIn = creditMoves.filter((m) => Number(m.amount) > 0), crOut = creditMoves.filter((m) => Number(m.amount) < 0);
@@ -1083,9 +1098,11 @@
         "Before funds", `Kitty fund ${money(fs.kitty - mv.kitty)}`, `Events fund ${money(fs.events - mv.events)}`, `Credits ${money(oldCr)}`, L];
       if (kittyHere.length) t.push(`Kitty players who turned up (${kittyHere.length})`, ...kittyHere.map((b) => b.display_name), L);
       if (kp.length) t.push(`Joined the kitty this game (${kp.length})`, ...kp.map((b) => b.display_name), `Expected ${kp.length}x £15 = ${money(kp.length * 15)}`, L);
-      t.push("Pay and Play", `Turnout ${turnout} less ${kittyHere.length} kitty = ${payers} to pay`, friendsHere.length && fAmt !== friendsHere.length * TP
-        ? `Expected ${payers - friendsHere.length}x ${money(TP)} + ${friendsHere.length} friend${friendsHere.length === 1 ? "" : "s"} ${money(fAmt)} = ${money(expGross - kp.length * 15)}`
+      const oddFriends = friendsHere.length && fAmt !== friendsHere.length * TP;
+      t.push("Pay and Play", `Turnout ${turnout} less ${kittyHere.length} kitty = ${payers} to pay`, oddFriends || introHere.length
+        ? `Expected ${Math.max(payers - (oddFriends ? friendsHere.length : 0) - introHere.length, 0)}x ${money(TP)}${oddFriends ? ` + ${friendsHere.length} friend${friendsHere.length === 1 ? "" : "s"} ${money(fAmt)}` : ""}${introHere.length ? ` + ${introHere.length} new member${introHere.length === 1 ? "" : "s"} ${money(introAmt)}` : ""} = ${money(expGross - kp.length * 15)}`
         : `Expected ${payers}x ${money(TP)} = ${money(payers * TP)}`);
+      if (introHere.length) t.push(`New member offer, first game for £1: ${introHere.map((b) => b.display_name).join(", ")} (the events fund pays the other ${money(introCover)})`);
       if (viaCredit.length) t.push(`Including ${money(rCr)} paid from credit: ${viaCredit.map((b) => `${b.display_name}${creditPart(b) < Number(b.amount) ? ` ${money(creditPart(b))}` : ""}`).join(", ")}`);
       if (owing.length) t.push(`Less ${owing.length} deferred: ${owing.map((b) => b.display_name).join(", ")}`);
       if (noShowCash.length) t.push(`Plus ${noShowCash.length} paid but didn't come (now their credit): ${noShowCash.map((b) => b.display_name).join(", ")}`);
@@ -1099,8 +1116,9 @@
       if (rCr) t.push(`Credits to kitty fund ${money(rCr)} (paid from credit)`);
       if (toCredits) t.push(`Takings kept as credit ${money(toCredits)} (paid but didn't play or cancelled)`);
       if (clearedAmt) t.push(`Into events fund ${money(clearedAmt)} (owed money cleared)`);
+      if (introCover) t.push(`Events fund to kitty fund ${money(introCover)} (new member offer, ${introHere.length} first game${introHere.length === 1 ? "" : "s"})`);
       t.push(...moved.map(transferLine));
-      if (!rCr && !toCredits && !clearedAmt && !moved.length) t.push("None");
+      if (!rCr && !toCredits && !clearedAmt && !introCover && !moved.length) t.push("None");
       t.push(L, "Credits check", `Held at last accounts ${money(oldCr)}`, `Added ${money(crAdded + crNow)}`,
         ...crIn.map((m) => `  + ${money(m.amount)} ${m.what}`), ...noShows.map((b) => `  + ${money(b.amount)} ${b.display_name}: paid but didn't play, credit added now`),
         ...creditBack.map((b) => `  + ${money(b.credit_used)} ${b.display_name}: didn't play or pay the rest, credit given back now`),
