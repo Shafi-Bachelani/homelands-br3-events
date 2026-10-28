@@ -2417,3 +2417,551 @@ begin
 end $$;
 revoke execute on function public.post_event_accounts(uuid, text) from public, anon;
 grant execute on function public.post_event_accounts(uuid, text) to authenticated;
+
+-- ---------- members choose to use (part of) their credit (also in add-part-credit.sql) ----------
+
+-- How much of a booking's price came from the member's credit (all of it when method = 'credit').
+alter table public.bookings add column if not exists credit_used numeric(8,2) not null default 0;
+update public.bookings set credit_used = amount where method = 'credit' and credit_used = 0 and amount > 0;
+
+-- Booking football with a choice: p_use_credit uses as much credit as they have, up to the price,
+-- for pay and play or the kitty. Anything left is paid by card or transfer as usual.
+create or replace function public.book_football(p_event uuid, p_choice text, p_risk boolean, p_use_credit boolean) returns public.bookings
+language plpgsql security definer set search_path = public as $$
+declare
+  uid uuid := auth.uid();
+  e events; p profiles; fs fund_state; b bookings;
+  taken int; v_charge text; v_amount numeric := 0; v_paid boolean := false; v_method text; v_used numeric := 0;
+begin
+  if uid is null then raise exception 'Please sign in to book football.'; end if;
+  if not coalesce(p_risk, false) then raise exception 'Please confirm that you play at your own risk.'; end if;
+  select * into e from events where id = p_event and kind = 'football';
+  if not found then raise exception 'That game no longer exists.'; end if;
+  if now() < fb_opens(e.day) then raise exception 'Booking opens on Wednesday at 1pm.'; end if;
+  if now() > ((e.day + e.time) at time zone 'Europe/London') then raise exception 'This game has already started.'; end if;
+  perform expire_unpaid();
+  if exists (select 1 from bookings where event_id = p_event and user_id = uid and status <> 'cancelled') then
+    raise exception 'You are already booked for this game.';
+  end if;
+  if exists (select 1 from football_removed where event_id = p_event and user_id = uid) then
+    raise exception 'Your place was released because it wasn''t paid in time, so you can''t rebook this game.';
+  end if;
+  select coalesce(sum(places), 0) into taken from bookings where event_id = p_event and status = 'booked';
+  if taken >= e.capacity then raise exception 'All % places are taken.', e.capacity; end if;
+  select * into p from profiles where id = uid for update;
+  select * into fs from fund_state;
+
+  if p.kitty_session = fs.session_no then
+    v_charge := 'covered'; v_paid := true;
+  else
+    v_charge := case when p_choice = 'kitty' then 'kitty' else 'payg' end;
+    v_amount := case when v_charge = 'kitty' then 15 else e.price end;
+    if p.family then v_paid := true; v_method := 'transfer';
+    elsif coalesce(p_use_credit, false) and p.credit > 0 and v_amount > 0 then
+      v_used := least(p.credit, v_amount);
+      perform set_config('app.credit_reason', 'credit used for football ' || to_char(e.day, 'FMDD Mon')
+        || case when v_charge = 'kitty' then ' (kitty)' else '' end, true);
+      update profiles set credit = credit - v_used where id = uid;
+      perform set_config('app.credit_reason', '', true);
+      if v_used >= v_amount then v_paid := true; v_method := 'credit'; end if;
+    end if;
+  end if;
+
+  if v_charge = 'kitty' then update profiles set kitty_session = fs.session_no where id = uid; end if;
+
+  insert into bookings (event_id, user_id, display_name, charge, amount, credit_used, paid, method, code, risk_ok)
+  values (p_event, uid, p.name, v_charge, v_amount, v_used, v_paid, v_method, new_code('AA-'), true)
+  returning * into b;
+  return b;
+end $$;
+revoke execute on function public.book_football(uuid, text, boolean, boolean) from public, anon;
+grant execute on function public.book_football(uuid, text, boolean, boolean) to authenticated;
+
+-- Part-paid places that are released for not paying the rest by the deadline get their credit back.
+create or replace function public.expire_unpaid() returns int
+language plpgsql security definer set search_path = public as $$
+declare n int; s int;
+begin
+  select session_no into s from fund_state;
+  perform set_config('app.credit_reason', 'credit returned, place released for not paying', true);
+  with x as (
+    select b.id, b.event_id, b.user_id, b.charge, b.credit_used from bookings b join events e on e.id = b.event_id
+     where e.kind = 'football' and not b.paid and b.status = 'booked' and not e.accounts_posted and not b.checked_in
+       and now() > greatest(fb_pay_by(e.day), b.created_at + interval '30 minutes')
+  ), k as (
+    update profiles p set kitty_session = case when y.kitty and p.kitty_session = s then null else p.kitty_session end,
+                          credit = p.credit + y.amt
+      from (select user_id, bool_or(charge = 'kitty') kitty, sum(credit_used) amt from x where user_id is not null group by user_id) y
+     where y.user_id = p.id
+  ), r as (
+    insert into football_removed (event_id, user_id) select event_id, user_id from x where user_id is not null on conflict do nothing
+  )
+  delete from bookings where id in (select id from x);
+  get diagnostics n = row_count;
+  perform set_config('app.credit_reason', '', true);
+  perform add_family_bookings();
+  return n;
+end $$;
+
+-- Cancelling: a paid pay-and-play place before Friday 6pm still becomes credit (the whole price).
+-- A place that isn't fully paid gives back just the credit that went into it.
+create or replace function public.cancel_booking(p_id uuid) returns text
+language plpgsql security definer set search_path = public as $$
+declare b bookings; e events; msg text := 'Removed.'; free int; w bookings; v_family boolean; v_owner uuid;
+begin
+  select * into b from bookings where id = p_id and status <> 'cancelled';
+  if not found then raise exception 'Booking not found.'; end if;
+  if b.user_id is distinct from auth.uid() and b.booked_by is distinct from auth.uid() and not is_organiser() then
+    raise exception 'You can only cancel your own booking.';
+  end if;
+  select * into e from events where id = b.event_id;
+  v_owner := coalesce(b.user_id, b.booked_by);
+  select family into v_family from profiles where id = v_owner;
+  v_family := coalesce(v_family, false);
+  if e.kind = 'football' and b.user_id is not null and v_family then
+    insert into football_family_out (event_id, user_id) values (b.event_id, b.user_id) on conflict do nothing;
+  end if;
+  if e.kind = 'football' and b.charge = 'payg' and b.paid and b.method <> 'owes' and now() < fb_credit_until(e.day)
+     and v_owner is not null and not (v_family and b.method = 'transfer') then
+    update profiles set credit = credit + b.amount where id = v_owner;
+    if b.method = 'credit' then
+      delete from bookings where id = p_id;           -- the credit simply goes back
+    else
+      update bookings set status = 'cancelled' where id = p_id;  -- keeps the money in this week's accounts
+    end if;
+    msg := 'Removed. £' || b.amount || ' added to your credit.';
+  else
+    if e.kind = 'football' and b.charge = 'kitty' and not b.paid then
+      update profiles set kitty_session = null where id = b.user_id;
+    end if;
+    if not b.paid and b.credit_used > 0 and v_owner is not null then
+      perform set_config('app.credit_reason', 'credit returned after removing an unpaid football place', true);
+      update profiles set credit = credit + b.credit_used where id = v_owner;
+      perform set_config('app.credit_reason', '', true);
+      msg := 'Removed. £' || b.credit_used || ' credit given back.';
+    end if;
+    delete from bookings where id = p_id;
+  end if;
+  -- move the first waitlisted booking up if it now fits
+  if e.kind = 'event' and b.status = 'booked' then
+    select e.capacity - coalesce(sum(places), 0) into free from bookings where event_id = e.id and status = 'booked';
+    select * into w from bookings where event_id = e.id and status = 'waitlist' order by created_at limit 1;
+    if found and w.places <= free then update bookings set status = 'booked' where id = w.id; end if;
+  end if;
+  return msg;
+end $$;
+
+-- Accounts: part-credit places. Credit counts as received (moved to the kitty) for people who played and kitty joiners;
+-- only the money part of a no-show or cancelled place goes to credits from the takings; debts are what is left after credit.
+create or replace function public.post_accounts(p_event uuid, p_body text, p_hire numeric, p_fees numeric,
+  p_methods jsonb, p_cleared uuid[], p_received numeric, p_images jsonb) returns public.fund_state
+language plpgsql security definer set search_path = public as $$
+declare
+  e events; fs fund_state; income numeric; v_credit numeric; v_noshow numeric; v_cancel numeric; v_name text;
+  v_cleared numeric; x numeric; k text; v text; d text;
+begin
+  if not is_organiser() then raise exception 'Only organisers can post accounts.'; end if;
+  select * into e from events where id = p_event and kind = 'football' for update;
+  if not found then raise exception 'That game no longer exists.'; end if;
+  if e.accounts_posted then raise exception 'Accounts for this game were already posted.'; end if;
+  if not exists (select 1 from bookings where event_id = p_event and status = 'booked' and checked_in) then
+    raise exception 'Tick who turned up under "Who''s turned up" before posting the accounts.';
+  end if;
+  d := to_char(e.day, 'FMDD Mon');
+
+  for k, v in select * from jsonb_each_text(coalesce(p_methods, '{}')) loop
+    update bookings set method = v, paid = (v <> 'owes')
+     where id = k::uuid and event_id = p_event and method is distinct from 'credit';
+  end loop;
+
+  -- Moved between funds by this game.
+  -- Credit that went into places that count (people who played, and kitty joiners), whole or part paid.
+  select coalesce(sum(case when method = 'credit' then amount else credit_used end), 0) into v_credit
+    from bookings where event_id = p_event and status = 'booked' and charge in ('payg', 'kitty')
+     and (charge = 'kitty' or checked_in) and (method = 'credit' or credit_used > 0);
+  -- Money (not credit) from people who paid but didn't play, or cancelled for credit.
+  select coalesce(sum(amount - credit_used) filter (where status = 'booked' and method in ('card', 'transfer', 'cash') and not checked_in
+                                        and coalesce(user_id, booked_by) is not null), 0),
+         coalesce(sum(amount - credit_used) filter (where status = 'cancelled' and method in ('card', 'transfer', 'cash')), 0)
+    into v_noshow, v_cancel
+    from bookings where event_id = p_event and charge = 'payg' and paid;
+
+  -- Money received: kitty payments, and pay-and-play only for people who played (credit included).
+  select coalesce(sum(amount), 0) into income from bookings
+   where event_id = p_event and status = 'booked' and paid
+     and method in ('card', 'transfer', 'cash', 'credit')
+     and (charge = 'kitty' or checked_in);
+  -- Paid but didn't turn up: the money becomes credit on their account instead
+  -- (for a friend, on the account of the member who booked them). The credits fund follows by trigger.
+  perform set_config('app.credit_reason', 'paid but didn''t play at football ' || d || ', credit added', true);
+  -- Someone who used part of their credit but never paid the rest and didn't play gets that credit back.
+  update profiles p set credit = p.credit + s.amt
+    from (select coalesce(user_id, booked_by) user_id, sum(case when paid then amount else credit_used end) amt from bookings
+           where event_id = p_event and status = 'booked' and charge = 'payg' and not checked_in
+             and ((paid and method in ('card', 'transfer', 'cash', 'credit')) or (not paid and credit_used > 0))
+             and coalesce(user_id, booked_by) is not null
+           group by coalesce(user_id, booked_by)) s
+   where p.id = s.user_id;
+  perform set_config('app.credit_reason', '', true);
+  -- Only people who played (or joined the kitty) can owe.
+  insert into debts (user_id, amount, reason, on_date)
+    select coalesce(user_id, booked_by), amount - credit_used, 'Football ' || d || case when user_id is null then ' (friend: ' || display_name || ')' else '' end, e.day from bookings
+     where event_id = p_event and status = 'booked' and method = 'owes' and coalesce(user_id, booked_by) is not null
+       and (charge = 'kitty' or checked_in) and amount > credit_used;
+  select coalesce(sum(amount), 0) into v_cleared from debts where id = any(coalesce(p_cleared, '{}')) and not debts.cleared;
+  update debts set cleared = true where id = any(coalesce(p_cleared, '{}'));
+
+  -- p_received is what actually came in by Square, transfer, cash or PayPal (not credit).
+  if p_received is not null then
+    income := p_received - v_cleared - v_noshow - v_cancel + v_credit;
+  end if;
+
+  select * into fs from fund_state where id = 1 for update;
+  fs.kitty := fs.kitty + income;
+  insert into ledger (on_date, fund, what, amount, balance) values (e.day, 'kitty', 'Football ' || d || ': money received', income, fs.kitty);
+  fs.kitty := fs.kitty - coalesce(p_hire, 0);
+  insert into ledger (on_date, fund, what, amount, balance) values (e.day, 'kitty', 'Football ' || d || ': pitch hire', -coalesce(p_hire, 0), fs.kitty);
+  if coalesce(p_fees, 0) > 0 then
+    fs.kitty := fs.kitty - p_fees;
+    insert into ledger (on_date, fund, what, amount, balance) values (e.day, 'kitty', 'Football ' || d || ': card fees', -p_fees, fs.kitty);
+  end if;
+  if v_cleared > 0 then
+    fs.events := fs.events + v_cleared;
+    insert into ledger (on_date, fund, what, amount, balance) values (e.day, 'events', 'Football ' || d || ': owed money cleared', v_cleared, fs.events);
+  end if;
+  fs.games_played := fs.games_played + 1;
+
+  if fs.kitty < 150 or fs.games_played >= 5 then
+    x := fs.kitty - 100;
+    fs.events := fs.events + x; fs.kitty := 100;
+    insert into ledger (on_date, fund, what, amount, balance) values
+      (e.day, 'kitty', 'Kitty ' || fs.session_no || ' ends: reset to £100', -x, fs.kitty),
+      (e.day, 'events', 'Kitty ' || fs.session_no || ' ends: ' || case when x >= 0 then 'excess moved in' else 'top-up to kitty' end, x, fs.events);
+    fs.session_no := fs.session_no + 1; fs.games_played := 0;
+  end if;
+
+  update fund_state set kitty = fs.kitty, events = fs.events, session_no = fs.session_no, games_played = fs.games_played,
+    credits_posted = credits, posted_at = now() where id = 1;
+  update events set accounts_posted = true where id = p_event;
+  insert into accounts_posts (event_id, body, created_by, images) values (p_event, p_body, auth.uid(), coalesce(p_images, '[]'));
+  -- Keep a copy in the Football Accounts chat, with the receipt photos.
+  select name into v_name from profiles where id = auth.uid();
+  insert into posts (group_id, user_id, author_name, body, image)
+    values ('football-accounts', auth.uid(), coalesce(v_name, 'Organiser'), p_body, coalesce(p_images, '[]')->>0);
+  insert into posts (group_id, user_id, author_name, body, image)
+    select 'football-accounts', auth.uid(), coalesce(v_name, 'Organiser'), 'More receipts for ' || d, img
+      from jsonb_array_elements_text(coalesce(p_images, '[]')) with ordinality as t(img, n) where n > 1;
+  return fs;
+end $$;
+
+-- ---------- transfers posted to both accounts chats (also in add-transfer-posts.sql) ----------
+
+alter table public.fund_transfers add column if not exists posted boolean not null default false;
+
+-- The chat post for one transfer, with both funds' values straight after it.
+create or replace function public.transfer_post_body(t public.fund_transfers, p_kitty numeric, p_events numeric) returns text
+language sql immutable set search_path = public as $$
+  select '**Transfer between funds**' || chr(10)
+    || '£' || to_char(t.amount, 'FM999990.00') || ' from the ' || initcap(t.from_fund) || ' fund to the ' || initcap(t.to_fund) || ' fund' || chr(10)
+    || 'Reason: ' || t.reason || chr(10)
+    || coalesce('Kitty fund now £' || to_char(p_kitty, 'FM999990.00') || chr(10), '')
+    || coalesce('Events fund now £' || to_char(p_events, 'FM999990.00') || chr(10), '')
+    || 'By ' || coalesce(nullif(t.made_by_name, ''), 'Admin') || ', ' || to_char(t.on_date, 'FMDy FMDD Mon')
+$$;
+
+create or replace function public.transfer_funds(p_from text, p_to text, p_amount numeric, p_reason text) returns public.fund_state
+language plpgsql security definer set search_path = public as $$
+declare fs fund_state; t fund_transfers; v_name text; r text := trim(coalesce(p_reason, '')); a numeric := round(coalesce(p_amount, 0), 2); held numeric;
+begin
+  if not is_admin() then raise exception 'Only the admin can move money between funds.'; end if;
+  if p_from is null or p_to is null or p_from not in ('kitty', 'events') or p_to not in ('kitty', 'events') or p_from = p_to then
+    raise exception 'Choose two different funds: the kitty fund or the events fund.';
+  end if;
+  if a <= 0 then raise exception 'Enter an amount over £0.'; end if;
+  if r = '' then raise exception 'Give a reason for the transfer.'; end if;
+  select * into fs from fund_state where id = 1 for update;
+  held := case p_from when 'kitty' then fs.kitty else fs.events end;
+  if held < a then raise exception 'The % fund only holds £%.', p_from, held; end if;
+  if p_from = 'kitty' then fs.kitty := fs.kitty - a; fs.events := fs.events + a;
+  else fs.events := fs.events - a; fs.kitty := fs.kitty + a; end if;
+  select name into v_name from profiles where id = auth.uid();
+  insert into fund_transfers (from_fund, to_fund, amount, reason, made_by, made_by_name, posted)
+    values (p_from, p_to, a, r, auth.uid(), coalesce(v_name, 'Admin'), true) returning * into t;
+  insert into ledger (fund, what, amount, balance) values
+    (p_from, 'Transfer to ' || initcap(p_to) || ' fund: ' || r, -a, case p_from when 'kitty' then fs.kitty else fs.events end),
+    (p_to, 'Transfer from ' || initcap(p_from) || ' fund: ' || r, a, case p_to when 'kitty' then fs.kitty else fs.events end);
+  update fund_state set kitty = fs.kitty, events = fs.events where id = 1;
+  -- Everyone sees it in both accounts chats.
+  insert into posts (group_id, user_id, author_name, body)
+    select g, auth.uid(), coalesce(v_name, 'Admin'), transfer_post_body(t, fs.kitty, fs.events)
+      from unnest(array['football-accounts', 'events-accounts']) g;
+  return fs;
+end $$;
+revoke execute on function public.transfer_funds(text, text, numeric, text) from public, anon;
+grant execute on function public.transfer_funds(text, text, numeric, text) to authenticated;
+
+-- Post the transfers made before this, dated when they were made, with the fund values the ledger recorded then.
+insert into public.posts (group_id, user_id, author_name, body, created_at)
+  select g, t.made_by, coalesce(nullif(t.made_by_name, ''), 'Admin'),
+         transfer_post_body(t,
+           (select l.balance from ledger l where l.fund = 'kitty' and l.created_at = t.created_at and l.what = case when l.fund = t.from_fund
+             then 'Transfer to ' || initcap(t.to_fund) || ' fund: ' || t.reason else 'Transfer from ' || initcap(t.from_fund) || ' fund: ' || t.reason end order by l.id desc limit 1),
+           (select l.balance from ledger l where l.fund = 'events' and l.created_at = t.created_at and l.what = case when l.fund = t.from_fund
+             then 'Transfer to ' || initcap(t.to_fund) || ' fund: ' || t.reason else 'Transfer from ' || initcap(t.from_fund) || ' fund: ' || t.reason end order by l.id desc limit 1)),
+         t.created_at
+    from public.fund_transfers t cross join unnest(array['football-accounts', 'events-accounts']) g
+   where not t.posted;
+update public.fund_transfers set posted = true where not posted;
+
+-- ---------- football money into the events fund summarised in Events Accounts (also in add-football-to-events-posts.sql) ----------
+
+create or replace function public.post_football_to_events() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare e events; amt numeric; bal numeric; v_name text;
+begin
+  select * into e from events where id = new.event_id;
+  if not found or e.kind <> 'football' then return new; end if;
+  -- post_accounts writes its ledger rows earlier in the same transaction, so they share this timestamp.
+  select coalesce(sum(amount), 0) into amt from ledger
+   where fund = 'events' and created_at = now() and what not like 'Transfer %';
+  if amt = 0 then return new; end if;
+  select events into bal from fund_state where id = 1;
+  select name into v_name from profiles where id = new.created_by;
+  insert into posts (group_id, user_id, author_name, body) values ('events-accounts', new.created_by, coalesce(v_name, 'Admin'),
+    case when amt > 0 then 'Received £' || to_char(amt, 'FM999990.00') || ' from the football kitty account'
+         else 'Paid £' || to_char(-amt, 'FM999990.00') || ' to the football kitty account' end
+    || ' (Football ' || to_char(e.day, 'FMDD Mon') || ').' || chr(10)
+    || 'Events fund now £' || to_char(bal, 'FM999990.00') || chr(10)
+    || 'See the Football Accounts chat for details.');
+  return new;
+end $$;
+revoke execute on function public.post_football_to_events() from public, anon, authenticated;
+drop trigger if exists accounts_posts_football_to_events on public.accounts_posts;
+create trigger accounts_posts_football_to_events after insert on public.accounts_posts
+  for each row execute function public.post_football_to_events();
+
+-- ---------- new member offer (also in add-intro-offer.sql) ----------
+-- The switch, and from when new members count (from the app's launch, so everyone who hasn't played yet).
+-- Only switched on the first time this file runs.
+do $$ begin
+  if not exists (select 1 from information_schema.columns
+                  where table_schema = 'public' and table_name = 'fund_state' and column_name = 'intro_offer') then
+    alter table public.fund_state add column intro_offer boolean not null default false;
+    alter table public.fund_state add column intro_since timestamptz;
+    update public.fund_state set intro_offer = true, intro_since = '2026-10-01' where id = 1;
+  end if;
+end $$;
+
+-- How much of a £1 first game the events fund pays (the normal price less the £1).
+alter table public.bookings add column if not exists intro_cover numeric(8,2) not null default 0;
+
+-- Gets the offer: joined since it was switched on, and hasn't played a game yet (and isn't booked on one now).
+-- Someone who booked but didn't turn up, or cancelled, still gets it next time.
+create or replace function public.intro_offer_for(p_user uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce(fs.intro_offer and p.created_at >= fs.intro_since, false)
+     and not exists (select 1 from bookings b join events e on e.id = b.event_id
+                      where e.kind = 'football' and b.user_id = p.id and b.status = 'booked'
+                        and (b.checked_in or not e.accounts_posted))
+    from fund_state fs, profiles p where fs.id = 1 and p.id = p_user
+$$;
+revoke execute on function public.intro_offer_for(uuid) from public, anon, authenticated;
+
+-- For the booking screen: does the signed-in member get the £1 first game?
+create or replace function public.my_intro_offer() returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce(intro_offer_for(auth.uid()), false)
+$$;
+revoke execute on function public.my_intro_offer() from public, anon;
+grant execute on function public.my_intro_offer() to authenticated;
+
+-- Every way a member gets a pay-and-play place (booking, added on the day, family) goes through here.
+-- Friends and non-members never get it: they always pay the full price.
+create or replace function public.apply_intro_offer() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare e events; spent numeric; keep numeric;
+begin
+  if new.user_id is null or new.booked_by is not null or new.charge <> 'payg' then return new; end if;
+  select * into e from events where id = new.event_id;
+  if not found or e.kind <> 'football' or e.price <= 1 or new.amount <> e.price then return new; end if;
+  if not intro_offer_for(new.user_id) then return new; end if;
+  -- credit already taken for the full price: keep £1 of it at most and give the rest back
+  spent := case when new.method = 'credit' then new.amount else coalesce(new.credit_used, 0) end;
+  new.intro_cover := new.amount - 1;
+  new.amount := 1;
+  if spent > 0 then
+    keep := least(spent, 1);
+    if spent > keep then
+      perform set_config('app.credit_reason', 'credit given back, first game is £1 (new member offer)', true);
+      update profiles set credit = credit + (spent - keep) where id = new.user_id;
+      perform set_config('app.credit_reason', '', true);
+    end if;
+    new.credit_used := keep;
+    if keep >= 1 then new.paid := true; new.method := 'credit'; end if;
+  end if;
+  return new;
+end $$;
+revoke execute on function public.apply_intro_offer() from public, anon, authenticated;
+drop trigger if exists bookings_intro_offer on public.bookings;
+create trigger bookings_intro_offer before insert on public.bookings
+  for each row execute function public.apply_intro_offer();
+
+-- The admin's on/off switch. Switching it back on starts again from that moment.
+create or replace function public.set_intro_offer(p_on boolean) returns public.fund_state
+language plpgsql security definer set search_path = public as $$
+declare fs fund_state;
+begin
+  if not is_admin() then raise exception 'Only the admin can change the new member offer.'; end if;
+  update fund_state set intro_since = case when p_on and not intro_offer then now() else intro_since end,
+                        intro_offer = coalesce(p_on, false)
+   where id = 1 returning * into fs;
+  return fs;
+end $$;
+revoke execute on function public.set_intro_offer(boolean) from public, anon;
+grant execute on function public.set_intro_offer(boolean) to authenticated;
+
+-- Accounts: same as add-part-credit.sql, plus the events fund paying the rest of new members' £1 first games.
+create or replace function public.post_accounts(p_event uuid, p_body text, p_hire numeric, p_fees numeric,
+  p_methods jsonb, p_cleared uuid[], p_received numeric, p_images jsonb) returns public.fund_state
+language plpgsql security definer set search_path = public as $$
+declare
+  e events; fs fund_state; income numeric; v_credit numeric; v_noshow numeric; v_cancel numeric; v_name text;
+  v_cleared numeric; x numeric; k text; v text; d text; v_intro numeric; v_intro_n int;
+begin
+  if not is_organiser() then raise exception 'Only organisers can post accounts.'; end if;
+  select * into e from events where id = p_event and kind = 'football' for update;
+  if not found then raise exception 'That game no longer exists.'; end if;
+  if e.accounts_posted then raise exception 'Accounts for this game were already posted.'; end if;
+  if not exists (select 1 from bookings where event_id = p_event and status = 'booked' and checked_in) then
+    raise exception 'Tick who turned up under "Who''s turned up" before posting the accounts.';
+  end if;
+  d := to_char(e.day, 'FMDD Mon');
+
+  for k, v in select * from jsonb_each_text(coalesce(p_methods, '{}')) loop
+    update bookings set method = v, paid = (v <> 'owes')
+     where id = k::uuid and event_id = p_event and method is distinct from 'credit';
+  end loop;
+
+  -- Moved between funds by this game.
+  -- Credit that went into places that count (people who played, and kitty joiners), whole or part paid.
+  select coalesce(sum(case when method = 'credit' then amount else credit_used end), 0) into v_credit
+    from bookings where event_id = p_event and status = 'booked' and charge in ('payg', 'kitty')
+     and (charge = 'kitty' or checked_in) and (method = 'credit' or credit_used > 0);
+  -- Money (not credit) from people who paid but didn't play, or cancelled for credit.
+  select coalesce(sum(amount - credit_used) filter (where status = 'booked' and method in ('card', 'transfer', 'cash') and not checked_in
+                                        and coalesce(user_id, booked_by) is not null), 0),
+         coalesce(sum(amount - credit_used) filter (where status = 'cancelled' and method in ('card', 'transfer', 'cash')), 0)
+    into v_noshow, v_cancel
+    from bookings where event_id = p_event and charge = 'payg' and paid;
+
+  -- Money received: kitty payments, and pay-and-play only for people who played (credit included).
+  select coalesce(sum(amount), 0) into income from bookings
+   where event_id = p_event and status = 'booked' and paid
+     and method in ('card', 'transfer', 'cash', 'credit')
+     and (charge = 'kitty' or checked_in);
+  -- Paid but didn't turn up: the money becomes credit on their account instead
+  -- (for a friend, on the account of the member who booked them). The credits fund follows by trigger.
+  perform set_config('app.credit_reason', 'paid but didn''t play at football ' || d || ', credit added', true);
+  -- Someone who used part of their credit but never paid the rest and didn't play gets that credit back.
+  update profiles p set credit = p.credit + s.amt
+    from (select coalesce(user_id, booked_by) user_id, sum(case when paid then amount else credit_used end) amt from bookings
+           where event_id = p_event and status = 'booked' and charge = 'payg' and not checked_in
+             and ((paid and method in ('card', 'transfer', 'cash', 'credit')) or (not paid and credit_used > 0))
+             and coalesce(user_id, booked_by) is not null
+           group by coalesce(user_id, booked_by)) s
+   where p.id = s.user_id;
+  perform set_config('app.credit_reason', '', true);
+  -- Only people who played (or joined the kitty) can owe.
+  insert into debts (user_id, amount, reason, on_date)
+    select coalesce(user_id, booked_by), amount - credit_used, 'Football ' || d || case when user_id is null then ' (friend: ' || display_name || ')' else '' end, e.day from bookings
+     where event_id = p_event and status = 'booked' and method = 'owes' and coalesce(user_id, booked_by) is not null
+       and (charge = 'kitty' or checked_in) and amount > credit_used;
+  select coalesce(sum(amount), 0) into v_cleared from debts where id = any(coalesce(p_cleared, '{}')) and not debts.cleared;
+  update debts set cleared = true where id = any(coalesce(p_cleared, '{}'));
+
+  -- p_received is what actually came in by Square, transfer, cash or PayPal (not credit).
+  if p_received is not null then
+    income := p_received - v_cleared - v_noshow - v_cancel + v_credit;
+  end if;
+
+  select * into fs from fund_state where id = 1 for update;
+  fs.kitty := fs.kitty + income;
+  insert into ledger (on_date, fund, what, amount, balance) values (e.day, 'kitty', 'Football ' || d || ': money received', income, fs.kitty);
+  -- New members who played their first game for £1: the events fund pays the rest of the price into the kitty.
+  select coalesce(sum(intro_cover), 0), count(*) into v_intro, v_intro_n from bookings
+   where event_id = p_event and status = 'booked' and charge = 'payg' and checked_in and intro_cover > 0;
+  if v_intro > 0 then
+    fs.kitty := fs.kitty + v_intro;
+    fs.events := fs.events - v_intro;
+    insert into ledger (on_date, fund, what, amount, balance) values
+      (e.day, 'kitty', 'Football ' || d || ': new member offer paid by the events fund (' || v_intro_n || ')', v_intro, fs.kitty),
+      (e.day, 'events', 'Football ' || d || ': new member offer, first game for ' || v_intro_n || ' new member' || case when v_intro_n = 1 then '' else 's' end, -v_intro, fs.events);
+  end if;
+  fs.kitty := fs.kitty - coalesce(p_hire, 0);
+  insert into ledger (on_date, fund, what, amount, balance) values (e.day, 'kitty', 'Football ' || d || ': pitch hire', -coalesce(p_hire, 0), fs.kitty);
+  if coalesce(p_fees, 0) > 0 then
+    fs.kitty := fs.kitty - p_fees;
+    insert into ledger (on_date, fund, what, amount, balance) values (e.day, 'kitty', 'Football ' || d || ': card fees', -p_fees, fs.kitty);
+  end if;
+  if v_cleared > 0 then
+    fs.events := fs.events + v_cleared;
+    insert into ledger (on_date, fund, what, amount, balance) values (e.day, 'events', 'Football ' || d || ': owed money cleared', v_cleared, fs.events);
+  end if;
+  fs.games_played := fs.games_played + 1;
+
+  if fs.kitty < 150 or fs.games_played >= 5 then
+    x := fs.kitty - 100;
+    fs.events := fs.events + x; fs.kitty := 100;
+    insert into ledger (on_date, fund, what, amount, balance) values
+      (e.day, 'kitty', 'Kitty ' || fs.session_no || ' ends: reset to £100', -x, fs.kitty),
+      (e.day, 'events', 'Kitty ' || fs.session_no || ' ends: ' || case when x >= 0 then 'excess moved in' else 'top-up to kitty' end, x, fs.events);
+    fs.session_no := fs.session_no + 1; fs.games_played := 0;
+  end if;
+
+  update fund_state set kitty = fs.kitty, events = fs.events, session_no = fs.session_no, games_played = fs.games_played,
+    credits_posted = credits, posted_at = now() where id = 1;
+  update events set accounts_posted = true where id = p_event;
+  insert into accounts_posts (event_id, body, created_by, images) values (p_event, p_body, auth.uid(), coalesce(p_images, '[]'));
+  -- Keep a copy in the Football Accounts chat, with the receipt photos.
+  select name into v_name from profiles where id = auth.uid();
+  insert into posts (group_id, user_id, author_name, body, image)
+    values ('football-accounts', auth.uid(), coalesce(v_name, 'Organiser'), p_body, coalesce(p_images, '[]')->>0);
+  insert into posts (group_id, user_id, author_name, body, image)
+    select 'football-accounts', auth.uid(), coalesce(v_name, 'Organiser'), 'More receipts for ' || d, img
+      from jsonb_array_elements_text(coalesce(p_images, '[]')) with ordinality as t(img, n) where n > 1;
+  return fs;
+end $$;
+-- Events Accounts chat: the new member offer gets its own line, apart from other football money.
+create or replace function public.post_football_to_events() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare e events; amt numeric; intro numeric; n int; bal numeric; v_name text; body text := '';
+begin
+  select * into e from events where id = new.event_id;
+  if not found or e.kind <> 'football' then return new; end if;
+  -- post_accounts writes its ledger rows earlier in the same transaction, so they share this timestamp.
+  select coalesce(sum(amount) filter (where what not like '%new member offer%'), 0),
+         coalesce(-sum(amount) filter (where what like '%new member offer%'), 0)
+    into amt, intro from ledger
+   where fund = 'events' and created_at = now() and what not like 'Transfer %';
+  if amt = 0 and intro = 0 then return new; end if;
+  select events into bal from fund_state where id = 1;
+  select name into v_name from profiles where id = new.created_by;
+  if amt <> 0 then
+    body := case when amt > 0 then 'Received £' || to_char(amt, 'FM999990.00') || ' from the football kitty account'
+                 else 'Paid £' || to_char(-amt, 'FM999990.00') || ' to the football kitty account' end
+            || ' (Football ' || to_char(e.day, 'FMDD Mon') || ').' || chr(10);
+  end if;
+  if intro > 0 then
+    select count(*) into n from bookings where event_id = e.id and status = 'booked' and checked_in and intro_cover > 0;
+    body := body || 'Paid £' || to_char(intro, 'FM999990.00') || ' to the football kitty account for the new member offer: '
+            || n || ' new member' || case when n = 1 then '' else 's' end || ' played their first game for £1 (Football '
+            || to_char(e.day, 'FMDD Mon') || ').' || chr(10);
+  end if;
+  insert into posts (group_id, user_id, author_name, body) values ('events-accounts', new.created_by, coalesce(v_name, 'Admin'),
+    body || 'Events fund now £' || to_char(bal, 'FM999990.00') || chr(10) || 'See the Football Accounts chat for details.');
+  return new;
+end $$;
+revoke execute on function public.post_football_to_events() from public, anon, authenticated;
+drop trigger if exists accounts_posts_football_to_events on public.accounts_posts;
+create trigger accounts_posts_football_to_events after insert on public.accounts_posts
+  for each row execute function public.post_football_to_events();

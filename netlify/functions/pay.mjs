@@ -20,12 +20,13 @@ export default async (req) => {
       if (!names) return json({ error: "Booking not found." }, 404);
       const ev = booking.events || {};
       const paid = booking.paid || (booking.square_order_id ? await confirmBooking(booking).catch(() => false) : false);
-      return json({ ...names, pitch: !!booking.pitch_link, code: booking.code, paid, status: booking.status, amount: booking.amount, created_at: booking.created_at, event: { title: ev.title, day: ev.day, time: ev.time, kind: ev.kind } });
+      return json({ ...names, pitch: !!booking.pitch_link, code: booking.code, paid, status: booking.status, amount: Number(booking.amount) - Number(booking.credit_used || 0), created_at: booking.created_at, event: { title: ev.title, day: ev.day, time: ev.time, kind: ev.kind } });
     }
 
     if (confirm || booking.paid) return json({ paid: await confirmBooking(booking) });
     if (booking.status !== "booked") return json({ error: "This booking is on the waitlist, so there's nothing to pay yet." }, 400);
-    const pence = Math.round(Number(booking.amount) * 100);
+    // Any credit the member put towards it is taken off what the card pays.
+    const pence = Math.round((Number(booking.amount) - Number(booking.credit_used || 0)) * 100);
     if (!(pence > 0)) return json({ error: "There's nothing to pay for this booking." }, 400);
     // If they started paying earlier and finished, don't charge twice.
     if (booking.square_order_id && (await confirmBooking(booking))) return json({ paid: true });
