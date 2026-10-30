@@ -922,9 +922,11 @@
 
   // Organiser tools on the football screen: payments, accounts and adding the next game.
   // A place can be paid partly from the member's credit: the rest is the money that came in by card, transfer or cash.
-  const cashPart = (b) => Number(b.amount) - Number(b.credit_used || 0);
+  // A kitty top-up at the pitch is kept apart: what they paid first stays with its method, the top-up has its own.
+  const cashPart = (b) => Number(b.amount) - Number(b.credit_used || 0) - Number(b.topup || 0);
   const creditPart = (b) => (b.method === "credit" ? Number(b.amount) : Number(b.credit_used || 0));
-  const sumBy = (bs, m) => bs.filter((b) => b.paid && b.method === m && b.status !== "waitlist").reduce((t, b) => t + cashPart(b), 0).toFixed(2);
+  const sumBy = (bs, m) => (bs.filter((b) => b.paid && b.method === m && b.status !== "waitlist").reduce((t, b) => t + cashPart(b), 0)
+    + bs.filter((b) => b.topup_method === m && b.status === "booked").reduce((t, b) => t + Number(b.topup || 0), 0)).toFixed(2);
   async function organiserFootball(box, current, currentBookings, fs, awaiting, games) {
     const target = awaiting[0] || current;
     const bookings = target && target !== current ? await q(sb.from("bookings").select("*").eq("event_id", target.id).neq("status", "cancelled").order("created_at")) : currentBookings;
@@ -955,9 +957,10 @@
       ${[["Still missing", currentBookings.filter((b) => !b.checked_in)], ["Here", currentBookings.filter((b) => b.checked_in)]].map(([head, list]) => currentBookings.length ? `<h4>${head} (${list.length})</h4>
       <div class="attend">${list.map((b) => `<label class="check"><input type="checkbox" data-here="${b.id}" ${b.checked_in ? "checked" : ""} ${current.accounts_posted ? "disabled" : ""}> ${esc(b.display_name)}${b.paid ? "" : ' <span class="tag warn">Unpaid</span>'}${current.accounts_posted || !full ? "" : ` <button class="btn small" data-drop="${b.id}" style="margin-left:auto">Remove</button>`}</label>`).join("") || '<p class="muted">No one.</p>'}</div>` : "").join("") || '<p class="muted">No one has booked yet.</p>'}
       <p class="muted">Anyone paid for pay and play who isn't ticked when the accounts are posted keeps what they paid as credit on their account for their next booking.</p>
-      ${current.accounts_posted ? "" : `<h3>Add someone who wasn't on the list</h3>
+      ${current.accounts_posted ? "" : `<h3>Add someone who wasn't on the list, or top up to the kitty</h3>
       <div class="grid2">
-        <div><label>Member</label><select id="wiUser"><option value="">Not a member (type name)</option>${people.filter((p) => !onList.has(p.id)).map((p) => `<option value="${p.id}" data-credit="${Number(p.credit) || 0}">${esc(p.name)}${Number(p.credit) > 0 ? ` (${money(p.credit)} credit)` : ""}</option>`).join("")}</select></div>
+        <div><label>Paying</label><select id="wiType"><option value="payg">Pay and play ${money(Math.max(Number(current.price), 6))}</option><option value="topup">Top up to the kitty £9 (already on the list)</option><option value="kitty">Join the kitty £15</option></select></div>
+        <div><label>Member</label><select id="wiUser"></select></div>
         <div><label>Name</label><input id="wiName" placeholder="Their name"></div>
         <div><label id="wiPrice">Pays ${money(Math.max(Number(current.price), 6))} by</label><select id="wiMeth">${Object.entries(METHODS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}<option value="credit" disabled>Account credit</option><option value="link">Send them a payment link</option></select></div>
       </div>
@@ -965,7 +968,7 @@
       ${full && target ? `<h3>Payments · ${esc(target.title)} ${short(parseDay(target.day))}${target.accounts_posted ? " (accounts posted)" : ""}</h3>
       <p class="muted">Set how each person paid. Picking a method marks them paid straight away.</p>
       <div class="scroll"><table><thead><tr><th>Player</th><th>Type</th><th>Paid by</th></tr></thead><tbody>
-        ${charged.map((b) => `<tr><td>${esc(b.display_name)}</td><td>${b.charge === "kitty" ? "Kitty £15" : `Pay & play ${money(b.amount)}${Number(b.intro_cover) > 0 ? " (new member)" : ""}`}${b.method !== "credit" && Number(b.credit_used) > 0 ? `<div class="muted" style="font-size:12px">${money(b.credit_used)} from credit, ${money(cashPart(b))} to pay</div>` : ""}</td><td>${b.method === "credit" ? "Credit" :
+        ${charged.map((b) => `<tr><td>${esc(b.display_name)}</td><td>${b.charge === "kitty" ? `Kitty £15${Number(b.topup) > 0 ? `<div class="muted" style="font-size:12px">${money(cashPart(b))} paid first, ${money(b.topup)} top-up by ${(METHODS[b.topup_method] || b.topup_method).toLowerCase()}</div>` : ""}` : `Pay & play ${money(b.amount)}${Number(b.intro_cover) > 0 ? " (new member)" : ""}`}${b.method !== "credit" && Number(b.credit_used) > 0 ? `<div class="muted" style="font-size:12px">${money(b.credit_used)} from credit, ${money(cashPart(b))} to pay</div>` : ""}</td><td>${b.method === "credit" ? "Credit" :
           `<select data-meth="${b.id}" ${target.accounts_posted ? "disabled" : ""}><option value="">Not paid</option>${Object.entries(METHODS).map(([k, v]) => `<option value="${k}" ${b.method === k ? "selected" : ""}>${v}</option>`).join("")}</select>`}</td></tr>`).join("") || '<tr><td colspan="3" class="muted">No payments to check.</td></tr>'}
       </tbody></table></div>
       ${!target.accounts_posted && eventStart(target) <= new Date() ? `
@@ -1016,19 +1019,34 @@
         toast("Game added"); refresh();
       } catch (e) { fail(e); }
     };
-    const wu = $("#wiUser", box);
+    const wu = $("#wiUser", box), wt = $("#wiType", box);
     if (wu) {
-      const sync = () => { const o = wu.selectedOptions[0], cr = Number(o.dataset.credit || 0), c = $("#wiMeth", box).querySelector('[value="credit"]');
+      // A top-up is for a member already on the list for pay and play: they pay the rest of the £15 and become a kitty place.
+      const payg = new Map(currentBookings.filter((b) => b.user_id && b.charge === "payg").map((b) => [b.user_id, b]));
+      const left = (b) => (b.paid && !["owes", "credit"].includes(b.method) ? 15 - Number(b.amount) : 15 - Number(b.paid && b.method === "credit" ? b.amount : b.credit_used || 0));
+      const fill = () => {
+        const t = wt.value, list = t === "topup" ? people.filter((p) => payg.has(p.id)) : people.filter((p) => !onList.has(p.id));
+        wu.innerHTML = (t === "payg" ? '<option value="">Not a member (type name)</option>' : '<option value="">Choose a member</option>')
+          + list.map((p) => `<option value="${p.id}" data-credit="${Number(p.credit) || 0}">${esc(p.name)}${t === "topup" ? ` (paid ${money(payg.get(p.id).amount)})` : Number(p.credit) > 0 ? ` (${money(p.credit)} credit)` : ""}</option>`).join("");
+      };
+      const sync = () => { const t = wt.value, o = wu.selectedOptions[0], cr = Number(o?.dataset.credit || 0), m = $("#wiMeth", box);
+        const price = t === "kitty" ? 15 : Number(current.price);
         // Offer prices are for members; anyone else pays the full £6.
-        $("#wiPrice", box).textContent = `Pays ${money(wu.value ? Number(current.price) : Math.max(Number(current.price), 6))}${wu.value && fs.intro_offer ? " (£1 if it's a new member's first game)" : ""} by`;
-        $("#wiName", box).disabled = !!wu.value; c.disabled = cr < Number(current.price); if (c.disabled && $("#wiMeth", box).value === "credit") $("#wiMeth", box).value = "cash"; };
-      wu.onchange = sync; sync();
+        $("#wiPrice", box).textContent = t === "topup" ? `Tops up ${wu.value ? money(left(payg.get(wu.value))) : "the rest"} by`
+          : `Pays ${money(t === "kitty" ? 15 : wu.value ? price : Math.max(price, 6))}${t === "payg" && wu.value && fs.intro_offer ? " (£1 if it's a new member's first game)" : ""} by`;
+        $("#wiName", box).disabled = t !== "payg" || !!wu.value;
+        // A top-up is paid in person: card, transfer or cash.
+        ["owes", "link"].forEach((k) => (m.querySelector(`[value="${k}"]`).disabled = t === "topup"));
+        m.querySelector('[value="credit"]').disabled = t === "topup" || cr < price;
+        if (m.selectedOptions[0].disabled) m.value = "cash"; };
+      wt.onchange = () => { fill(); sync(); }; wu.onchange = sync; fill(); sync();
       $("#wiAdd", box).onclick = async () => {
+        if (wt.value !== "payg" && !wu.value) return toast("Choose the member");
         try {
           $("#wiAdd", box).disabled = true;
-          const b = (await q(sb.rpc("add_walkin", { p_event: current.id, p_user: wu.value || null, p_name: $("#wiName", box).value.trim() || null, p_method: $("#wiMeth", box).value })));
+          const b = (await q(sb.rpc("add_walkin", { p_event: current.id, p_user: wu.value || null, p_name: wt.value === "payg" ? $("#wiName", box).value.trim() || null : null, p_method: $("#wiMeth", box).value, p_choice: wt.value })));
           const row = Array.isArray(b) ? b[0] : b;
-          toast(row && row.charge === "covered" ? `${row.display_name} added (in the kitty, no charge)` : "Added and marked as here"); await refresh();
+          toast(row && row.charge === "covered" ? `${row.display_name} added (in the kitty, no charge)` : wt.value === "topup" ? `${row.display_name} topped up and in the kitty ✓` : "Added and marked as here"); await refresh();
           if (row && row.pitch_link && !row.paid) guestLinkModal(current, row);
         } catch (e) { $("#wiAdd", box).disabled = false; fail(e); }
       };
@@ -1102,7 +1120,7 @@
         "Kitty restarts when either fund drops below £150 or we have had a maximum of 5 consecutive games", "", $("#fmt", box).value.trim(), L,
         "Before funds", `Kitty fund ${money(fs.kitty - mv.kitty)}`, `Events fund ${money(fs.events - mv.events)}`, `Credits ${money(oldCr)}`, L];
       if (kittyHere.length) t.push(`Kitty players who turned up (${kittyHere.length})`, ...kittyHere.map((b) => b.display_name), L);
-      if (kp.length) t.push(`Joined the kitty this game (${kp.length})`, ...kp.map((b) => b.display_name), `Expected ${kp.length}x £15 = ${money(kp.length * 15)}`, L);
+      if (kp.length) t.push(`Joined the kitty this game (${kp.length})`, ...kp.map((b) => b.display_name + (Number(b.topup) > 0 ? ` (topped up ${money(b.topup)} from pay and play)` : "")), `Expected ${kp.length}x £15 = ${money(kp.length * 15)}`, L);
       const oddFriends = friendsHere.length && fAmt !== friendsHere.length * TP;
       t.push("Pay and Play", `Turnout ${turnout} less ${kittyHere.length} kitty = ${payers} to pay`, oddFriends || introHere.length
         ? `Expected ${Math.max(payers - (oddFriends ? friendsHere.length : 0) - introHere.length, 0)}x ${money(TP)}${oddFriends ? ` + ${friendsHere.length} friend${friendsHere.length === 1 ? "" : "s"} ${money(fAmt)}` : ""}${introHere.length ? ` + ${introHere.length} new member${introHere.length === 1 ? "" : "s"} ${money(introAmt)}` : ""} = ${money(expGross - kp.length * 15)}`
