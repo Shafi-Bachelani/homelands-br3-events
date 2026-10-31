@@ -450,15 +450,12 @@
   // Net change from transfers not yet shown in any posted accounts, per fund.
   const pendingNet = (ts) => { const n = { kitty: 0, events: 0 }; ts.filter((t) => !t.accounts_post_id).forEach((t) => { n[t.to_fund] += Number(t.amount); n[t.from_fund] -= Number(t.amount); }); return n; };
   const transferLine = (t) => `${short(parseDay(t.on_date))} ${MOVE_FUND[t.from || t.from_fund]} to ${MOVE_FUND[t.to || t.to_fund]} ${money(t.amount)}: ${t.reason}`;
-  const transferTable = (ts) => `<div class="transfers">${ts.map((t) => `<div class="transfer"><div class="row" style="justify-content:space-between;gap:10px"><b>${FUND_NAME[t.from_fund]} → ${FUND_NAME[t.to_fund]}</b><b class="amt">${money(t.amount)}</b></div>
-    <div>${esc(t.reason)}</div><div class="muted" style="font-size:13px">${short(parseDay(t.on_date))} · by ${esc(t.made_by_name || "Admin")}</div></div>`).join("")}</div>`;
-
   async function funds(el, alive, which = "") {
     if (!me) return needSignIn(el, "see the funds");
     loading(el);
     let lq = sb.from("ledger").select("*").order("id", { ascending: false }).limit(300);
     if (FUND_NAME[which]) lq = lq.eq("fund", which);
-    const [fs, rows, accts, transfers] = await Promise.all([q(sb.from("fund_state").select("*").single()), q(lq), isOrg() ? q(sb.from("profiles").select("credit")) : [], transfersOf()]);
+    const [fs, rows, accts] = await Promise.all([q(sb.from("fund_state").select("*").single()), isAdmin() ? q(lq) : [], isOrg() ? q(sb.from("profiles").select("credit")) : []]);
     const onAccounts = Math.round(accts.reduce((t, r) => t + Number(r.credit || 0), 0) * 100) / 100;
     if (!alive()) return;
     el.innerHTML = `<div class="events"><div class="card fb"><h2>Funds</h2>
@@ -467,7 +464,8 @@
       ${isOrg() ? (onAccounts === Math.round(Number(fs.credits || 0) * 100) / 100 ? `<p class="note">Credits tally ✓ The credits fund matches the ${money(onAccounts)} of credit on members' accounts.</p>`
         : `<p class="note">Credits don't tally: members' accounts hold ${money(onAccounts)} but the credits fund shows ${money(fs.credits || 0)}.</p>`) : ""}
       ${FUND_INFO.replace("<details ", "<details open ")}
-      <div class="form-actions"><button class="btn block" data-go="eventaccounts">Events accounts</button>${isDoor() ? '<button class="btn block" data-go="squarecheck">Square check</button>' : ""}</div>
+      <p class="note">Posted accounts, and every move between funds, are in the <a href="#chat:football-accounts">Accounts chat</a>.</p>
+      <div class="form-actions">${isAdmin() ? '<button class="btn block" data-go="eventaccounts">Events accounts</button>' : ""}${isDoor() ? '<button class="btn block" data-go="squarecheck">Square check</button>' : ""}</div>
       ${isAdmin() ? `<h3>Family Events fund</h3>
         <p class="muted">Subscription payments come in by themselves. Use this for the opening balance, other money in, and money spent.</p>
         <div class="grid2"><div><label>Money</label><select id="yDir"><option value="1">In</option><option value="-1">Spent</option></select></div>
@@ -475,18 +473,16 @@
         <label>Reason (everyone can see this)</label><input id="yWhy" placeholder="e.g. Opening balance, or Family day hall hire">
         <div class="form-actions"><button class="btn solid block" id="yGo">Record it</button></div>` : ""}
       ${isAdmin() ? `<h3>Move money between funds</h3>
-        <p class="muted">For example, the kitty's excess over £100 into the events fund, or the events fund paying for a football game. Every move is listed below with its reason.</p>
+        <p class="muted">For example, the kitty's excess over £100 into the events fund, or the events fund paying for a football game. Every move is posted to the Accounts chat with its reason.</p>
         <div class="grid2"><div><label>From</label><select id="tFrom"><option value="kitty">Kitty fund (${money(fs.kitty)})</option><option value="events">Events fund (${money(fs.events)})</option></select></div>
           <div><label>To</label><input id="tTo" value="Events fund" readonly></div></div>
         <label>Amount £</label><input id="tAmt" type="number" step="0.01" min="0.01" inputmode="decimal">
         ${Number(fs.kitty) > 100 ? `<button class="btn small" id="tExcess" style="margin-top:8px">Kitty excess over £100: ${money(Number(fs.kitty) - 100)}</button>` : ""}
         <label>Reason (everyone can see this)</label><input id="tWhy" placeholder="e.g. Kitty excess after 5 games">
         <div class="form-actions"><button class="btn solid block" id="tGo">Move money</button></div>` : ""}
-      <h3>Transfers between funds</h3>
-      ${transfers.length ? transferTable(transfers) : '<p class="muted">No money has been moved between funds yet.</p>'}
-      <h3>History</h3>
+      ${isAdmin() ? `<details class="info" ${which ? "open" : ""}><summary><b>Fund history (admin only)</b></summary>
       <div class="seg small">${[["", "All"], ["kitty", "Kitty"], ["events", "Events"], ["credits", "Credits"], ["family", "Family"]].map(([k, v]) => `<button class="${k === (FUND_NAME[which] ? which : "") ? "on" : ""}" data-f="${k}">${v}</button>`).join("")}</div>
-      ${rows.length ? ledgerTable(rows) : '<p class="muted">No changes yet. Every game\'s accounts and every fund change will be listed here.</p>'}
+      ${rows.length ? ledgerTable(rows) : '<p class="muted">No changes yet.</p>'}</details>` : ""}
     </div></div>`;
     el.querySelectorAll("[data-f]").forEach((b) => (b.onclick = () => go(b.dataset.f ? "funds:" + b.dataset.f : "funds")));
     if ($("#yGo", el)) $("#yGo", el).onclick = async () => {
@@ -632,7 +628,7 @@
 
   // ---------- EVENTS ACCOUNTS ----------
   // A tab per event: receipts (money in) offset against hiring and ancillary costs, with receipt photos.
-  // Posting puts the profit into (or takes the loss out of) the events fund and copies the accounts to the Events Accounts chat.
+  // Posting puts the profit into (or takes the loss out of) the events fund and copies the accounts to the Accounts chat.
   const LINE_KIND = { receipt: "Receipts", hiring: "A. Hiring costs", ancillary: "B. Ancillary costs" };
   const KIND_ORDER = ["receipt", "hiring", "ancillary"];
   const noPhotos = (t) => String(t || "").replace(/[ \t]*\n?[ \t]*\{photo \d+\}/g, "");
@@ -657,10 +653,10 @@
       return;
     }
     const postedOf = (e) => done.find((a) => a.event_id === e.id);
-    // Members see events whose accounts are posted; the admin sees every event, to put accounts up.
-    const list = evs.filter((e) => isAdmin() || postedOf(e));
+    // Only events still waiting for accounts, for the admin. Posted accounts live in the Accounts chat only.
+    const list = isAdmin() ? evs.filter((e) => !postedOf(e)) : [];
     if (!list.length) {
-      el.innerHTML = `<div class="events"><div class="card fb"><h2>Events accounts</h2>${fundStats(fs)}<p class="muted">No event accounts have been posted yet. Football accounts are on the Football page and in the Football Accounts chat.</p></div></div>`;
+      el.innerHTML = `<div class="events"><div class="card fb"><h2>Events accounts</h2><p class="muted">${isAdmin() ? "No events are waiting for accounts. " : ""}Posted accounts are in the <a href="#chat:football-accounts">Accounts chat</a>.</p></div></div>`;
       return;
     }
     const pick = list.find((e) => e.id === id) || list.find((e) => !e.accounts_posted && all.some((l) => l.event_id === e.id))
@@ -731,7 +727,6 @@
       <div class="tabs-scroll">${list.map((e) => `<button class="${e.id === pick.id ? "on" : ""}" data-ev="${e.id}">${esc(e.title)} · ${e.day ? short(parseDay(e.day)) : "TBC"}${postedOf(e) ? " ✓" : ""}</button>`).join("")}</div>
       <h2 style="margin-top:14px">${esc(pick.title)}</h2>
       <p class="muted">${evDate(pick)} · ${posted ? `Accounts posted ${short(new Date(posted.posted_at))}` : "Not posted yet"}</p>
-      ${posted ? '<p><a href="#chat:events-accounts">See them in the Events Accounts chat</a></p>' : ""}
       ${KIND_ORDER.map(section).join("")}
       ${open ? `<h3>Add a receipt or cost</h3>
         ${appTickets && !has("Tickets paid in the app") ? `<button class="btn small" id="qTickets" style="margin:0 8px 8px 0">Add ${money(appTickets)} tickets paid in the app</button>` : ""}
@@ -746,7 +741,7 @@
         <div class="form-actions"><button class="btn solid block" id="eaDraft" ${lines.length ? "" : "disabled"}>Draft accounts</button></div>
         <div id="eaBox" hidden><label>Accounts (edit freely)</label><textarea id="eaText" rows="18" class="mono"></textarea>
           <p class="muted" style="font-size:14px">{photo 1}, {photo 2} and so on show that receipt's photo at that spot in the chat post.</p>
-          <div class="form-actions" style="display:grid;gap:10px"><button class="btn solid block" id="eaPost">Confirm and post to Events Accounts</button><button class="btn block" id="eaCopy">Copy for WhatsApp</button></div></div>` : ""}
+          <div class="form-actions" style="display:grid;gap:10px"><button class="btn solid block" id="eaPost">Confirm and post to the Accounts chat</button><button class="btn block" id="eaCopy">Copy for WhatsApp</button></div></div>` : ""}
     </div></div>`;
 
     el.querySelectorAll("[data-ev]").forEach((b) => (b.onclick = () => go("eventaccounts:" + b.dataset.ev)));
@@ -777,7 +772,7 @@
       try {
         $("#eaPost", el).disabled = true;
         await q(sb.rpc("post_event_accounts", { p_event: pick.id, p_body: $("#eaText", el).value }));
-        toast("Accounts posted to Events Accounts"); refresh();
+        toast("Accounts posted to the Accounts chat"); refresh();
       } catch (e) { $("#eaPost", el).disabled = false; fail(e); }
     };
   }
@@ -881,10 +876,9 @@
     loading(el);
     await sb.rpc("expire_unpaid");
     const now = new Date();
-    const [allGames, fs, posts] = await Promise.all([
+    const [allGames, fs] = await Promise.all([
       q(sb.from("events").select("*").eq("kind", "football").not("day", "is", null).order("day")),
       q(sb.from("fund_state").select("*").single()),
-      q(sb.from("accounts_posts").select("*").order("created_at", { ascending: false }).limit(1)),
     ]);
     const games = allGames.filter((g) => g.day);
     // the game to show: the next one not yet finished, else the last one still awaiting accounts
@@ -977,8 +971,8 @@
       ${fundStats(fs)}
       <p class="muted">Kitty ${fs.session_no}: ${fs.games_played} game${fs.games_played === 1 ? "" : "s"} played of up to a maximum of 5 consecutive games.</p>
       ${FUND_INFO}
-      ${posts[0] ? `<h3>Latest accounts · ${short(new Date(posts[0].created_at))}</h3><pre class="acc">${esc(posts[0].body)}</pre>${(posts[0].images || []).map((src) => `<img class="receipt" src="${esc(src)}" alt="Receipt">`).join("")}` : '<p class="muted">The organiser\'s confirmed accounts appear here after each game.</p>'}
-      <div class="form-actions"><button class="btn block" data-go="funds">See all fund changes</button></div>
+      <p class="note">Once a game's accounts are posted they move to the <a href="#chat:football-accounts">Accounts chat</a>. Please visit the chat for past accounts.</p>
+      <div class="form-actions"><button class="btn block" data-go="chat:football-accounts">Open the Accounts chat</button></div>
     </div>`;
 
     el.innerHTML = `<div class="events">${offerBanner(allGames, true)}${introBanner(fs.intro_offer, true)}${top}${ev ? footballInfo(ev, fs) : ""}${you}${players}${fund}${isDoor() ? '<div id="org"></div>' : ""}</div>`;
@@ -1287,7 +1281,7 @@
           $("#post", box).disabled = true;
           await q(sb.rpc("post_accounts", { p_event: target.id, p_body: $("#acc", box).value, p_hire: hire, p_fees: fees, p_methods: methods,
             p_cleared: cleared.map((x) => x.id), p_received: received, p_images: [photos[0], photos[1]].filter(Boolean) }));
-          toast("Accounts posted to the board and Football Accounts"); refresh();
+          toast("Accounts posted to the Accounts chat"); refresh();
         } catch (e) { $("#post", box).disabled = false; fail(e); }
       };
       $("#copy", box).onclick = async () => { try { await navigator.clipboard.writeText($("#acc", box).value); toast("Copied. Paste it into WhatsApp"); } catch { $("#acc", box).select(); toast("Select all and copy"); } };
@@ -1299,19 +1293,20 @@
   const groupName = (id) => (groupCache.find((g) => g.id === id) || {}).name || "Group";
 
   const ANNOUNCE = "announcements";
-  const ORG_POSTS = ["football-accounts", "events-accounts"]; // chats only organisers can post in
-  const AUTO_GROUPS = ["football-accounts", "events-accounts"]; // every approved member is in these, no sign-up
+  // "football-accounts" is the one Accounts chat: football, events and transfers. Events Accounts was folded into it.
+  const ORG_POSTS = ["football-accounts"]; // chats only the admin posts in
+  const AUTO_GROUPS = ["football-accounts"]; // every approved member is in it, no sign-up
   // The accounts chats always show the newest post first; pinning doesn't apply there.
   const byGroup = (posts, id) => { const gp = posts.filter((p) => p.group_id === id);
     return ORG_POSTS.includes(id) ? gp.sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0)) : gp; };
-  const inGroup = (id) => joined.includes(id) || isOrg() || (AUTO_GROUPS.includes(id) && !!me && !pending() && (id === "events-accounts" || !eventsOnly()));
+  const inGroup = (id) => joined.includes(id) || isOrg() || (AUTO_GROUPS.includes(id) && !!me && !pending());
   const PENDING_NOTE = '<p class="note">You can join in once the admin has approved your membership.</p>';
   // Chats: open, informal chats anyone can join in. Joined: sign-up chats (like the Quran target).
   // Announcements are pinned at the top of both.
   function chat(el, alive, id) { return groups(el, alive, "", id); }
   // Chats with their own look: Friday football's accounts and the Quran Recitation Group.
-  const GROUP_LOOK = { "football-accounts": "footie-club", quran: "quran-club" };
-  const GROUP_PIC = { "football-accounts": FOOTIE_BANNER, quran: QURAN_BANNER };
+  const GROUP_LOOK = { quran: "quran-club" };
+  const GROUP_PIC = { quran: QURAN_BANNER };
   const groupHero = (id, link) => (GROUP_PIC[id] ? `<${link ? `a href="#chat:${encodeURIComponent(id)}"` : "div"} class="group-hero ${GROUP_LOOK[id]}"><img src="${GROUP_PIC[id]}" alt=""></${link ? "a" : "div"}>` : "");
   function grouplist(el, alive) { return groups(el, alive, "", null, true); }
   async function groups(el, alive, filter = "", only = null, joinedTab = false) {
@@ -1357,12 +1352,12 @@
       wirePosts(el, posts);
       return;
     }
-    const JOINED_ORDER = ["football-accounts", "events-accounts", "quran"];
+    const JOINED_ORDER = ["football-accounts", "quran"];
     const firstIn = (g) => { const i = JOINED_ORDER.indexOf(g.id); return i < 0 ? JOINED_ORDER.length : i; };
     const clubs = gs.filter((g) => g.members_only).sort((a, b) => firstIn(a) - firstIn(b)).map((g) => {
       const inIt = inGroup(g.id);
       const gp = byGroup(posts, g.id).slice(0, 4);
-      const icon = { "football-accounts": "⚽", "events-accounts": "🧾" }[g.id] || "📖";
+      const icon = { "football-accounts": "🧾" }[g.id] || "📖";
       return `<section class="news club${GROUP_LOOK[g.id] ? ` ${GROUP_LOOK[g.id]}` : ""}">${groupHero(g.id, inIt)}<div class="row" style="justify-content:space-between"><h2>${inIt ? `<a href="#chat:${encodeURIComponent(g.id)}" style="color:inherit">${icon} ${esc(g.name)}</a>` : `${icon} ${esc(g.name)}`}</h2><span class="row" style="gap:8px">${inIt && !joined.includes(g.id) && !AUTO_GROUPS.includes(g.id) && !pending() ? `<button class="btn small" data-join="${esc(g.id)}">Sign up</button>` : ""}${inIt && (!ORG_POSTS.includes(g.id) || isOrg()) ? `<button class="btn small" data-compose="text" data-group="${esc(g.id)}">Post</button>` : ""}</span></div>
         ${inIt ? gp.map((p) => postHtml(p, comments.filter((c) => c.post_id === p.id), votes.filter((v) => v.post_id === p.id))).join("") || '<p class="muted">Nothing posted yet.</p>'
           : `<p class="muted">${esc(g.about)}</p>${pending() ? PENDING_NOTE : `<button class="btn solid" data-join="${esc(g.id)}">Sign up · Free</button>`}`}</section>`;
@@ -1601,7 +1596,8 @@
       <button class="menu-row" data-to="account">${ICON.user}<span>${me ? "My account & tickets" : "Sign in or join"} ${ICON.chev}</span></button>
       <button class="menu-row" data-to="football">${ICON.ball}<span>Friday Football ${ICON.chev}</span></button>
       <button class="menu-row" data-to="funds">${ICON.poll}<span>Funds ${ICON.chev}</span></button>
-      <button class="menu-row" data-to="eventaccounts">${ICON.cal}<span>Events accounts ${ICON.chev}</span></button>
+      <button class="menu-row" data-to="chat:football-accounts">${ICON.cal}<span>Accounts ${ICON.chev}</span></button>
+      ${isAdmin() ? `<button class="menu-row" data-to="eventaccounts">${ICON.cal}<span>Events accounts to post ${ICON.chev}</span></button>` : ""}
       ${isDoor() ? `<button class="menu-row" data-to="admin">${ICON.tools}<span>Organiser tools ${ICON.chev}</span></button>` : ""}
       ${isDoor() ? `<button class="menu-row" data-to="squarecheck">${ICON.poll}<span>Square check ${ICON.chev}</span></button>` : ""}
       <button class="menu-row" data-to="counselling">${ICON.star}<span>Counselling ${ICON.chev}</span></button>`;
