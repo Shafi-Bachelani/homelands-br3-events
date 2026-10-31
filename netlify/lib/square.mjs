@@ -50,7 +50,7 @@ export async function db(path, init = {}) {
   return body;
 }
 
-const BOOKING_FIELDS = "id,code,amount,credit_used,paid,method,status,charge,display_name,booked_by,pitch_link,created_at,square_order_id,card_fee,events(title,day,time,kind)";
+const BOOKING_FIELDS = "id,code,amount,credit_used,paid,method,status,charge,display_name,booked_by,pitch_link,created_at,square_order_id,card_fee,topup,topup_method,topup_fee,events(title,day,time,kind)";
 export async function bookingBy(field, value) {
   const rows = await db(`bookings?${field}=eq.${encodeURIComponent(value)}&select=${BOOKING_FIELDS}`);
   return rows?.[0] || null;
@@ -60,6 +60,12 @@ export async function bookingBy(field, value) {
 export async function recordPayment(booking, payment) {
   if (!payment || payment.status !== "COMPLETED") return false;
   const fee = (payment.processing_fee || []).reduce((t, f) => t + Number(f.amount_money?.amount || 0), 0) / 100;
+  // A kitty top-up paid with the QR: the place was already paid, so only the top-up is recorded.
+  if (["link", "card"].includes(booking.topup_method) && Number(booking.topup) > 0 && booking.paid) {
+    if (booking.topup_method === "card" && !(fee > 0)) return true;
+    await db(`bookings?id=eq.${booking.id}`, { method: "PATCH", body: JSON.stringify({ topup_method: "card", ...(fee > 0 ? { topup_fee: fee } : {}) }) });
+    return true;
+  }
   const update = { paid: true, method: "card" };
   if (fee > 0) update.card_fee = fee;
   if (booking.paid && booking.method === "card" && !(fee > 0)) return true;
@@ -69,15 +75,19 @@ export async function recordPayment(booking, payment) {
 
 // Asks Square whether this booking's checkout has been paid, and records it if so.
 export async function confirmBooking(booking) {
-  if (!booking.square_order_id) return booking.paid;
+  if (!booking.square_order_id) return settled(booking);
   const { order } = await square(`/v2/orders/${booking.square_order_id}`);
   const paymentId = order?.tenders?.find((t) => t.payment_id)?.payment_id;
-  if (!paymentId) return booking.paid;
+  if (!paymentId) return settled(booking);
   const { payment } = await square(`/v2/payments/${paymentId}`);
   const paid = await recordPayment(booking, payment);
   await applyPayment(payment, booking).catch(() => {}); // for the Square check
-  return paid || booking.paid;
+  return paid || settled(booking);
 }
+// Paid in full: a kitty top-up sent as a QR isn't paid until Square confirms it.
+export const settled = (booking) => booking.paid && booking.topup_method !== "link";
+// What's left to pay by card: the QR top-up, or the place less any credit put towards it.
+export const due = (booking) => (booking.paid && booking.topup_method === "link" ? Number(booking.topup) : Number(booking.amount) - Number(booking.credit_used || 0));
 
 // A friend's booking is shown as "Guest (Member)". Returns both names, or null for anyone else's booking.
 export async function guestNames(booking) {
