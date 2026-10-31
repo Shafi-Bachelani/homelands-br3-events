@@ -143,8 +143,8 @@
 
   // ---------- router ----------
   const TABS = ["events", "groups", "schedule", "about", "more"];
-  const ROUTES = { about, home: about, events, groups, grouplist, chat, schedule, more, services, counselling, messages, notifications, account, football, admin, funds, eventaccounts, squarecheck, supervisors, guest };
-  const PARENT = { grouplist: "groups", chat: "groups", services: "more", counselling: "more", football: "events", funds: "more", eventaccounts: "more", squarecheck: "more", supervisors: "more", guest: null, account: null, admin: "more", messages: null, notifications: null };
+  const ROUTES = { about, home: about, events, groups, grouplist, chat, schedule, more, services, counselling, messages, notifications, account, football, admin, funds, eventaccounts, squarecheck, supervisors, footballadmin, guest };
+  const PARENT = { grouplist: "groups", chat: "groups", services: "more", counselling: "more", football: "events", funds: "more", eventaccounts: "more", squarecheck: "more", supervisors: "more", footballadmin: "more", guest: null, account: null, admin: "more", messages: null, notifications: null };
   let lastTab = "events", seq = 0;
 
   function go(route) { if (location.hash.slice(1) === route) render(); else location.hash = route; }
@@ -465,7 +465,7 @@
         : `<p class="note">Credits don't tally: members' accounts hold ${money(onAccounts)} but the credits fund shows ${money(fs.credits || 0)}.</p>`) : ""}
       ${FUND_INFO}
       <p class="note">Posted accounts, and every move between funds, are in the <a href="#chat:football-accounts">Accounts chat</a>.</p>
-      <div class="form-actions"><button class="btn solid block" data-go="chat:football-accounts">Open the Accounts chat</button>${isAdmin() ? '<button class="btn block" data-go="eventaccounts">Events accounts</button>' : ""}${isDoor() ? '<button class="btn block" data-go="squarecheck">Square check</button>' : ""}</div>
+      <div class="form-actions"><button class="btn solid block" data-go="chat:football-accounts">Open the Accounts chat</button>${isAdmin() ? '<button class="btn block" data-go="eventaccounts">Events accounts</button>' : ""}${isAdmin() ? '<button class="btn block" data-go="squarecheck">Square check</button>' : ""}</div>
       ${isAdmin() ? `<h3>Family Events fund</h3>
         <p class="muted">Subscription payments come in by themselves. Use this for the opening balance, other money in, and money spent.</p>
         <div class="grid2"><div><label>Money</label><select id="yDir"><option value="1">In</option><option value="-1">Spent</option></select></div>
@@ -970,7 +970,7 @@
     }
 
     const fund = `<div class="card fb"><p class="muted" style="margin:0">Kitty fund <b>${money(fs.kitty)}</b> · kitty ${fs.session_no}, game ${fs.games_played} of up to 5. Past accounts are in the <a href="#chat:football-accounts">Accounts chat</a>.</p>
-      ${isDoor() ? '<div class="form-actions"><button class="btn solid block" data-go="supervisors">Football Supervisors</button></div>' : ""}</div>`;
+      ${isDoor() ? `<div class="form-actions"><button class="btn solid block" data-go="supervisors">Football Supervisors</button>${isAdmin() ? '<button class="btn block" data-go="footballadmin">Football admin</button>' : ""}</div>` : ""}</div>`;
 
     el.innerHTML = `<div class="events">${offerBanner(allGames, true)}${introBanner(fs.intro_offer, true)}${top}${ev ? footballInfo(ev, fs) : ""}${you}${players}${fund}</div>`;
     el.querySelectorAll("[data-ticket]").forEach((b) => (b.onclick = () => showTicket(b.dataset.ticket)));
@@ -1084,10 +1084,13 @@
       <p class="muted">(${here.length} here − ${kittyHere} kitty players − ${newKitty} new kitty) × ${money(P)} + ${newKitty} new kitty × £15 = <b>${money(expected)}</b>.
         Paid by everyone (card, credit, cash, transfer): <b>${money(taken)}</b>${taken === expected ? " ✓" : `, ${money(Math.abs(taken - expected))} ${taken > expected ? "more" : "less"}`}.${added ? ` That includes ${money(added)} from people who paid but didn't come, which becomes their credit.` : ""}</p>`;
   }
-  // Football Supervisors: everything for running the night, for organisers and the admin. No Square login needed.
-  async function supervisors(el, alive) {
+  // Football Supervisors: only the night's jobs (scan in, head count, who's not in, add someone with a QR to pay).
+  // Football admin: payments, accounts and settings, for the admin only.
+  function supervisors(el, alive) { return footballScreen(el, alive, "night"); }
+  function footballadmin(el, alive) { return footballScreen(el, alive, "admin"); }
+  async function footballScreen(el, alive, mode) {
     if (!me) return needSignIn(el, "run the football");
-    if (!isDoor()) { el.innerHTML = '<div class="empty"><h2>For organisers</h2><p class="muted">Football Supervisors is for organisers and the admin.</p></div>'; return; }
+    if (mode === "night" ? !isDoor() : !isAdmin()) { el.innerHTML = `<div class="empty"><h2>${mode === "night" ? "For organisers" : "For the admin"}</h2></div>`; return; }
     loading(el);
     await sb.rpc("expire_unpaid");
     const now = new Date();
@@ -1101,9 +1104,10 @@
     const bookings = ev ? await q(sb.from("bookings").select("*").eq("event_id", ev.id).neq("status", "cancelled").order("created_at")) : [];
     if (!alive()) return;
     el.innerHTML = '<div class="events"><div id="org"></div></div>';
-    await organiserFootball($("#org", el), ev, bookings, fs, awaiting, games);
+    await organiserFootball($("#org", el), ev, bookings, fs, awaiting, games, mode);
   }
-  async function organiserFootball(box, current, currentBookings, fs, awaiting, games) {
+  async function organiserFootball(box, current, currentBookings, fs, awaiting, games, mode) {
+    const night = mode === "night";
     const target = awaiting[0] || current;
     const bookings = target && target !== current ? await q(sb.from("bookings").select("*").eq("event_id", target.id).neq("status", "cancelled").order("created_at")) : currentBookings;
     const people = current && !current.accounts_posted ? await q(sb.from("profiles").select("id,name,credit").order("name")) : [];
@@ -1127,12 +1131,14 @@
       <p class="muted">${fs.intro_offer ? `Any member who joined since ${short(new Date(fs.intro_since))} and hasn't played yet pays £1 for their first game, and the events fund pays the rest when the accounts are posted.` : "Switch it on and anyone who joins from then on pays £1 for their first game, with the rest paid by the events fund."}</p>
       <button class="btn small" id="introSwitch">${fs.intro_offer ? "End the offer" : "Start the offer"}</button>` : ""}`;
     const pitchDefault = bookings.length >= 28 ? "134.00" : "67.00";
-    box.innerHTML = `<div class="card fb"><h2>Football Supervisors</h2>
-      ${current ? `<p class="muted">${esc(current.title)} · ${fmtEvent(current)}</p>` : '<p class="muted">No game scheduled.</p>'}
+    const hereN = currentBookings.filter((b) => b.checked_in).length, missN = currentBookings.length - hereN;
+    box.innerHTML = night ? `<div class="card fb"><h2>Football Supervisors</h2>
+      ${current ? `<p class="muted">${esc(current.title)} · ${fmtEvent(current)}</p>
+      <div class="stats"><div><span>Here</span><b>${hereN}</b></div><div><span>Not in yet</span><b>${missN}</b></div><div><span>Booked</span><b>${currentBookings.length}</b></div></div>` : '<p class="muted">No game scheduled.</p>'}
       ${current && !current.accounts_posted ? `<button class="btn solid block" id="fbScan">Scan tickets to check people in</button><div id="fbIn"></div>` : ""}
       ${current ? `<h3>Who's booked · ${short(parseDay(current.day))}</h3>
-      <p class="muted">Tap a name when they arrive. ${currentBookings.filter((b) => b.checked_in).length} of ${currentBookings.length} here, ${currentBookings.filter((b) => !b.checked_in).length} still missing.</p>
-      ${[["Still missing", currentBookings.filter((b) => !b.checked_in)], ["Here", currentBookings.filter((b) => b.checked_in)]].map(([head, list]) => currentBookings.length ? `<h4>${head} (${list.length})</h4>
+      <p class="muted">Scan their ticket, or tap a name when they arrive.</p>
+      ${[["Not in yet", currentBookings.filter((b) => !b.checked_in)], ["Here", currentBookings.filter((b) => b.checked_in)]].map(([head, list]) => currentBookings.length ? `<h4>${head} (${list.length})</h4>
       <div class="attend">${list.map((b) => `<label class="check"><input type="checkbox" data-here="${b.id}" ${b.checked_in ? "checked" : ""} ${current.accounts_posted ? "disabled" : ""}> ${esc(b.display_name)}${b.paid ? "" : ' <span class="tag warn">Unpaid</span>'}${current.accounts_posted || !full ? "" : ` <button class="btn small" data-drop="${b.id}" style="margin-left:auto">Remove</button>`}</label>`).join("") || '<p class="muted">No one.</p>'}</div>` : "").join("") || '<p class="muted">No one has booked yet.</p>'}
       <p class="muted">Anyone paid for pay and play who isn't ticked when the accounts are posted keeps what they paid as credit on their account for their next booking.</p>
       ${current.accounts_posted ? "" : `<h3>Add someone who wasn't on the list, or top up to the kitty</h3>
@@ -1144,6 +1150,8 @@
       </div>
       <p class="muted">With the QR, they scan it, pay by card on their own phone, and show as paid here once Square confirms it.</p>
       <div class="form-actions"><button class="btn solid block" id="wiAdd">Add and mark as here</button></div>`}` : ""}
+    </div>` : `<div class="card fb"><h2>Football admin</h2>
+      ${target ? "" : '<p class="muted">No game to show yet.</p>'}
       ${target ? paymentsBreakdown(target, bookings, cancelled, full, METHODS, pitchDefault) : ""}
       ${full && target ? `      ${!target.accounts_posted && eventStart(target) <= new Date() ? `
         ${debts.length ? `<h3>Owed from earlier games</h3>${debts.map((d) => `<label class="check"><input type="checkbox" data-clear="${d.id}"> ${esc(d.profiles?.name || "Member")} owes ${money(d.amount)} (${esc(d.reason)})</label>`).join("")}` : ""}
@@ -1653,11 +1661,14 @@
       <button class="menu-row" data-to="football">${ICON.ball}<span>Friday Football ${ICON.chev}</span></button>
       <button class="menu-row" data-to="funds">${ICON.poll}<span>Funds & accounts ${ICON.chev}</span></button>
       <button class="menu-row" data-to="counselling">${ICON.star}<span>Counselling ${ICON.chev}</span></button>
-      ${isDoor() ? `<h3 class="menu-head">Organisers</h3>
+      ${isDoor() ? `<h3 class="menu-head">Organisers · on the night</h3>
       <button class="menu-row" data-to="supervisors">${ICON.ball}<span>Football Supervisors ${ICON.chev}</span></button>
+      ${isAdmin() ? "" : `<button class="menu-row" data-to="admin">${ICON.tools}<span>Check in at other events ${ICON.chev}</span></button>`}` : ""}
+      ${isAdmin() ? `<h3 class="menu-head">Admin</h3>
+      <button class="menu-row" data-to="footballadmin">${ICON.ball}<span>Football admin ${ICON.chev}</span></button>
+      <button class="menu-row" data-to="eventaccounts">${ICON.cal}<span>Events accounts to post ${ICON.chev}</span></button>
       <button class="menu-row" data-to="squarecheck">${ICON.poll}<span>Square check ${ICON.chev}</span></button>
-      <button class="menu-row" data-to="admin">${ICON.tools}<span>${isAdmin() ? "Admin tools" : "Organiser tools"} ${ICON.chev}</span></button>` : ""}
-      ${isAdmin() ? `<button class="menu-row" data-to="eventaccounts">${ICON.cal}<span>Events accounts to post ${ICON.chev}</span></button>` : ""}`;
+      <button class="menu-row" data-to="admin">${ICON.tools}<span>Admin tools ${ICON.chev}</span></button>` : ""}`;
     el.querySelectorAll("[data-to]").forEach((b) => (b.onclick = () => go(b.dataset.to)));
   }
 
