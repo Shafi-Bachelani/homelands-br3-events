@@ -329,3 +329,10 @@ label.check.risk { font-weight: 700; margin: 4px 0 10px; }
 .scroll table.wrap td:not(.amt), .scroll table.wrap th:not(.amt) { white-space: normal; }
 .grid2 > div { min-width: 0; }
 .grid2 input[type="date"] { min-width: 0; }
+.scroll table.pay { font-size: 12px; }
+.scroll table.pay th, .scroll table.pay td { padding: 6px 2px; }
+.menu-head { margin: 18px 22px 4px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.scroll table.pay td:first-child { min-width: 92px; }
+.scroll table.pay select { max-width: 92px; }
+.events > .card, .events > div { min-width: 0; max-width: 100%; }
+.scroll { max-width: 100%; }
