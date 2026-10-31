@@ -2,7 +2,7 @@
 // POST { code, confirm }   -> { paid } after checking with Square (used when someone returns from paying)
 // POST { code, info }      -> what a guest's payment link page shows: names, game, amount, paid
 // POST { code, guest }     -> as { code }, but Square sends them back to the guest payment page
-import { json, missingSettings, square, getLocationId, bookingBy, confirmBooking, guestNames, db } from "../lib/square.mjs";
+import { json, missingSettings, square, getLocationId, bookingBy, confirmBooking, guestNames, db, settled, due } from "../lib/square.mjs";
 
 export default async (req) => {
   if (req.method !== "POST") return json({ error: "Use POST." }, 405);
@@ -19,14 +19,14 @@ export default async (req) => {
     if (info) {
       if (!names) return json({ error: "Booking not found." }, 404);
       const ev = booking.events || {};
-      const paid = booking.paid || (booking.square_order_id ? await confirmBooking(booking).catch(() => false) : false);
-      return json({ ...names, pitch: !!booking.pitch_link, code: booking.code, paid, status: booking.status, amount: Number(booking.amount) - Number(booking.credit_used || 0), created_at: booking.created_at, event: { title: ev.title, day: ev.day, time: ev.time, kind: ev.kind } });
+      const paid = settled(booking) || (booking.square_order_id ? await confirmBooking(booking).catch(() => false) : false);
+      return json({ ...names, pitch: !!booking.pitch_link, code: booking.code, paid, status: booking.status, amount: due(booking), topup: booking.paid && booking.topup_method === "link", created_at: booking.created_at, event: { title: ev.title, day: ev.day, time: ev.time, kind: ev.kind } });
     }
 
-    if (confirm || booking.paid) return json({ paid: await confirmBooking(booking) });
+    if (confirm || settled(booking)) return json({ paid: await confirmBooking(booking) });
     if (booking.status !== "booked") return json({ error: "This booking is on the waitlist, so there's nothing to pay yet." }, 400);
     // Any credit the member put towards it is taken off what the card pays.
-    const pence = Math.round((Number(booking.amount) - Number(booking.credit_used || 0)) * 100);
+    const pence = Math.round(due(booking) * 100);
     if (!(pence > 0)) return json({ error: "There's nothing to pay for this booking." }, 400);
     // If they started paying earlier and finished, don't charge twice.
     if (booking.square_order_id && (await confirmBooking(booking))) return json({ paid: true });

@@ -463,7 +463,7 @@
       <p class="muted">All funds together: <b>${money(Number(fs.kitty) + Number(fs.events) + Number(fs.credits || 0) + Number(fs.family || 0))}</b></p>
       ${isOrg() ? (onAccounts === Math.round(Number(fs.credits || 0) * 100) / 100 ? `<p class="note">Credits tally ✓ The credits fund matches the ${money(onAccounts)} of credit on members' accounts.</p>`
         : `<p class="note">Credits don't tally: members' accounts hold ${money(onAccounts)} but the credits fund shows ${money(fs.credits || 0)}.</p>`) : ""}
-      ${FUND_INFO}
+      ${FUND_INFO.replace("<details ", "<details open ")}
       <p class="note">Posted accounts, and every move between funds, are in the <a href="#chat:football-accounts">Accounts chat</a>.</p>
       <div class="form-actions"><button class="btn solid block" data-go="chat:football-accounts">Open the Accounts chat</button>${isAdmin() ? '<button class="btn block" data-go="eventaccounts">Events accounts</button>' : ""}${isAdmin() ? '<button class="btn block" data-go="squarecheck">Square check</button>' : ""}</div>
       ${isAdmin() ? `<h3>Family Events fund</h3>
@@ -529,13 +529,14 @@
     const from = /^\d{4}-\d{2}-\d{2}$/.test(a || "") ? a : (() => { const d = parseDay(to); d.setDate(d.getDate() - 7); return isoDay(d); })();
     const start = parseDay(from).toISOString(), endD = parseDay(to); endD.setDate(endD.getDate() + 1);
     const end = endD.toISOString();
-    let x, pays, cards, moves;
+    let x, pays, cards, moves, unpaid;
     try {
-      [x, pays, cards, moves] = await Promise.all([
+      [x, pays, cards, moves, unpaid] = await Promise.all([
         q(sb.rpc("square_expected")),
         q(sb.from("square_payments").select("*").gte("paid_at", start).lt("paid_at", end).order("paid_at", { ascending: false })),
         q(sb.from("bookings").select("id,display_name,amount,credit_used,card_fee,created_at,square_order_id,events(title,day)").eq("method", "card").eq("paid", true).gte("created_at", start).lt("created_at", end)),
         q(sb.from("money_moves").select("*").order("id", { ascending: false }).limit(20)),
+        isAdmin() ? q(sb.from("bookings").select("id,display_name,amount,created_at,events(title,day)").eq("paid", false).eq("status", "booked").gte("created_at", new Date(parseDay(from).getTime() - 7 * 864e5).toISOString()).lt("created_at", end).order("created_at", { ascending: false })) : [],
       ]);
     } catch (e) {
       el.innerHTML = `<div class="empty"><h2>Square check isn't ready</h2><p class="muted">Run supabase/add-square-check.sql in Supabase first. (${esc(e.message)})</p></div>`;
@@ -548,6 +549,9 @@
     const matched = new Set(pays.map((p) => p.booking_id).filter(Boolean));
     const missing = cards.filter((c) => !matched.has(c.id));
     const other = ok.filter((p) => p.kind === "other");
+    // Bookings a not-matched payment could belong to: card bookings with no Square payment, and unpaid bookings.
+    const cands = [...missing, ...unpaid];
+    const candLabel = (c) => `${esc(c.display_name)} · ${esc(c.events?.title || "")}${c.events?.day ? ` ${short(parseDay(c.events.day))}` : ""}${c.paid === false || !("square_order_id" in c) ? " (unpaid)" : ""}`;
     const bal = x.square_balance == null ? null : Number(x.square_balance);
     const diff = bal == null ? null : Math.round((bal - Number(x.expected)) * 100) / 100;
     const KIND = { booking: "Booking", subscription: "Family Events", other: "Not matched" };
@@ -588,9 +592,19 @@
         return `<tr><td>${esc(p.label || p.note || "Square payment")}<div class="muted" style="font-size:13px">${short(new Date(p.paid_at))} · ${live ? KIND[p.kind] : esc(p.status.toLowerCase())}</div></td><td class="amt">${money(p.gross)}</td><td class="amt">${money(p.fee)}</td><td class="amt">${money(live ? p.gross - p.fee - p.refunded : 0)}</td></tr>`;
       }).join("")}<tr><td><b>Total</b></td><td class="amt"><b>${money(tGross)}</b></td><td class="amt"><b>${money(tFee)}</b></td><td class="amt"><b>${money(tGross - tFee - tRef)}</b></td></tr></tbody></table></div>`
         : '<p class="muted">No Square payments in the app for these dates yet. Tap Sync from Square to fetch them.</p>'}
-      ${other.length ? `<p class="note">${other.length} payment${other.length > 1 ? "s" : ""} (${money(other.reduce((t, p) => t + Number(p.gross), 0))}) in Square ${other.length > 1 ? "aren't" : "isn't"} matched to a booking or the subscription.</p>` : ""}
+      ${other.length ? `<p class="note">${other.length} payment${other.length > 1 ? "s" : ""} (${money(other.reduce((t, p) => t + Number(p.gross), 0))}) in Square ${other.length > 1 ? "aren't" : "isn't"} matched to a booking or the subscription.</p>
+        <p class="muted">This happens when someone pays outside the app, for example on the Square app or card reader at the pitch, so Square has nothing to link it to a booking. Payments made with the app's QR match by themselves.</p>
+        ${isAdmin() ? `<h3>Match by hand</h3>${other.map((p) => `<div class="grid2"><div><label>${money(p.gross)} on ${short(new Date(p.paid_at))}${p.note ? ` · ${esc(p.note)}` : ""}</label><select data-mpay="${esc(p.id)}"><option value="">Choose the booking</option>${cands.map((c) => `<option value="${c.id}">${candLabel(c)}</option>`).join("")}</select></div><div style="align-self:end"><button class="btn solid block" data-mgo="${esc(p.id)}">Match</button></div></div>`).join("")}
+        <p class="muted">Matching marks the booking as paid by card, with Square's fee. A later Sync keeps the match.</p>` : ""}` : ""}
       ${missing.length ? `<p class="note">${missing.length} card booking${missing.length > 1 ? "s" : ""} in the app ${missing.length > 1 ? "have" : "has"} no Square payment here: ${missing.map((c) => esc(c.display_name)).join(", ")}. Tap Sync from Square, and if ${missing.length > 1 ? "they stay" : "it stays"}, check Square.</p>` : ""}
     </div></div>`;
+    el.querySelectorAll("[data-mgo]").forEach((btn) => (btn.onclick = async () => {
+      const sel = el.querySelector(`[data-mpay="${CSS.escape(btn.dataset.mgo)}"]`);
+      if (!sel.value) return toast("Choose the booking");
+      if (!confirm(`Match this payment to ${sel.selectedOptions[0].textContent}?`)) return;
+      try { btn.disabled = true; await q(sb.rpc("link_square_payment", { p_payment: btn.dataset.mgo, p_booking: sel.value })); toast("Matched ✓"); refresh(); }
+      catch (e) { btn.disabled = false; fail(e); }
+    }));
     $("#sqShow", el).onclick = () => go(`squarecheck:${$("#sqFrom", el).value}~${$("#sqTo", el).value}`);
     $("#sqSync", el).onclick = async (e) => {
       const btn = e.currentTarget; btn.disabled = true; btn.textContent = "Checking Square…";
@@ -790,13 +804,14 @@
   // A member sends their friend a link to pay for their own place.
   function guestLinkModal(ev, b) {
     const guestName = b.display_name.replace(/ \([^)]*\)$/, ""), pitch = b.pitch_link;
+    const due = b.paid && b.topup_method === "link" ? Number(b.topup) : Number(b.amount) - Number(b.credit_used || 0); // a QR kitty top-up pays just the top-up
     const url = `${location.origin}${location.pathname}#guest:${b.code}`;
-    const text = pitch ? `Hi ${guestName}, please pay ${money(b.amount)} for tonight's football here:`
-      : `Hi ${guestName}, I've booked you in for football on ${short(parseDay(ev.day))} at ${hhmm(ev.time)}. Please pay ${money(b.amount)} for your place ${payByText(ev, b.created_at)}, or it's released. Your QR code ticket is on the same page, so take a screenshot and show it at the game:`;
+    const text = pitch ? `Hi ${guestName}, please pay ${money(due)} ${b.topup_method === "link" ? "to top up to the kitty" : "for tonight's football"} here:`
+      : `Hi ${guestName}, I've booked you in for football on ${short(parseDay(ev.day))} at ${hhmm(ev.time)}. Please pay ${money(due)} for your place ${payByText(ev, b.created_at)}, or it's released. Your QR code ticket is on the same page, so take a screenshot and show it at the game:`;
     modal(`<button class="close" aria-label="Close">×</button><h2>${pitch ? `${esc(guestName)}: scan to pay` : `Send ${esc(guestName)} a payment link`}</h2>
-      ${pitch ? `<p>Ask ${esc(guestName)} to scan this with their phone camera and pay ${money(b.amount)} by card.</p><div id="glQr" style="display:grid;place-items:center;background:#fff;padding:12px;border-radius:10px;margin:10px 0"></div>` : ""}
-      <p class="muted">${pitch ? `${esc(guestName)} pays ${money(b.amount)} on the link, and shows as Paid once it's in. Until then they show as Unpaid.`
-        : `${esc(guestName)} pays ${money(b.amount)} on the link. Their payment shows your name and theirs, and they show as Paid on the roster once it's in. If it isn't paid ${payByText(ev, b.created_at)}, their place is released.`}</p>
+      ${pitch ? `<p>Ask ${esc(guestName)} to scan this with their phone camera and pay ${money(due)} by card.</p><div id="glQr" style="display:grid;place-items:center;background:#fff;padding:12px;border-radius:10px;margin:10px 0"></div>` : ""}
+      <p class="muted">${pitch ? `${esc(guestName)} pays ${money(due)} on the link, and shows as Paid once it's in. Until then they show as Unpaid.`
+        : `${esc(guestName)} pays ${money(due)} on the link. Their payment shows your name and theirs, and they show as Paid on the roster once it's in. If it isn't paid ${payByText(ev, b.created_at)}, their place is released.`}</p>
       ${pitch ? "" : `<p class="note">The link also shows ${esc(guestName)}'s QR code ticket. They can take a screenshot of it and show it at the game. As a back-up, you have a copy too: tap "Show my friend's ticket" on the Football page.</p>`}
       <div class="form-actions"><button class="btn ${pitch ? "" : "solid "}block" id="glSend">${ICON.share} ${pitch ? "Or send them the link" : "Send the link"}</button>
         <button class="btn block" id="glCopy" style="margin-top:10px">Copy the link</button></div>`, (m) => {
@@ -825,7 +840,7 @@
       <p style="font-size:18px"><b>${esc(g.guest)}</b>, ${g.pitch ? "added by the organisers" : `booked by <b>${esc(g.member)}</b>`}</p>
       ${g.pitch ? "" : `<div class="ticket"><div class="qr" id="gq"></div><div class="code">${esc(code)}</div><div class="muted">Take a screenshot and show this QR code at the game. The friend who booked you has a copy too.</div></div>`}
       ${g.paid ? `<p class="note">Paid, thank you. See you on the pitch!</p>`
-        : g.pitch ? `<p class="note">Please pay <b>${money(g.amount)}</b> for tonight's game.</p>
+        : g.pitch ? `<p class="note">Please pay <b>${money(g.amount)}</b> ${g.topup ? "to top up to the kitty for this session" : "for tonight's game"}.</p>
           <button class="btn solid block" data-pay="${esc(code)}" data-guest="1">Pay ${money(g.amount)} by card</button>`
         : open ? `<p class="note">Please pay <b>${money(g.amount)}</b> ${payByText(ev, g.created_at)}, or your place is released.</p>
           <button class="btn solid block" data-pay="${esc(code)}" data-guest="1">Pay ${money(g.amount)} by card</button>`
@@ -970,7 +985,7 @@
     }
 
     const fund = `<div class="card fb"><p class="muted" style="margin:0">Kitty fund <b>${money(fs.kitty)}</b> · kitty ${fs.session_no}, game ${fs.games_played} of up to 5. Past accounts are in the <a href="#chat:football-accounts">Accounts chat</a>.</p>
-      ${isDoor() ? `<div class="form-actions"><button class="btn solid block" data-go="supervisors">Football Supervisors</button>${isAdmin() ? '<button class="btn block" data-go="footballadmin">Football admin</button>' : ""}</div>` : ""}</div>`;
+      ${isDoor() ? `<div class="form-actions"><button class="btn solid block" data-go="supervisors">Football Supervisors</button>${isAdmin() ? '<button class="btn block" data-go="footballadmin">Football Accounts</button>' : ""}</div>` : ""}</div>`;
 
     el.innerHTML = `<div class="events">${offerBanner(allGames, true)}${introBanner(fs.intro_offer, true)}${top}${ev ? footballInfo(ev, fs) : ""}${you}${players}${fund}</div>`;
     el.querySelectorAll("[data-ticket]").forEach((b) => (b.onclick = () => showTicket(b.dataset.ticket)));
@@ -1049,7 +1064,7 @@
   function paymentsBreakdown(target, bookings, cancelled, full, METHODS, pitchDefault) {
     const r2 = (n) => Math.round(n * 100) / 100;
     const by = (b, m) => (b.paid && b.method === m ? cashPart(b) : 0) + (b.topup_method === m ? Number(b.topup || 0) : 0);
-    const rows = bookings.filter((b) => b.charge !== "covered").map((b) => ({ b, card: by(b, "card"), fee: Number(b.card_fee || 0), credit: creditPart(b), cash: by(b, "cash"), transfer: by(b, "transfer") }));
+    const rows = bookings.filter((b) => b.charge !== "covered").map((b) => ({ b, card: by(b, "card"), fee: Number(b.card_fee || 0) + Number(b.topup_fee || 0), credit: creditPart(b), cash: by(b, "cash"), transfer: by(b, "transfer") }));
     const tot = (k) => r2(rows.reduce((t, x) => t + x[k], 0));
     const T = { card: tot("card"), fee: tot("fee"), credit: tot("credit"), cash: tot("cash"), transfer: tot("transfer") };
     const grand = r2(T.card + T.cash + T.transfer);
@@ -1085,7 +1100,7 @@
         Paid by everyone (card, credit, cash, transfer): <b>${money(taken)}</b>${taken === expected ? " ✓" : `, ${money(Math.abs(taken - expected))} ${taken > expected ? "more" : "less"}`}.${added ? ` That includes ${money(added)} from people who paid but didn't come, which becomes their credit.` : ""}</p>`;
   }
   // Football Supervisors: only the night's jobs (scan in, head count, who's not in, add someone with a QR to pay).
-  // Football admin: payments, accounts and settings, for the admin only.
+  // Football Accounts: payments, accounts and settings, for the admin only.
   function supervisors(el, alive) { return footballScreen(el, alive, "night"); }
   function footballadmin(el, alive) { return footballScreen(el, alive, "admin"); }
   async function footballScreen(el, alive, mode) {
@@ -1139,18 +1154,19 @@
       ${current ? `<h3>Who's booked · ${short(parseDay(current.day))}</h3>
       <p class="muted">Scan their ticket, or tap a name when they arrive.</p>
       ${[["Not in yet", currentBookings.filter((b) => !b.checked_in)], ["Here", currentBookings.filter((b) => b.checked_in)]].map(([head, list]) => currentBookings.length ? `<h4>${head} (${list.length})</h4>
-      <div class="attend">${list.map((b) => `<label class="check"><input type="checkbox" data-here="${b.id}" ${b.checked_in ? "checked" : ""} ${current.accounts_posted ? "disabled" : ""}> ${esc(b.display_name)}${b.paid ? "" : ' <span class="tag warn">Unpaid</span>'}${current.accounts_posted || !full ? "" : ` <button class="btn small" data-drop="${b.id}" style="margin-left:auto">Remove</button>`}</label>`).join("") || '<p class="muted">No one.</p>'}</div>` : "").join("") || '<p class="muted">No one has booked yet.</p>'}
+      <div class="attend">${list.map((b) => `<label class="check"><input type="checkbox" data-here="${b.id}" ${b.checked_in ? "checked" : ""} ${current.accounts_posted ? "disabled" : ""}> ${esc(b.display_name)}${b.paid ? "" : ' <span class="tag warn">Unpaid</span>'}${b.topup_method === "link" ? ' <span class="tag warn">Top-up unpaid</span>' : ""}${b.risk_ok ? ' <span class="tag">Own risk ✓</span>' : ""}${current.accounts_posted || !full ? "" : ` <button class="btn small" data-drop="${b.id}" style="margin-left:auto">Remove</button>`}</label>`).join("") || '<p class="muted">No one.</p>'}</div>` : "").join("") || '<p class="muted">No one has booked yet.</p>'}
       <p class="muted">Anyone paid for pay and play who isn't ticked when the accounts are posted keeps what they paid as credit on their account for their next booking.</p>
       ${current.accounts_posted ? "" : `<h3>Add someone who wasn't on the list, or top up to the kitty</h3>
       <div class="grid2">
         <div><label>Paying</label><select id="wiType"><option value="payg">Pay and play ${money(Math.max(Number(current.price), 6))}</option><option value="topup">Top up to the kitty £9 (already on the list)</option><option value="kitty">Join the kitty £15</option></select></div>
         <div><label>Member</label><select id="wiUser"></select></div>
         <div><label>Name</label><input id="wiName" placeholder="Their name"></div>
-        <div><label id="wiPrice">Pays ${money(Math.max(Number(current.price), 6))} by</label><select id="wiMeth"><option value="link">Card: show a QR to pay on their phone</option>${Object.entries(METHODS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}<option value="credit" disabled>Account credit</option></select></div>
+        <div><label id="wiPrice">Pays ${money(Math.max(Number(current.price), 6))} by</label><select id="wiMeth"><option value="link">Card: show a QR to pay on their phone</option><option value="cash">Cash</option></select></div>
       </div>
-      <p class="muted">With the QR, they scan it, pay by card on their own phone, and show as paid here once Square confirms it.</p>
+      <p class="muted">Payment is needed on the night: a QR to pay by card on their own phone, or cash. With the QR, they show as paid here once Square confirms it. A kitty top-up can be paid the same way.</p>
+      <label class="check"><input type="checkbox" id="wiRisk"> They've confirmed they play at their own risk</label>
       <div class="form-actions"><button class="btn solid block" id="wiAdd">Add and mark as here</button></div>`}` : ""}
-    </div>` : `<div class="card fb"><h2>Football admin</h2>
+    </div>` : `<div class="card fb"><h2>Football Accounts</h2>
       ${target ? "" : '<p class="muted">No game to show yet.</p>'}
       ${target ? paymentsBreakdown(target, bookings, cancelled, full, METHODS, pitchDefault) : ""}
       ${full && target ? `      ${!target.accounts_posted && eventStart(target) <= new Date() ? `
@@ -1171,7 +1187,7 @@
         <h3>Costs</h3>
         <div class="grid2">
           <div><label>Goals pitch hire (£)</label><input id="hire" type="number" step="0.01" value="${pitchDefault}"></div>
-          <div><label>Card fees (£)</label><input id="fees" type="number" step="0.01" value="${bookings.reduce((t, b) => t + Number(b.card_fee || 0), 0).toFixed(2)}"></div>
+          <div><label>Card fees (£)</label><input id="fees" type="number" step="0.01" value="${bookings.reduce((t, b) => t + Number(b.card_fee || 0) + Number(b.topup_fee || 0), 0).toFixed(2)}"></div>
         </div>
         <h3>Receipt photos</h3>
         <div class="grid2">
@@ -1214,25 +1230,25 @@
         wu.innerHTML = (t === "payg" ? '<option value="">Not a member (type name)</option>' : '<option value="">Choose a member</option>')
           + list.map((p) => `<option value="${p.id}" data-credit="${Number(p.credit) || 0}">${esc(p.name)}${t === "topup" ? ` (paid ${money(payg.get(p.id).amount)})` : Number(p.credit) > 0 ? ` (${money(p.credit)} credit)` : ""}</option>`).join("");
       };
-      const sync = () => { const t = wt.value, o = wu.selectedOptions[0], cr = Number(o?.dataset.credit || 0), m = $("#wiMeth", box);
+      const sync = () => { const t = wt.value;
         const price = t === "kitty" ? 15 : Number(current.price);
         // Offer prices are for members; anyone else pays the full £6.
         $("#wiPrice", box).textContent = t === "topup" ? `Tops up ${wu.value ? money(left(payg.get(wu.value))) : "the rest"} by`
           : `Pays ${money(t === "kitty" ? 15 : wu.value ? price : Math.max(price, 6))}${t === "payg" && wu.value && fs.intro_offer ? " (£1 if it's a new member's first game)" : ""} by`;
         $("#wiName", box).disabled = t !== "payg" || !!wu.value;
-        // A top-up is paid in person: card, transfer or cash.
-        ["owes", "link"].forEach((k) => (m.querySelector(`[value="${k}"]`).disabled = t === "topup"));
-        m.querySelector('[value="credit"]').disabled = t === "topup" || cr < price;
-        if (m.selectedOptions[0].disabled) m.value = "cash"; };
+      };
       wt.onchange = () => { fill(); sync(); }; wu.onchange = sync; fill(); sync();
       $("#wiAdd", box).onclick = async () => {
         if (wt.value !== "payg" && !wu.value) return toast("Choose the member");
+        if (wt.value === "payg" && !wu.value && !$("#wiName", box).value.trim()) return toast("Type their name");
+        if (!$("#wiRisk", box).checked) return toast("Tick that they've confirmed they play at their own risk");
         try {
           $("#wiAdd", box).disabled = true;
           const b = (await q(sb.rpc("add_walkin", { p_event: current.id, p_user: wu.value || null, p_name: wt.value === "payg" ? $("#wiName", box).value.trim() || null : null, p_method: $("#wiMeth", box).value, p_choice: wt.value })));
           const row = Array.isArray(b) ? b[0] : b;
-          toast(row && row.charge === "covered" ? `${row.display_name} added (in the kitty, no charge)` : wt.value === "topup" ? `${row.display_name} topped up and in the kitty ✓` : "Added and marked as here"); await refresh();
-          if (row && row.pitch_link && !row.paid) guestLinkModal(current, row);
+          if (row && row.id) await q(sb.rpc("set_risk", { p_id: row.id }));
+          toast(row && row.charge === "covered" ? `${row.display_name} added (in the kitty, no charge)` : wt.value === "topup" ? (row.topup_method === "link" ? `${row.display_name} is in the kitty. Show them the QR to pay` : `${row.display_name} topped up and in the kitty ✓`) : "Added and marked as here"); await refresh();
+          if (row && (row.pitch_link && !row.paid || row.topup_method === "link")) guestLinkModal(current, row);
         } catch (e) { $("#wiAdd", box).disabled = false; fail(e); }
       };
     }
@@ -1665,7 +1681,7 @@
       <button class="menu-row" data-to="supervisors">${ICON.ball}<span>Football Supervisors ${ICON.chev}</span></button>
       ${isAdmin() ? "" : `<button class="menu-row" data-to="admin">${ICON.tools}<span>Check in at other events ${ICON.chev}</span></button>`}` : ""}
       ${isAdmin() ? `<h3 class="menu-head">Admin</h3>
-      <button class="menu-row" data-to="footballadmin">${ICON.ball}<span>Football admin ${ICON.chev}</span></button>
+      <button class="menu-row" data-to="footballadmin">${ICON.ball}<span>Football Accounts ${ICON.chev}</span></button>
       <button class="menu-row" data-to="eventaccounts">${ICON.cal}<span>Events accounts to post ${ICON.chev}</span></button>
       <button class="menu-row" data-to="squarecheck">${ICON.poll}<span>Square check ${ICON.chev}</span></button>
       <button class="menu-row" data-to="admin">${ICON.tools}<span>Admin tools ${ICON.chev}</span></button>` : ""}`;
