@@ -143,8 +143,8 @@
 
   // ---------- router ----------
   const TABS = ["events", "groups", "schedule", "about", "more"];
-  const ROUTES = { about, home: about, events, groups, grouplist, chat, schedule, more, services, counselling, messages, notifications, account, football, admin, funds, eventaccounts, guest };
-  const PARENT = { grouplist: "groups", chat: "groups", services: "more", counselling: "more", football: "events", funds: "more", eventaccounts: "more", guest: null, account: null, admin: "more", messages: null, notifications: null };
+  const ROUTES = { about, home: about, events, groups, grouplist, chat, schedule, more, services, counselling, messages, notifications, account, football, admin, funds, eventaccounts, squarecheck, guest };
+  const PARENT = { grouplist: "groups", chat: "groups", services: "more", counselling: "more", football: "events", funds: "more", eventaccounts: "more", squarecheck: "more", guest: null, account: null, admin: "more", messages: null, notifications: null };
   let lastTab = "events", seq = 0;
 
   function go(route) { if (location.hash.slice(1) === route) render(); else location.hash = route; }
@@ -434,12 +434,13 @@
   }
 
   // ---------- FUNDS ----------
-  const FUND_NAME = { kitty: "Kitty", events: "Events", credits: "Credits" };
+  const FUND_NAME = { kitty: "Kitty", events: "Events", credits: "Credits", family: "Family Events" };
   const fundStats = (fs) => `<div class="stats"><div><span>Kitty fund</span><b>${money(fs.kitty)}</b></div><div><span>Events fund</span><b>${money(fs.events)}</b></div><div><span>Credits</span><b>${money(fs.credits || 0)}</b></div></div>`;
-  const FUND_INFO = `<details class="info"><summary><b>What the three funds are</b></summary>
+  const FUND_INFO = `<details class="info"><summary><b>What the funds are</b></summary>
         <p><b>Kitty fund</b> runs the football. £15 kitty contributions and pay-and-play payments go in, and it pays the pitch hire and card fees. The kitty restarts when the fund drops below £150 or after 5 games, and anything over £100 then moves to the events fund.</p>
         <p><b>Events fund</b> is built up from the kitty and from owed money that's been paid. It's used for small come-together events and to buy new footballs and other things that keep the football going.</p>
         <p><b>Credits</b> is money members have paid but not used: they paid but didn't play, or cancelled before Friday 6pm. It still belongs to them. When they pay for a game from their credit, it moves from credits into the kitty fund. Advance payments are only taken through the app, which records every credit added or used, so the credits fund always matches the total credit on members' accounts.</p>
+        <p><b>BR3 Family Events fund</b> is kept in Square for family events. Each weekly subscription payment comes in by itself, with Square's fee taken off.</p>
       </details>`;
   const ledgerTable = (rows) => `<div class="scroll"><table><thead><tr><th>Date</th><th>Fund</th><th>Reason</th><th class="amt">Change</th><th class="amt">Balance</th></tr></thead><tbody>${rows.map((l) => `<tr><td>${short(parseDay(l.on_date))}</td><td>${FUND_NAME[l.fund] || ""}</td><td>${esc(l.what)}</td><td class="amt ${Number(l.amount) < 0 ? "neg" : ""}">${money(l.amount)}</td><td class="amt">${money(l.balance)}</td></tr>`).join("")}</tbody></table></div>`;
 
@@ -461,11 +462,18 @@
     const onAccounts = Math.round(accts.reduce((t, r) => t + Number(r.credit || 0), 0) * 100) / 100;
     if (!alive()) return;
     el.innerHTML = `<div class="events"><div class="card fb"><h2>Funds</h2>
-      ${fundStats(fs)}
+      <div class="stats four"><div><span>Kitty fund</span><b>${money(fs.kitty)}</b></div><div><span>Events fund</span><b>${money(fs.events)}</b></div><div><span>Credits</span><b>${money(fs.credits || 0)}</b></div><div><span>Family Events</span><b>${money(fs.family || 0)}</b></div></div>
+      <p class="muted">All funds together: <b>${money(Number(fs.kitty) + Number(fs.events) + Number(fs.credits || 0) + Number(fs.family || 0))}</b></p>
       ${isOrg() ? (onAccounts === Math.round(Number(fs.credits || 0) * 100) / 100 ? `<p class="note">Credits tally ✓ The credits fund matches the ${money(onAccounts)} of credit on members' accounts.</p>`
         : `<p class="note">Credits don't tally: members' accounts hold ${money(onAccounts)} but the credits fund shows ${money(fs.credits || 0)}.</p>`) : ""}
       ${FUND_INFO.replace("<details ", "<details open ")}
-      <div class="form-actions"><button class="btn block" data-go="eventaccounts">Events accounts</button></div>
+      <div class="form-actions"><button class="btn block" data-go="eventaccounts">Events accounts</button>${isDoor() ? '<button class="btn block" data-go="squarecheck">Square check</button>' : ""}</div>
+      ${isAdmin() ? `<h3>Family Events fund</h3>
+        <p class="muted">Subscription payments come in by themselves. Use this for the opening balance, other money in, and money spent.</p>
+        <div class="grid2"><div><label>Money</label><select id="yDir"><option value="1">In</option><option value="-1">Spent</option></select></div>
+          <div><label>Amount £</label><input id="yAmt" type="number" step="0.01" min="0.01" inputmode="decimal"></div></div>
+        <label>Reason (everyone can see this)</label><input id="yWhy" placeholder="e.g. Opening balance, or Family day hall hire">
+        <div class="form-actions"><button class="btn solid block" id="yGo">Record it</button></div>` : ""}
       ${isAdmin() ? `<h3>Move money between funds</h3>
         <p class="muted">For example, the kitty's excess over £100 into the events fund, or the events fund paying for a football game. Every move is listed below with its reason.</p>
         <div class="grid2"><div><label>From</label><select id="tFrom"><option value="kitty">Kitty fund (${money(fs.kitty)})</option><option value="events">Events fund (${money(fs.events)})</option></select></div>
@@ -477,10 +485,18 @@
       <h3>Transfers between funds</h3>
       ${transfers.length ? transferTable(transfers) : '<p class="muted">No money has been moved between funds yet.</p>'}
       <h3>History</h3>
-      <div class="seg">${[["", "All"], ["kitty", "Kitty"], ["events", "Events"], ["credits", "Credits"]].map(([k, v]) => `<button class="${k === (FUND_NAME[which] ? which : "") ? "on" : ""}" data-f="${k}">${v}</button>`).join("")}</div>
+      <div class="seg small">${[["", "All"], ["kitty", "Kitty"], ["events", "Events"], ["credits", "Credits"], ["family", "Family"]].map(([k, v]) => `<button class="${k === (FUND_NAME[which] ? which : "") ? "on" : ""}" data-f="${k}">${v}</button>`).join("")}</div>
       ${rows.length ? ledgerTable(rows) : '<p class="muted">No changes yet. Every game\'s accounts and every fund change will be listed here.</p>'}
     </div></div>`;
     el.querySelectorAll("[data-f]").forEach((b) => (b.onclick = () => go(b.dataset.f ? "funds:" + b.dataset.f : "funds")));
+    if ($("#yGo", el)) $("#yGo", el).onclick = async () => {
+      const amt = Math.round(Number($("#yAmt", el).value) * 100) / 100, why = $("#yWhy", el).value.trim(), sign = Number($("#yDir", el).value);
+      if (!(amt > 0)) return toast("Enter an amount");
+      if (!why) return toast("Give a reason");
+      if (!confirm(`${sign > 0 ? "Add" : "Take"} ${money(amt)} ${sign > 0 ? "to" : "from"} the Family Events fund?\n\nReason: ${why}`)) return;
+      try { $("#yGo", el).disabled = true; await q(sb.rpc("family_entry", { p_amount: sign * amt, p_reason: why })); toast("Recorded"); refresh(); }
+      catch (e) { $("#yGo", el).disabled = false; fail(e); }
+    };
     const from = $("#tFrom", el);
     if (!from) return;
     const other = () => (from.value === "kitty" ? "events" : "kitty");
@@ -500,6 +516,117 @@
         await q(sb.rpc("transfer_funds", { p_from: from.value, p_to: other(), p_amount: amt, p_reason: why }));
         toast(`${money(amt)} moved to the ${MOVE_FUND[other()].toLowerCase()}`); refresh();
       } catch (e) { $("#tGo", el).disabled = false; fail(e); }
+    };
+  }
+
+  // ---------- SQUARE CHECK ----------
+  // Square holds all the funds (cash and transfers are paid in through Starling). This screen checks
+  // the Square balance against the funds, and lists each Square payment with its fee and net.
+  const PLACE = { cash: "Cash in hand", bank: "Bank (Starling)", square: "Square", count: "Counted" };
+  const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  async function squarecheck(el, alive, arg = "") {
+    if (!me) return needSignIn(el, "check Square");
+    if (!isDoor()) { el.innerHTML = '<div class="empty"><h2>For organisers</h2><p class="muted">The Square check is for organisers and the admin.</p></div>'; return; }
+    loading(el);
+    const [a, b] = String(arg).split("~");
+    const to = /^\d{4}-\d{2}-\d{2}$/.test(b || "") ? b : isoDay(new Date());
+    const from = /^\d{4}-\d{2}-\d{2}$/.test(a || "") ? a : (() => { const d = parseDay(to); d.setDate(d.getDate() - 7); return isoDay(d); })();
+    const start = parseDay(from).toISOString(), endD = parseDay(to); endD.setDate(endD.getDate() + 1);
+    const end = endD.toISOString();
+    let x, pays, cards, moves;
+    try {
+      [x, pays, cards, moves] = await Promise.all([
+        q(sb.rpc("square_expected")),
+        q(sb.from("square_payments").select("*").gte("paid_at", start).lt("paid_at", end).order("paid_at", { ascending: false })),
+        q(sb.from("bookings").select("id,display_name,amount,credit_used,card_fee,created_at,square_order_id,events(title,day)").eq("method", "card").eq("paid", true).gte("created_at", start).lt("created_at", end)),
+        q(sb.from("money_moves").select("*").order("id", { ascending: false }).limit(20)),
+      ]);
+    } catch (e) {
+      el.innerHTML = `<div class="empty"><h2>Square check isn't ready</h2><p class="muted">Run supabase/add-square-check.sql in Supabase first. (${esc(e.message)})</p></div>`;
+      return;
+    }
+    if (!alive()) return;
+    const ok = pays.filter((p) => p.status === "COMPLETED");
+    const sum = (k) => ok.reduce((t, p) => t + Number(p[k] || 0), 0);
+    const tGross = sum("gross"), tFee = sum("fee"), tRef = sum("refunded");
+    const matched = new Set(pays.map((p) => p.booking_id).filter(Boolean));
+    const missing = cards.filter((c) => !matched.has(c.id));
+    const other = ok.filter((p) => p.kind === "other");
+    const bal = x.square_balance == null ? null : Number(x.square_balance);
+    const diff = bal == null ? null : Math.round((bal - Number(x.expected)) * 100) / 100;
+    const KIND = { booking: "Booking", subscription: "Family Events", other: "Not matched" };
+    const row = (label, v, sign = "") => `<tr><td>${label}</td><td class="amt ${sign === "−" ? "neg" : ""}">${sign}${money(Math.abs(Number(v)))}</td></tr>`;
+    el.innerHTML = `<div class="events"><div class="card fb"><h2>Square check</h2>
+      <p class="muted">Square holds all the funds. Cash and transfers count as held outside Square until they're moved in.</p>
+      <h3>Does Square match the funds?</h3>
+      <div class="scroll"><table class="wrap"><tbody>
+        ${row("All funds (kitty, events, credits, Family Events)", x.funds)}
+        ${row("Paid for games and events whose accounts aren't posted yet", x.pending_in, "+")}
+        ${row("Square fees on those", x.pending_fees, "−")}
+        ${row("Cash in hand", x.held_cash, Number(x.held_cash) < 0 ? "+" : "−")}
+        ${row("In the bank (Starling)", x.held_bank, Number(x.held_bank) < 0 ? "+" : "−")}
+        <tr><td><b>Square should hold</b></td><td class="amt"><b>${money(x.expected)}</b></td></tr>
+        <tr><td>Square balance${x.square_balance_at ? ` (entered ${short(new Date(x.square_balance_at))})` : ""}</td><td class="amt">${bal == null ? "—" : money(bal)}</td></tr>
+      </tbody></table></div>
+      ${diff == null ? "" : diff === 0 ? '<p class="note check-diff">✓ Square matches the funds.</p>' : `<p class="note check-diff">Square has ${money(Math.abs(diff))} ${diff > 0 ? "more" : "less"} than the funds.</p>
+        <p class="muted">Common reasons: pitch hire paid on the Square Card before the game's accounts are posted, a payment below marked "Not matched", a refund, or money moved but not recorded here.</p>`}
+      ${x.pending.length ? `<details class="info"><summary>Games and events not yet in accounts</summary>${x.pending.map((p) => `<p>${esc(p.title)}${p.day ? ` ${short(parseDay(p.day))}` : ""}: ${money(p.paid || 0)} paid, ${money(p.fees || 0)} Square fees</p>`).join("")}</details>` : ""}
+      <label>Square balance now, from the Square app £</label><input id="sqBal" type="number" step="0.01" inputmode="decimal" value="${bal == null ? "" : bal.toFixed(2)}">
+      <div class="form-actions"><button class="btn solid block" id="sqBalGo">Check against the funds</button></div>
+      ${isAdmin() ? `<h3>Money moved</h3>
+        <p class="muted">Record cash paid into Square, or money moved from Starling to Square, so the check stays right.</p>
+        <div class="grid2"><div><label>From</label><select id="mFrom"><option value="cash">Cash in hand (${money(x.held_cash)})</option><option value="bank">Bank (Starling) (${money(x.held_bank)})</option><option value="square">Square</option><option value="count">Correct to a counted figure</option></select></div>
+          <div><label>To</label><select id="mTo"><option value="square">Square</option><option value="bank">Bank (Starling)</option><option value="cash">Cash in hand</option></select></div></div>
+        <label id="mAmtL">Amount £</label><input id="mAmt" type="number" step="0.01" min="0" inputmode="decimal">
+        <label>Note</label><input id="mWhy" placeholder="e.g. Starling to Square after Friday's game">
+        <div class="form-actions"><button class="btn solid block" id="mGo">Record it</button></div>` : ""}
+      ${moves.length ? `<div class="scroll"><table class="wrap"><thead><tr><th>Date</th><th>Move</th><th class="amt">£</th></tr></thead><tbody>${moves.map((m) => `<tr><td>${short(parseDay(m.on_date))}</td><td>${m.from_place === "count" ? `${PLACE[m.to_place]} set to counted figure` : `${PLACE[m.from_place]} → ${PLACE[m.to_place]}`}${m.reason ? `: ${esc(m.reason)}` : ""}</td><td class="amt">${money(m.amount)}</td></tr>`).join("")}</tbody></table></div>` : ""}
+
+      <h3>Square payments</h3>
+      <div class="grid2"><div><label>From</label><input id="sqFrom" type="date" value="${from}"></div><div><label>To</label><input id="sqTo" type="date" value="${to}"></div></div>
+      <div class="form-actions"><button class="btn block" id="sqShow">Show these dates</button><button class="btn solid block" id="sqSync">Sync from Square</button></div>
+      <div class="stats"><div><span>Paid</span><b>${money(tGross)}</b></div><div><span>Square fees</span><b>${money(tFee)}</b></div><div><span>Net</span><b>${money(tGross - tFee - tRef)}</b></div></div>
+      ${tRef ? `<p class="muted">Refunded: ${money(tRef)} (taken off the net).</p>` : ""}
+      ${pays.length ? `<div class="scroll"><table class="wrap"><thead><tr><th>For</th><th class="amt">Paid</th><th class="amt">Fee</th><th class="amt">Net</th></tr></thead><tbody>${pays.map((p) => {
+        const live = p.status === "COMPLETED";
+        return `<tr><td>${esc(p.label || p.note || "Square payment")}<div class="muted" style="font-size:13px">${short(new Date(p.paid_at))} · ${live ? KIND[p.kind] : esc(p.status.toLowerCase())}</div></td><td class="amt">${money(p.gross)}</td><td class="amt">${money(p.fee)}</td><td class="amt">${money(live ? p.gross - p.fee - p.refunded : 0)}</td></tr>`;
+      }).join("")}<tr><td><b>Total</b></td><td class="amt"><b>${money(tGross)}</b></td><td class="amt"><b>${money(tFee)}</b></td><td class="amt"><b>${money(tGross - tFee - tRef)}</b></td></tr></tbody></table></div>`
+        : '<p class="muted">No Square payments in the app for these dates yet. Tap Sync from Square to fetch them.</p>'}
+      ${other.length ? `<p class="note">${other.length} payment${other.length > 1 ? "s" : ""} (${money(other.reduce((t, p) => t + Number(p.gross), 0))}) in Square ${other.length > 1 ? "aren't" : "isn't"} matched to a booking or the subscription.</p>` : ""}
+      ${missing.length ? `<p class="note">${missing.length} card booking${missing.length > 1 ? "s" : ""} in the app ${missing.length > 1 ? "have" : "has"} no Square payment here: ${missing.map((c) => esc(c.display_name)).join(", ")}. Tap Sync from Square, and if ${missing.length > 1 ? "they stay" : "it stays"}, check Square.</p>` : ""}
+    </div></div>`;
+    $("#sqShow", el).onclick = () => go(`squarecheck:${$("#sqFrom", el).value}~${$("#sqTo", el).value}`);
+    $("#sqSync", el).onclick = async (e) => {
+      const btn = e.currentTarget; btn.disabled = true; btn.textContent = "Checking Square…";
+      try {
+        const { data: { session } } = await sb.auth.getSession();
+        const res = await fetch("/.netlify/functions/square-sync", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token || ""}` }, body: JSON.stringify({ from: $("#sqFrom", el).value, to: $("#sqTo", el).value }) });
+        const r = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(r.error || "Couldn't reach Square.");
+        toast(`${r.checked} Square payment${r.checked === 1 ? "" : "s"} checked, ${r.updated} updated`);
+        go(`squarecheck:${$("#sqFrom", el).value}~${$("#sqTo", el).value}`);
+      } catch (err) { btn.disabled = false; btn.textContent = "Sync from Square"; fail(err); }
+    };
+    $("#sqBalGo", el).onclick = async () => {
+      const v = $("#sqBal", el).value;
+      if (v === "") return toast("Enter the Square balance");
+      try { await q(sb.rpc("set_square_balance", { p_amount: Number(v) })); refresh(); } catch (e) { fail(e); }
+    };
+    const mFrom = $("#mFrom", el);
+    if (!mFrom) return;
+    mFrom.onchange = () => {
+      const count = mFrom.value === "count";
+      $("#mAmtL", el).textContent = count ? "Counted amount £" : "Amount £";
+      $("#mTo", el).innerHTML = (count ? ["cash", "bank"] : ["square", "bank", "cash"]).filter((k) => k !== mFrom.value).map((k) => `<option value="${k}">${PLACE[k]}</option>`).join("");
+    };
+    mFrom.onchange();
+    $("#mGo", el).onclick = async () => {
+      const amt = Math.round(Number($("#mAmt", el).value) * 100) / 100, f = mFrom.value, t = $("#mTo", el).value;
+      if ($("#mAmt", el).value === "" || (f !== "count" && !(amt > 0))) return toast("Enter an amount");
+      const what = f === "count" ? `Set ${PLACE[t].toLowerCase()} to ${money(amt)}?` : `Record ${money(amt)} moved from ${PLACE[f].toLowerCase()} to ${PLACE[t].toLowerCase()}?`;
+      if (!confirm(what)) return;
+      try { $("#mGo", el).disabled = true; await q(sb.rpc("move_money", { p_from: f, p_to: t, p_amount: amt, p_reason: $("#mWhy", el).value.trim() })); toast("Recorded"); refresh(); }
+      catch (e) { $("#mGo", el).disabled = false; fail(e); }
     };
   }
 
@@ -1476,6 +1603,7 @@
       <button class="menu-row" data-to="funds">${ICON.poll}<span>Funds ${ICON.chev}</span></button>
       <button class="menu-row" data-to="eventaccounts">${ICON.cal}<span>Events accounts ${ICON.chev}</span></button>
       ${isDoor() ? `<button class="menu-row" data-to="admin">${ICON.tools}<span>Organiser tools ${ICON.chev}</span></button>` : ""}
+      ${isDoor() ? `<button class="menu-row" data-to="squarecheck">${ICON.poll}<span>Square check ${ICON.chev}</span></button>` : ""}
       <button class="menu-row" data-to="counselling">${ICON.star}<span>Counselling ${ICON.chev}</span></button>`;
     el.querySelectorAll("[data-to]").forEach((b) => (b.onclick = () => go(b.dataset.to)));
   }
