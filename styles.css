@@ -323,3 +323,9 @@ label.check.risk { font-weight: 700; margin: 4px 0 10px; }
 .post img[data-zoom] { cursor: zoom-in; }
 .transfer { padding: 10px 0; border-bottom: 1px solid var(--line); line-height: 1.4; }
 .credit-choice { background: var(--field); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 10px 0; display: grid; gap: 4px; }
+.stats.four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.seg.small button { font-size: 14px; padding: 0 4px; }
+.check-diff { font-size: 20px; }
+.scroll table.wrap td:not(.amt), .scroll table.wrap th:not(.amt) { white-space: normal; }
+.grid2 > div { min-width: 0; }
+.grid2 input[type="date"] { min-width: 0; }

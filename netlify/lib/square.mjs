@@ -74,7 +74,9 @@ export async function confirmBooking(booking) {
   const paymentId = order?.tenders?.find((t) => t.payment_id)?.payment_id;
   if (!paymentId) return booking.paid;
   const { payment } = await square(`/v2/payments/${paymentId}`);
-  return (await recordPayment(booking, payment)) || booking.paid;
+  const paid = await recordPayment(booking, payment);
+  await applyPayment(payment, booking).catch(() => {}); // for the Square check
+  return paid || booking.paid;
 }
 
 // A friend's booking is shown as "Guest (Member)". Returns both names, or null for anyone else's booking.
@@ -87,4 +89,79 @@ export async function guestNames(booking) {
   const suffix = ` (${member})`;
   const guest = booking.display_name.endsWith(suffix) ? booking.display_name.slice(0, -suffix.length) : booking.display_name;
   return { guest, member };
+}
+
+// ---------- Square check: every payment, with what Square kept ----------
+
+const pounds = (m) => Number(m?.amount || 0) / 100;
+const feeOf = (payment) => (payment.processing_fee || []).reduce((t, f) => t + Number(f.amount_money?.amount || 0), 0) / 100;
+
+// Which Square orders belong to a subscription. Cached in square_sub_orders, so Square is only
+// asked about invoices the app hasn't seen yet.
+export async function subscriptionLabel(orderId) {
+  if (!orderId) return null;
+  const hit = await db(`square_sub_orders?order_id=eq.${encodeURIComponent(orderId)}&select=label`);
+  if (hit?.length) return hit[0].label;
+  const known = new Set(((await db("square_sub_orders?select=invoice_id")) || []).map((r) => r.invoice_id));
+  const subs = [];
+  let cursor;
+  do {
+    const r = await square("/v2/subscriptions/search", { method: "POST", body: JSON.stringify({ cursor, limit: 100, query: { filter: { location_ids: [await getLocationId()] } } }) });
+    subs.push(...(r.subscriptions || []));
+    cursor = r.cursor;
+  } while (cursor);
+  let found = null;
+  for (const s of subs) {
+    const fresh = (s.invoice_ids || []).filter((id) => !known.has(id));
+    if (!fresh.length) continue;
+    let who = "";
+    if (s.customer_id) {
+      const { customer: c } = await square(`/v2/customers/${s.customer_id}`).catch(() => ({}));
+      who = [c?.given_name, c?.family_name].filter(Boolean).join(" ") || c?.company_name || "";
+    }
+    const label = `Family Events subscription${who ? ` (${who})` : ""}`;
+    const rows = [];
+    for (const id of fresh) {
+      const { invoice } = await square(`/v2/invoices/${id}`).catch(() => ({}));
+      if (!invoice?.order_id) continue;
+      rows.push({ order_id: invoice.order_id, invoice_id: id, subscription_id: s.id, label });
+      if (invoice.order_id === orderId) found = label;
+    }
+    if (rows.length) await db("square_sub_orders", { method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify(rows) });
+  }
+  return found;
+}
+
+// Keeps the app's copy of a Square payment up to date. Subscription payments go into the
+// Family Events fund (the database does that, once per payment, and again only for changes).
+export async function applyPayment(payment, booking) {
+  if (!payment?.id) return null;
+  const sub = booking ? null : await subscriptionLabel(payment.order_id);
+  const row = {
+    id: payment.id,
+    paid_at: payment.created_at,
+    status: payment.status,
+    gross: pounds(payment.total_money || payment.amount_money),
+    fee: feeOf(payment),
+    refunded: pounds(payment.refunded_money),
+    order_id: payment.order_id || null,
+    note: payment.note || "",
+    source: payment.source_type || "",
+    kind: booking ? "booking" : sub ? "subscription" : "other",
+    booking_id: booking?.id || null,
+    label: booking ? booking.display_name : sub || payment.note || "",
+  };
+  return db("rpc/apply_square_payment", { method: "POST", body: JSON.stringify({ p: row }) });
+}
+
+// The signed-in person, from the token the app sends. Only organisers and the admin get through.
+export async function doorUser(req) {
+  const token = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
+  if (!token) return null;
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, { headers: { apikey: process.env.SUPABASE_SECRET_KEY, Authorization: `Bearer ${token}` } });
+  if (!res.ok) return null;
+  const user = await res.json().catch(() => null);
+  if (!user?.id) return null;
+  const rows = await db(`profiles?id=eq.${user.id}&select=id,role`);
+  return ["organiser", "admin"].includes(rows?.[0]?.role) ? rows[0] : null;
 }

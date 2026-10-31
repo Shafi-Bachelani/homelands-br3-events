@@ -1,7 +1,8 @@
 // Square calls this when a payment changes, so bookings are marked paid even if
-// someone closes the page before coming back to the app. Subscribe to payment.updated.
+// someone closes the page before coming back to the app. Subscribe to payment.created and payment.updated.
+// Every payment is also copied into the app for the Square check.
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { json, bookingBy, recordPayment } from "../lib/square.mjs";
+import { json, bookingBy, recordPayment, applyPayment } from "../lib/square.mjs";
 
 export default async (req) => {
   if (req.method !== "POST") return json({ error: "Use POST." }, 405);
@@ -14,10 +15,14 @@ export default async (req) => {
   if (given.length !== expected.length || !timingSafeEqual(Buffer.from(given), Buffer.from(expected))) return json({ error: "Bad signature." }, 401);
 
   const payment = JSON.parse(raw)?.data?.object?.payment;
-  if (!payment?.order_id) return json({ ok: true });
+  if (!payment?.id) return json({ ok: true });
   try {
-    const booking = await bookingBy("square_order_id", payment.order_id);
+    const booking = payment.order_id ? await bookingBy("square_order_id", payment.order_id) : null;
     if (booking) await recordPayment(booking, payment);
+    // Every payment is kept for the Square check; a subscription payment goes into the Family Events fund.
+    // If the database isn't ready for that yet, a booking's payment is still recorded above.
+    const kept = applyPayment(payment, booking);
+    if (booking) await kept.catch(() => {}); else await kept;
     return json({ ok: true });
   } catch (e) {
     return json({ error: e.message }, 500); // Square retries later
