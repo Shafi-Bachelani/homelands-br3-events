@@ -1402,42 +1402,48 @@
       const newCr = Math.round((oldCr + crAdded - crUsed + crNow) * 100) / 100;
       const onAccounts = Math.round((creditRows.reduce((t, r) => t + Number(r.credit || 0), 0) + crNow) * 100) / 100;
       const g = fs.games_played + 1, ORD = ["1st", "2nd", "3rd", "4th", "5th"], L = "________", d = parseDay(target.day);
-      const t = [`Turnout ${turnout} - ${d.getDate()} ${MONTHS_LONG[d.getMonth()]} - ${ORD[g - 1] || g + "th"} kitty game of up to 5 consecutive games`, "",
-        "Kitty restarts when either fund drops below £150 or we have had a maximum of 5 consecutive games", "", $("#fmt", box).value.trim(), L,
-        "Before funds", `Kitty fund ${money(fs.kitty - mv.kitty)}`, `Events fund ${money(fs.events - mv.events)}`, `Credits ${money(oldCr)}`, L];
-      if (kittyHere.length) t.push(`Kitty players who turned up (${kittyHere.length})`, ...kittyHere.map((b) => b.display_name), L);
-      if (kp.length) t.push(`Joined the kitty this game (${kp.length})`, ...kp.map((b) => b.display_name + (Number(b.topup) > 0 ? ` (topped up ${money(b.topup)} from pay and play)` : "")), `Expected ${kp.length}x £15 = ${money(kp.length * 15)}`, L);
-      const oddFriends = friendsHere.length && fAmt !== friendsHere.length * TP;
-      t.push("Pay and Play", `Turnout ${turnout} less ${kittyHere.length} kitty = ${payers} to pay`, oddFriends || introHere.length
-        ? `Expected ${Math.max(payers - (oddFriends ? friendsHere.length : 0) - introHere.length, 0)}x ${money(TP)}${oddFriends ? ` + ${friendsHere.length} friend${friendsHere.length === 1 ? "" : "s"} ${money(fAmt)}` : ""}${introHere.length ? ` + ${introHere.length} new member${introHere.length === 1 ? "" : "s"} ${money(introAmt)}` : ""} = ${money(expGross - kp.length * 15)}`
-        : `Expected ${payers}x ${money(TP)} = ${money(payers * TP)}`);
-      if (introHere.length) t.push(`New member offer, first game for £1: ${introHere.map((b) => b.display_name).join(", ")} (the events fund pays the other ${money(introCover)})`);
-      if (viaCredit.length) t.push(`Including ${money(rCr)} paid from credit: ${viaCredit.map((b) => `${b.display_name}${creditPart(b) < Number(b.amount) ? ` ${money(creditPart(b))}` : ""}`).join(", ")}`);
-      if (owing.length) t.push(`Less ${owing.length} deferred: ${owing.map((b) => b.display_name).join(", ")}`);
-      if (noShowCash.length) t.push(`Plus ${noShowCash.length} paid but didn't come (now their credit): ${noShowCash.map((b) => b.display_name).join(", ")}`);
-      if (cancelled.length) t.push(`Plus ${cancelled.length} paid then cancelled (now their credit): ${cancelled.map((b) => b.display_name).join(", ")}`);
-      if (cleared.length) t.push(`Plus ${cleared.length} owed cleared ${money(clearedAmt)} (to events fund)`);
-      t.push("", `Expected in ${money(expIn)}`, L, "Received",
-        `Square ${money(rSq)}`, `Transfers ${money(rTr)}`, `Cash or PayPal ${money(rCa)}`, `From credits ${money(rCr)}`, `Total received ${money(receivedAll)}`, "",
-        diff === 0 ? "Balanced." : `Off by ${money(Math.abs(diff))} (${diff > 0 ? "more" : "less"} than expected)`, L,
-        "Less cost", `${money(hire)} Goals pitch hire`, `${money(fees)} card payment charge`, "—————————", "Receipts over costs", money(net), "——————————",
-        "Movements between funds");
-      if (rCr) t.push(`Credits to kitty fund ${money(rCr)} (paid from credit)`);
-      if (toCredits) t.push(`Takings kept as credit ${money(toCredits)} (paid but didn't play or cancelled)`);
-      if (clearedAmt) t.push(`Into events fund ${money(clearedAmt)} (owed money cleared)`);
-      if (introCover) t.push(`Events fund to kitty fund ${money(introCover)} (new member offer, ${introHere.length} first game${introHere.length === 1 ? "" : "s"})`);
-      t.push(...moved.map(transferLine));
-      if (!rCr && !toCredits && !clearedAmt && !introCover && !moved.length) t.push("None");
-      t.push(L, "Credits check", `Held at last accounts ${money(oldCr)}`, `Added ${money(crAdded + crNow)}`,
-        ...crIn.map((m) => `  + ${money(m.amount)} ${m.what}`), ...noShows.map((b) => `  + ${money(b.amount)} ${b.display_name}: paid but didn't play, credit added now`),
-        ...creditBack.map((b) => `  + ${money(b.credit_used)} ${b.display_name}: didn't play or pay the rest, credit given back now`),
-        `Used ${money(crUsed)}`, ...crOut.map((m) => `  - ${money(-m.amount)} ${m.what}`),
-        `Credits held now ${money(newCr)}`, `Total credit on members' accounts ${money(onAccounts)}`,
-        newCr === onAccounts ? "Credits tally ✓" : `Credits don't tally: off by ${money(Math.abs(newCr - onAccounts))}. Check before posting.`);
-      t.push(L, "Updated funds", `Kitty fund ${money(newKitty)}`, `Events fund ${money(newEv)}`, `Credits ${money(newCr)}`);
+      // Mohamed's WhatsApp layout: prior funds, who came, expected, paid as, costs, updated funds.
+      const r2 = (n) => Math.round(n * 100) / 100;
+      const ordDay = (n) => n + (n % 10 === 1 && n !== 11 ? "st" : n % 10 === 2 && n !== 12 ? "nd" : n % 10 === 3 && n !== 13 ? "rd" : "th");
+      const names = (xs, f = (b) => b.display_name) => xs.map(f).join(", ");
+      const paygFull = r2(Math.max(payers - friendsHere.length - introHere.length, 0) * TP + fAmt + introAmt + introCover);
+      const sameFriends = !friendsHere.length || fAmt === friendsHere.length * TP;
+      const owingAmt = r2(sumCash(owing));
+      const expFootball = r2(expGross + clearedAmt - owingAmt);
+      const crHeld = r2(toCredits - rCr); // put into credit less credit used, from this game
+      const football = r2(received - crHeld);
+      const result = r2(football - clearedAmt - hire - fees);
+      const t = [`Turnout ${turnout} - ${ordDay(d.getDate())} ${MONTHS_LONG[d.getMonth()]} - ${ORD[g - 1] || g + "th"} kitty game of up to 5 consecutive games`];
+      if ($("#fmt", box).value.trim()) t.push("", $("#fmt", box).value.trim());
+      t.push("", "Kitty restarts when either fund drops below £150 or we have had a maximum of 5 consecutive games", L,
+        "Prior funds", `Kitty fund ${money(fs.kitty)}`, `Events fund ${money(fs.events)}`, `Credits held ${money(oldCr)}`);
+      if (moved.length) t.push(...moved.map((x) => `(includes ${transferLine(x)})`));
+      t.push(L, `These ${kittyHere.length}${kittyMembers != null ? ` out of ${kittyMembers}` : ""} kitty contributors came`, ...kittyHere.map((b) => b.display_name));
+      if (kp.length) t.push("", `${kp.length} joined the kitty this game: ${kp.length} × £15 = ${money(kp.length * 15)}`,
+        ...kp.map((b) => b.display_name + (Number(b.topup) > 0 ? ` (topped up ${money(b.topup)} from pay and play)` : "")));
+      t.push(L, "Pay and Play", `Expected pay as you go is ${payers}${sameFriends ? ` × ${money(TP)}` : ""} = ${money(paygFull)}${sameFriends ? "" : ` (includes ${friendsHere.length} friend${friendsHere.length === 1 ? "" : "s"} ${money(fAmt)})`}`);
+      if (kp.length) t.push(`Plus kitty joiners ${money(kp.length * 15)}`);
+      if (cleared.length) t.push(`Plus owed money cleared ${money(clearedAmt)}: ${names(cleared, (x) => x.profiles?.name || "Member")}`);
+      if (owing.length) t.push(`Less not paid yet ${money(owingAmt)}: ${names(owing)}`);
+      if (introHere.length) t.push(`${introHere.length === 1 ? "One person" : `${introHere.length} people`} joined and took the ${money(introAmt / introHere.length)} new member deal (${names(introHere)})`,
+        `So revised total expected for football ${money(expFootball)}`);
+      else t.push(`Total expected for football ${money(expFootball)}`);
+      t.push(L, "Paid as", `Card ${money(rSq)}`, `Cash ${money(rCa)}`);
+      if (rTr) t.push(`Transfers ${money(rTr)}`);
+      t.push(`Total received ${money(received)}`);
+      if (crHeld) t.push(crHeld > 0 ? `${money(crHeld)} held in credit (${money(toCredits)} deposited, ${money(rCr)} used)` : `${money(-crHeld)} paid from credit (${money(rCr)} used, ${money(toCredits)} deposited)`);
+      if (toCredits) t.push(`  deposited: ${[...noShowCash.map((b) => `${b.display_name} ${money(cashPart(b))} didn't come`), ...cancelled.filter((b) => cashPart(b) > 0).map((b) => `${b.display_name} ${money(cashPart(b))} cancelled`)].join(", ")}`);
+      if (rCr) t.push(`  used: ${names(viaCredit, (b) => `${b.display_name} ${money(creditPart(b))}`)}`);
+      t.push(`${money(football)} for football`, diff === 0 ? "Balanced ✓" : `Not balanced: ${money(Math.abs(diff))} ${diff > 0 ? "more" : "less"} than expected`,
+        L, "Less cost", `${money(hire)} Goals pitch hire`, `${money(fees)} card payment charge`, "—————————");
+      if (clearedAmt) t.push(`${money(clearedAmt)} owed money cleared goes to the events fund`);
+      t.push(result < 0 ? `Costs over receipts (${money(-result)})` : `Receipts over costs ${money(result)}`);
+      if (introCover) t.push("", `${money(introCover)} moved from events fund into kitty fund, to cover the ${money(introAmt / introHere.length)} new member deal`);
+      t.push("—————————", "Updated funds", `Kitty fund ${money(newKitty)}`, `Events fund ${money(newEv)}`, `Credits held ${money(newCr)}`);
+      if (newCr !== onAccounts) t.push(`Check before posting: members' accounts hold ${money(onAccounts)} in credit, ${money(Math.abs(newCr - onAccounts))} ${onAccounts > newCr ? "more" : "less"} than this.`);
       const owes = [...debts.filter((x) => !cleared.includes(x)).map((x) => `${x.profiles?.name || "Member"} ${money(x.amount)} ${esc(x.reason)}`),
         ...owing.filter((b) => cashPart(b) > 0).map((b) => `${b.display_name} ${money(cashPart(b))} ${short(d)}`)];
-      if (owes.length) t.push(L, "These OWE", ...owes);
+      t.push(L, "These OWE", ...(owes.length ? owes : ["All clear"]));
       if (newKitty < 150 || g >= 5) t.push(L, `Kitty restarts: ${newKitty < 150 ? "fund is below £150" : "5 games played"}. Anything over £100 moves to the events fund and the next game starts a new kitty.`);
       $("#acc", box).value = t.join("\n"); $("#draftBox", box).hidden = false;
       $("#post", box).onclick = async () => {
