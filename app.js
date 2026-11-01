@@ -1064,12 +1064,17 @@
   function paymentsBreakdown(target, bookings, cancelled, full, METHODS, pitchDefault) {
     const r2 = (n) => Math.round(n * 100) / 100;
     const by = (b, m) => (b.paid && b.method === m ? cashPart(b) : 0) + (b.topup_method === m ? Number(b.topup || 0) : 0);
-    const rows = bookings.filter((b) => b.charge !== "covered").map((b) => ({ b, card: by(b, "card"), fee: Number(b.card_fee || 0) + Number(b.topup_fee || 0), credit: creditPart(b), cash: by(b, "cash"), transfer: by(b, "transfer") }));
+    // Credit column: credit used by people who count is a plus; money that goes on someone's account as credit
+    // (paid but didn't come, or removed) is a minus, shown in brackets. Removed people who paid are listed too.
+    const counts = (b) => b.charge === "kitty" || b.checked_in;
+    const paidMoney = (b) => b.paid && ["card", "transfer", "cash"].includes(b.method);
+    const creditCol = (b) => (counts(b) ? creditPart(b) : b.charge === "payg" && paidMoney(b) ? -cashPart(b) : 0);
+    const removed = cancelled.filter(paidMoney).map((b) => ({ ...b, removed: true }));
+    const rows = [...bookings.filter((b) => b.charge !== "covered"), ...removed].map((b) => ({ b, card: by(b, "card"), fee: Number(b.card_fee || 0) + Number(b.topup_fee || 0), credit: b.removed ? -cashPart(b) : creditCol(b), cash: by(b, "cash"), transfer: by(b, "transfer") }));
     const tot = (k) => r2(rows.reduce((t, x) => t + x[k], 0));
     const T = { card: tot("card"), fee: tot("fee"), credit: tot("credit"), cash: tot("cash"), transfer: tot("transfer") };
     const grand = r2(T.card + T.cash + T.transfer);
     // Credit added this game: paid but didn't come, or cancelled for credit. Credit used: paid from credit by people who count.
-    const counts = (b) => b.charge === "kitty" || b.checked_in;
     const added = r2(bookings.filter((b) => b.charge === "payg" && !b.checked_in && b.paid && ["card", "transfer", "cash"].includes(b.method)).reduce((t, b) => t + cashPart(b), 0)
       + cancelled.reduce((t, b) => t + cashPart(b), 0));
     const used = r2(bookings.filter((b) => b.charge !== "covered" && counts(b)).reduce((t, b) => t + creditPart(b), 0));
@@ -1077,17 +1082,18 @@
     const here = bookings.filter((b) => b.checked_in), kittyHere = here.filter((b) => b.charge === "covered").length;
     const newKitty = bookings.filter((b) => b.charge === "kitty").length, P = Math.max(Number(target.price), 6);
     const expected = r2(Math.max(here.length - kittyHere - newKitty, 0) * P + newKitty * 15);
-    const taken = r2(grand + T.credit);
-    const c = (v) => `<td class="amt">${v ? Number(v).toFixed(2) : "–"}</td>`; // £ is in the heading
-    const who = (b) => `${esc(b.display_name)}<div class="muted" style="font-size:12px">${b.charge === "kitty" ? "Kitty £15" : `Pay & play ${money(b.amount)}`}${b.checked_in ? "" : " · not here"}</div>
-      ${full && b.method !== "credit" ? `<select data-meth="${b.id}" ${target.accounts_posted ? "disabled" : ""} style="padding:4px;margin-top:4px;font-size:13px"><option value="">Not paid</option>${Object.entries(METHODS).map(([k, v]) => `<option value="${k}" ${b.method === k ? "selected" : ""}>${v}</option>`).join("")}</select>`
+    const taken = r2(grand + T.credit); // what the players who count paid, credit included
+    const c = (v) => `<td class="amt">${v ? (v < 0 ? `(${Math.abs(v).toFixed(2)})` : Number(v).toFixed(2)) : "–"}</td>`; // £ is in the heading; minus in brackets
+    const who = (b) => `${esc(b.display_name)}<div class="muted" style="font-size:12px">${b.charge === "kitty" ? "Kitty £15" : `Pay & play ${money(b.amount)}`}${b.removed ? " · removed, now credit" : b.checked_in ? "" : " · not here"}</div>
+      ${b.removed ? "" : full && b.method !== "credit" ? `<select data-meth="${b.id}" ${target.accounts_posted ? "disabled" : ""} style="padding:4px;margin-top:4px;font-size:13px"><option value="">Not paid</option>${Object.entries(METHODS).map(([k, v]) => `<option value="${k}" ${b.method === k ? "selected" : ""}>${v}</option>`).join("")}</select>`
         : !b.paid && b.method !== "credit" ? '<span class="tag warn">Unpaid</span>' : ""}`;
     return `<h3>Payments · ${esc(target.title)} ${short(parseDay(target.day))}</h3>
       ${full ? '<p class="muted">Card payments fill in by themselves from Square, with the fee. Set how anyone else paid.</p>' : '<p class="muted">Card payments fill in by themselves from Square, with the fee.</p>'}
       <div class="scroll"><table class="wrap pay"><thead><tr><th>Player</th><th class="amt">Card £</th><th class="amt">Fee</th><th class="amt">Credit</th><th class="amt">Cash</th><th class="amt">Trans&shy;fer</th></tr></thead><tbody>
-        ${rows.map((x) => `<tr><td>${who(x.b)}</td>${c(x.card)}${c(x.fee)}${c(x.credit)}${c(x.cash)}${c(x.transfer)}</tr>`).join("") || '<tr><td colspan="6" class="muted">No one to pay yet.</td></tr>'}
-        <tr><td><b>Total</b></td>${["card", "fee", "credit", "cash", "transfer"].map((k) => `<td class="amt"><b>${T[k].toFixed(2)}</b></td>`).join("")}</tr>
+        ${rows.map((x) => `<tr><td>${who(x.b)}</td>${c(x.card)}${c(-x.fee)}${c(x.credit)}${c(x.cash)}${c(x.transfer)}</tr>`).join("") || '<tr><td colspan="6" class="muted">No one to pay yet.</td></tr>'}
+        <tr><td><b>Total</b></td>${["card", "fee", "credit", "cash", "transfer"].map((k) => `<b>${c(k === "fee" ? -T[k] : T[k]).replace(/<\/?td[^>]*>/g, "")}</b>`).map((v) => `<td class="amt">${v}</td>`).join("")}</tr>
       </tbody></table></div>
+      <p class="muted">Figures in brackets are taken off. Card fees are what Square kept. If someone paid but didn't come, or was removed, what they paid goes on their account as credit and shows in the Credit column in brackets. Credit used to pay for a game shows without brackets.</p>
       <div class="scroll"><table class="wrap"><tbody>
         <tr><td>Card ${money(T.card)} + cash ${money(T.cash)} + transfer ${money(T.transfer)}</td><td class="amt"><b>${money(grand)}</b></td></tr>
         <tr><td>Less card fees</td><td class="amt neg">−${money(T.fee)}</td></tr>
@@ -1097,7 +1103,7 @@
       </tbody></table></div>
       <h4>Expected</h4>
       <p class="muted">(${here.length} here − ${kittyHere} kitty players − ${newKitty} new kitty) × ${money(P)} + ${newKitty} new kitty × £15 = <b>${money(expected)}</b>.
-        Paid by everyone (card, credit, cash, transfer): <b>${money(taken)}</b>${taken === expected ? " ✓" : `, ${money(Math.abs(taken - expected))} ${taken > expected ? "more" : "less"}`}.${added ? ` That includes ${money(added)} from people who paid but didn't come, which becomes their credit.` : ""}</p>`;
+        Paid by everyone (card, credit, cash, transfer): <b>${money(taken)}</b>${taken === expected ? " ✓" : `, ${money(Math.abs(taken - expected))} ${taken > expected ? "more" : "less"}`}.${added ? ` Not counting ${money(added)} from people who paid but didn't come, which is now their credit.` : ""}</p>`;
   }
   // Football Supervisors: only the night's jobs (scan in, head count, who's not in, add someone with a QR to pay).
   // Football Accounts: payments, accounts and settings, for the admin only.
@@ -1187,7 +1193,7 @@
         <h3>Costs</h3>
         <div class="grid2">
           <div><label>Goals pitch hire (£)</label><input id="hire" type="number" step="0.01" value="${pitchDefault}"></div>
-          <div><label>Card fees (£)</label><input id="fees" type="number" step="0.01" value="${bookings.reduce((t, b) => t + Number(b.card_fee || 0) + Number(b.topup_fee || 0), 0).toFixed(2)}"></div>
+          <div><label>Card fees (£)</label><input id="fees" type="number" step="0.01" value="${[...bookings, ...cancelled].reduce((t, b) => t + Number(b.card_fee || 0) + Number(b.topup_fee || 0), 0).toFixed(2)}"></div>
         </div>
         <h3>Receipt photos</h3>
         <div class="grid2">
