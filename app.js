@@ -487,8 +487,9 @@
       <p class="note">Posted accounts, and every move between funds, are in the <a href="#chat:football-accounts">Accounts chat</a>.</p>
       <div class="form-actions"><button class="btn solid block" data-go="chat:football-accounts">Open the Accounts chat</button>${isAdmin() ? '<button class="btn block" data-go="eventaccounts">Events accounts</button>' : ""}${isAdmin() ? '<button class="btn block" data-go="squarecheck">Square check</button>' : ""}</div>
       ${isAdmin() ? `<h3>Family Events fund</h3>
-        <p class="muted">The Individual, Concessionary and Family subscriptions come in from Square by themselves every Saturday morning (or when you tap Sync from Square on Square check), with Square's fee taken off. Use this for the opening balance, other money in, and money spent.</p>
+        <p class="muted">The Individual, Concessionary and Family subscriptions come in from Square by themselves every Saturday morning, covering the last 7 days (or when you tap Sync from Square on Square check), with Square's fee taken off. Use this for the opening balance, other money in, and money spent.</p>
         ${familyWeeks(subs)}
+        <p class="note">Each week's subscriptions, and any money in or spent recorded here, are posted to the <a href="#chat:family-accounts">Family Events Accounts chat</a> on the Joined events tab.</p>
         <div class="grid2"><div><label>Money</label><select id="yDir"><option value="1">In</option><option value="-1">Spent</option></select></div>
           <div><label>Amount £</label><input id="yAmt" type="number" step="0.01" min="0.01" inputmode="decimal"></div></div>
         <label>Reason (everyone can see this)</label><input id="yWhy" placeholder="e.g. Opening balance, or Family day hall hire">
@@ -1082,7 +1083,7 @@
     + bs.filter((b) => b.topup_method === m && b.status === "booked").reduce((t, b) => t + Number(b.topup || 0), 0)).toFixed(2);
   // Payments for a game, person by person: card (with Square's fee), credit, cash and transfer, summed at the bottom,
   // then less the pitch hire and the credit movement, and what should have come in.
-  function paymentsBreakdown(target, bookings, cancelled, full, METHODS, pitchDefault) {
+  function paymentsBreakdown(target, bookings, cancelled, full, METHODS, pitchDefault, fs = {}, kittyMembers = null) {
     const r2 = (n) => Math.round(n * 100) / 100;
     const by = (b, m) => (b.paid && b.method === m ? cashPart(b) : 0) + (b.topup_method === m ? Number(b.topup || 0) : 0);
     // Credit column: credit used by people who count is a plus; money that goes on someone's account as credit
@@ -1122,9 +1123,44 @@
         <tr><td>Less Goals pitch hire <input id="pbHire" type="number" step="0.01" value="${pitchDefault}" data-before="${before}" style="width:90px;padding:6px;display:inline-block"></td><td class="amt neg" id="pbHireAmt">−${money(pitchDefault)}</td></tr>
         <tr><td><b>Left for the kitty</b></td><td class="amt"><b id="pbNet">${money(before - Number(pitchDefault))}</b></td></tr>
       </tbody></table></div>
-      <h4>Expected</h4>
-      <p class="muted">(${here.length} here − ${kittyHere} kitty players − ${newKitty} new kitty) × ${money(P)} + ${newKitty} new kitty × £15 = <b>${money(expected)}</b>.
-        Paid by everyone (card, credit, cash, transfer): <b>${money(taken)}</b>${taken === expected ? " ✓" : `, ${money(Math.abs(taken - expected))} ${taken > expected ? "more" : "less"}`}.${added ? ` Not counting ${money(added)} from people who paid but didn't come, which is now their credit.` : ""}</p>`;
+      ${(() => {
+        // Expected and actual, line by line: what the players who came should have paid, then what came in.
+        const payg = here.filter((b) => b.charge === "payg");
+        const full6 = (b) => Number(b.amount) + Number(b.intro_cover || 0); // the price before any new member offer
+        const paygSum = r2(payg.reduce((t, b) => t + full6(b), 0));
+        const same = payg.length && payg.every((b) => full6(b) === full6(payg[0]));
+        const joiners = bookings.filter((b) => b.charge === "kitty");
+        const kittyBooked = bookings.filter((b) => b.charge === "covered").length;
+        const offer = r2(payg.reduce((t, b) => t + Number(b.intro_cover || 0), 0));
+        const exp = r2(joiners.length * 15 + paygSum);
+        const netCredit = r2(used - added);
+        const got = r2(T.card + netCredit + T.cash + T.transfer + offer);
+        const sign = (v) => (v < 0 ? `(${money(-v)})` : money(v));
+        const line = (a, b, cls = "") => `<tr${cls ? ` class="${cls}"` : ""}><td>${a}</td><td class="amt">${b}</td></tr>`;
+        return `<h4>Expected and actual for this game</h4>
+        <div class="scroll"><table class="wrap"><tbody>
+          ${line("Turnout", here.length)}
+          ${line("Kitty players who came", `${kittyHere} out of ${kittyMembers ?? kittyBooked}`)}
+          ${line(`Joined the kitty: ${joiners.length} × £15`, money(joiners.length * 15))}
+          ${line(`Paid and played: ${payg.length}${same ? ` × ${money(full6(payg[0]))}` : ""}`, money(paygSum))}
+          ${line("<b>Total expected</b>", `<b>${money(exp)}</b>`)}
+        </tbody></table></div>
+        <h4>Received</h4>
+        <div class="scroll"><table class="wrap"><tbody>
+          ${line("Card via Square", money(T.card))}
+          ${line(`Credits (used ${money(used)} − kept as credit ${money(added)})`, sign(netCredit))}
+          ${line('Cash<div class="muted" style="font-size:12px">to be paid into Square</div>', money(T.cash))}
+          ${line('Transfers<div class="muted" style="font-size:12px">from the organiser for family</div>', money(T.transfer))}
+          ${line("From the events fund (new member offer)", money(offer))}
+          ${line("<b>Total received</b>", `<b>${money(got)}</b>`)}
+        </tbody></table></div>
+        <p class="note">${got === exp ? "Balanced ✓" : `Not balanced: ${money(Math.abs(got - exp))} ${got > exp ? "more" : "less"} than expected.`}</p>
+        ${offer ? `<div class="scroll"><table class="wrap"><tbody>
+          ${line("Events fund before", money(fs.events))}
+          ${line("New member offer", `(${money(offer)})`)}
+          ${line("<b>Events fund after</b>", `<b>${money(Number(fs.events) - offer)}</b>`)}
+        </tbody></table></div>` : ""}`;
+      })()}`;
   }
   // Football Supervisors: only the night's jobs (scan in, head count, who's not in, add someone with a QR to pay).
   // Football Accounts: payments, accounts and settings, for the admin only.
@@ -1156,6 +1192,8 @@
     const onList = new Set(currentBookings.map((b) => b.user_id).filter(Boolean));
     const full = isAdmin(); // organisers get door duty only
     const debts = full ? await q(sb.from("debts").select("*, profiles(name)").eq("cleared", false).order("on_date")) : [];
+    // How many are in the current kitty, for "9 out of 11 kitty players attended".
+    const kittyMembers = full && !night ? (await sb.from("profiles").select("id", { count: "exact", head: true }).eq("kitty_session", fs.session_no)).count : null;
     // cancelled before Friday 6pm: their money is in this game's takings but now belongs to the credits fund
     const cancelled = target ? (await q(sb.from("bookings").select("*").eq("event_id", target.id).eq("status", "cancelled")))
       .filter((b) => b.status === "cancelled" && b.charge === "payg" && b.paid && ["card", "transfer", "cash"].includes(b.method)) : [];
@@ -1195,7 +1233,7 @@
       <div class="form-actions"><button class="btn solid block" id="wiAdd">Add and mark as here</button></div>`}` : ""}
     </div>` : `<div class="card fb"><h2>Football Accounts</h2>
       ${target ? "" : '<p class="muted">No game to show yet.</p>'}
-      ${target ? paymentsBreakdown(target, bookings, cancelled, full, METHODS, pitchDefault) : ""}
+      ${target ? paymentsBreakdown(target, bookings, cancelled, full, METHODS, pitchDefault, fs, kittyMembers) : ""}
       ${full && target ? `      ${!target.accounts_posted && eventStart(target) <= new Date() ? `
         ${debts.length ? `<h3>Owed from earlier games</h3>${debts.map((d) => `<label class="check"><input type="checkbox" data-clear="${d.id}"> ${esc(d.profiles?.name || "Member")} owes ${money(d.amount)} (${esc(d.reason)})</label>`).join("")}` : ""}
         <div class="grid2">
@@ -1401,8 +1439,8 @@
 
   const ANNOUNCE = "announcements";
   // "football-accounts" is the one Accounts chat: football, events and transfers. Events Accounts was folded into it.
-  const ORG_POSTS = ["football-accounts"]; // chats only the admin posts in
-  const AUTO_GROUPS = ["football-accounts"]; // every approved member is in it, no sign-up
+  const ORG_POSTS = ["football-accounts", "family-accounts"]; // chats only the admin posts in
+  const AUTO_GROUPS = ["football-accounts", "family-accounts"]; // every approved member is in it, no sign-up
   // The accounts chats always show the newest post first; pinning doesn't apply there.
   const byGroup = (posts, id) => { const gp = posts.filter((p) => p.group_id === id);
     return ORG_POSTS.includes(id) ? gp.sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0)) : gp; };
@@ -1459,12 +1497,12 @@
       wirePosts(el, posts);
       return;
     }
-    const JOINED_ORDER = ["football-accounts", "quran"];
+    const JOINED_ORDER = ["football-accounts", "family-accounts", "quran"];
     const firstIn = (g) => { const i = JOINED_ORDER.indexOf(g.id); return i < 0 ? JOINED_ORDER.length : i; };
     const clubs = gs.filter((g) => g.members_only).sort((a, b) => firstIn(a) - firstIn(b)).map((g) => {
       const inIt = inGroup(g.id);
       const gp = byGroup(posts, g.id).slice(0, 4);
-      const icon = { "football-accounts": "🧾" }[g.id] || "📖";
+      const icon = { "football-accounts": "🧾", "family-accounts": "👨‍👩‍👧" }[g.id] || "📖";
       return `<section class="news club${GROUP_LOOK[g.id] ? ` ${GROUP_LOOK[g.id]}` : ""}">${groupHero(g.id, inIt)}<div class="row" style="justify-content:space-between"><h2>${inIt ? `<a href="#chat:${encodeURIComponent(g.id)}" style="color:inherit">${icon} ${esc(g.name)}</a>` : `${icon} ${esc(g.name)}`}</h2><span class="row" style="gap:8px">${inIt && !joined.includes(g.id) && !AUTO_GROUPS.includes(g.id) && !pending() ? `<button class="btn small" data-join="${esc(g.id)}">Sign up</button>` : ""}${inIt && (!ORG_POSTS.includes(g.id) || isOrg()) ? `<button class="btn small" data-compose="text" data-group="${esc(g.id)}">Post</button>` : ""}</span></div>
         ${inIt ? gp.map((p) => postHtml(p, comments.filter((c) => c.post_id === p.id), votes.filter((v) => v.post_id === p.id))).join("") || '<p class="muted">Nothing posted yet.</p>'
           : `<p class="muted">${esc(g.about)}</p>${pending() ? PENDING_NOTE : `<button class="btn solid" data-join="${esc(g.id)}">Sign up · Free</button>`}`}</section>`;
