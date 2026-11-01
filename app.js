@@ -477,6 +477,8 @@
     if (FUND_NAME[which]) lq = lq.eq("fund", which);
     const [fs, rows, accts, subs] = await Promise.all([q(sb.from("fund_state").select("*").single()), isAdmin() ? q(lq) : [], isOrg() ? q(sb.from("profiles").select("credit")) : [],
       isAdmin() ? q(sb.from("square_payments").select("paid_at,status,gross,fee,refunded,label").eq("kind", "subscription").order("paid_at", { ascending: false }).limit(300)).catch(() => []) : []]);
+    // The latest Square balance PDF (just its date here; the file loads after the page shows).
+    const stmt = (await sb.from("square_statement").select("file_name,uploaded_at").maybeSingle()).data;
     const onAccounts = Math.round(accts.reduce((t, r) => t + Number(r.credit || 0), 0) * 100) / 100;
     if (!alive()) return;
     el.innerHTML = `<div class="events"><div class="card fb"><h2>Funds & accounts</h2>
@@ -484,6 +486,9 @@
       <p class="muted">All funds together: <b>${money(Number(fs.kitty) + Number(fs.events) + Number(fs.credits || 0) + Number(fs.family || 0))}</b></p>
       ${isOrg() ? (onAccounts === Math.round(Number(fs.credits || 0) * 100) / 100 ? `<p class="note">Credits tally ✓ The credits fund matches the ${money(onAccounts)} of credit on members' accounts.</p>`
         : `<p class="note">Credits don't tally: members' accounts hold ${money(onAccounts)} but the credits fund shows ${money(fs.credits || 0)}.</p>`) : ""}
+      <div class="note"><b>Square balance</b><br>${stmt ? `Open the Square PDF to see that it matches the All funds together figure. <span class="muted">Uploaded ${short(new Date(stmt.uploaded_at))}.</span>
+        <div class="form-actions"><a class="btn block" id="sqPdf" target="_blank" rel="noopener">Loading the Square PDF…</a></div>` : "No Square PDF uploaded yet."}
+        ${isAdmin() ? `<label>${stmt ? "Replace it with this week's" : "Upload this week's"} Square balance PDF</label><input id="sqFile" type="file" accept="application/pdf,.pdf">` : ""}</div>
       ${FUND_INFO.replace("<details ", "<details open ")}
       <p class="note">Posted accounts, and every move between funds, are in the <a href="#chat:football-accounts">Accounts chat</a>.</p>
       <div class="form-actions"><button class="btn solid block" data-go="chat:football-accounts">Open the Accounts chat</button>${isAdmin() ? '<button class="btn block" data-go="eventaccounts">Events accounts</button>' : ""}${isAdmin() ? '<button class="btn block" data-go="squarecheck">Square check</button>' : ""}</div>
@@ -508,6 +513,22 @@
       ${rows.length ? ledgerTable(rows) : '<p class="muted">No changes yet.</p>'}</details>` : ""}
     </div></div>`;
     el.querySelectorAll("[data-f]").forEach((b) => (b.onclick = () => go(b.dataset.f ? "funds:" + b.dataset.f : "funds")));
+    if (stmt) q(sb.from("square_statement").select("pdf").single()).then(async (row) => {
+      const a = $("#sqPdf", el); if (!a || !alive()) return;
+      a.href = URL.createObjectURL(await (await fetch(row.pdf)).blob()); a.textContent = "Open the Square PDF";
+    }).catch(() => { const a = $("#sqPdf", el); if (a) a.textContent = "Couldn't load the PDF, try again later"; });
+    if ($("#sqFile", el)) $("#sqFile", el).onchange = () => {
+      const f = $("#sqFile", el).files[0]; if (!f) return;
+      if (!/pdf$/i.test(f.type) && !/\.pdf$/i.test(f.name)) return toast("Choose a PDF file");
+      if (f.size > 5e6) return toast("That PDF is over 5 MB. Try a smaller one");
+      const rd = new FileReader();
+      rd.onload = async () => {
+        const pdf = String(rd.result).replace(/^data:[^;,]*(;base64)?,/, "data:application/pdf;base64,");
+        try { await q(sb.from("square_statement").upsert({ id: 1, pdf, file_name: f.name, uploaded_at: new Date().toISOString(), uploaded_by: me.id }));
+          toast("Square PDF uploaded"); refresh(); } catch (e) { fail(e); }
+      };
+      rd.readAsDataURL(f);
+    };
     if ($("#yGo", el)) $("#yGo", el).onclick = async () => {
       const amt = Math.round(Number($("#yAmt", el).value) * 100) / 100, why = $("#yWhy", el).value.trim(), sign = Number($("#yDir", el).value);
       if (!(amt > 0)) return toast("Enter an amount");
