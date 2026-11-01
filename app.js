@@ -1169,7 +1169,17 @@
           ${line("Events fund before", money(fs.events))}
           ${line("New member offer", `(${money(offer)})`)}
           ${line("<b>Events fund after</b>", `<b>${money(Number(fs.events) - offer)}</b>`)}
-        </tbody></table></div>` : ""}`;
+        </tbody></table></div>` : ""}
+        ${target.accounts_posted ? "" : (() => {
+          // Credits held: at the last posted accounts, then this game's credit used and kept, then after.
+          const prior = Number(fs.credits_posted ?? fs.credits ?? 0), upd = r2(prior - used + added), now = r2(Number(fs.credits ?? upd));
+          return `<div class="scroll"><table class="wrap"><tbody>
+          ${line("Credits held before", money(prior))}
+          ${line("Movements out: credit used", `(${money(used)})`)}
+          ${line("Movements in: kept as credit", money(added))}
+          ${line("<b>Credits held after</b>", `<b>${money(upd)}</b>`)}
+        </tbody></table></div>${now !== upd ? `<p class="muted">Members' accounts hold ${money(now)} in credit now. The ${money(Math.abs(now - upd))} difference is either credit for no-shows, which is added when the accounts are posted, or credit changed outside this game. The Credits check in the accounts draft lists each one.</p>` : ""}`;
+        })()}`;
       })()}`;
   }
   // Football Supervisors: only the night's jobs (scan in, head count, who's not in, add someone with a QR to pay).
