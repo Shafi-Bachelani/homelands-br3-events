@@ -339,6 +339,7 @@
 
   const ACCESS = { members: "Members only", public: "Members and invited guests", open: "Open to everyone (anyone with the link or QR code)" };
   const ACCESS_TAG = { members: "Members only", public: "Open to invited guests", open: "Open to everyone" };
+  const fundOpts = (v) => [["events", "Events fund"], ["family", "Family Events fund"]].map(([k, t]) => `<option value="${k}" ${v === k ? "selected" : ""}>${t}</option>`).join("");
   const accessOpts = (v) => Object.entries(ACCESS).map(([k, t]) => `<option value="${k}" ${k === v ? "selected" : ""}>${t}</option>`).join("");
   const PRIVACY = "We keep your name, email and bookings only to run the association's events. For events open to the public, guests' details (name, age, gender and email) are kept only for the event and deleted 7 days after it. Ask the organiser and we'll delete your details sooner.";
   const DISCLAIMER = `This organisation is an unincorporated association of people with similar values. To see our values, see About us in the app and visit <a href="https://www.ourhomelands.co.uk/" target="_blank" rel="noopener">ourhomelands.co.uk</a>.`;
@@ -677,7 +678,7 @@
     if (!me) return needSignIn(el, "see the events accounts");
     loading(el);
     const [evs, all, done, fs, transfers] = await Promise.all([
-      q(sb.from("events").select("id,title,day,time,accounts_posted").neq("kind", "football").order("day", { ascending: false, nullsFirst: false })),
+      q(sb.from("events").select("id,title,day,time,accounts_posted,fund").neq("kind", "football").order("day", { ascending: false, nullsFirst: false })),
       q(sb.from("event_account_lines").select("id,event_id,kind,what,amount,created_at").order("created_at")).catch(() => null),
       q(sb.from("event_accounts").select("*")).catch(() => []),
       q(sb.from("fund_state").select("*").single()),
@@ -711,6 +712,14 @@
     const mv = posted ? null : pendingNet(moved);
     const before = posted ? { kitty: Number(posted.kitty_before), events: Number(posted.events_before) } : { kitty: Number(fs.kitty) - mv.kitty, events: Number(fs.events) - mv.events };
     const after = posted ? { kitty: Number(posted.kitty_after), events: Number(posted.events_after) } : { kitty: Number(fs.kitty), events: Number(fs.events) + P };
+    // A family event's profit or loss goes to the Family Events fund instead of the events fund.
+    const fam = (posted ? posted.fund : pick.fund) === "family";
+    if (fam) {
+      if (!posted) after.events = Number(fs.events);
+      before.family = posted ? Number(posted.fund_before) : Number(fs.family || 0);
+      after.family = posted ? Number(posted.fund_after) : Number(fs.family || 0) + P;
+    }
+    const fundName = fam ? "Family Events fund" : "events fund";
     const pics = photoOrder(lines);
     const appTickets = bks.filter((b) => b.paid && b.status === "booked").reduce((t, b) => t + Number(b.amount), 0);
     const cardFees = bks.reduce((t, b) => t + Number(b.card_fee || 0), 0);
@@ -725,19 +734,20 @@
         <tr><td><b>Total ${k === "receipt" ? "receipts" : LINE_KIND[k].slice(3).toLowerCase()}</b></td><td class="amt"><b>${money(total(k))}</b></td>${open ? "<td></td>" : ""}</tr>
       </tbody></table></div>`;
     };
-    const fundRow = (label, k, e, cls = "") => `<tr${cls}><td style="white-space:normal">${label}</td><td class="amt ${k < 0 ? "neg" : ""}">${k === null ? "" : money(k)}</td><td class="amt ${e < 0 ? "neg" : ""}">${e === null ? "" : money(e)}</td></tr>`;
+    const cell = (v) => `<td class="amt ${v < 0 ? "neg" : ""}">${v === null || v === undefined ? "" : money(v)}</td>`;
+    const fundRow = (label, k, e, f) => `<tr><td style="white-space:normal">${label}</td>${cell(k)}${cell(e)}${fam ? cell(f) : ""}</tr>`;
     const summary = `<h3>Summary</h3><div class="scroll"><table><tbody>
         <tr><td>Receipts</td><td class="amt">${money(R)}</td></tr>
         <tr><td>Less A. Hiring costs</td><td class="amt">${money(-H)}</td></tr>
         <tr><td>Less B. Ancillary costs</td><td class="amt">${money(-A)}</td></tr>
         <tr><td><b>${P < 0 ? "Loss" : "Profit"}</b></td><td class="amt ${P < 0 ? "neg" : ""}"><b>${money(P)}</b></td></tr>
       </tbody></table></div>
-      <h3>Funds</h3><div class="scroll"><table><thead><tr><th></th><th class="amt">Kitty</th><th class="amt">Events</th></tr></thead><tbody>
-        ${fundRow(`<b>Before</b> <span class="muted">(at the last accounts)</span>`, before.kitty, before.events)}
+      <h3>Funds</h3><div class="scroll"><table><thead><tr><th></th><th class="amt">Kitty</th><th class="amt">Events</th>${fam ? '<th class="amt">Family</th>' : ""}</tr></thead><tbody>
+        ${fundRow(`<b>Before</b> <span class="muted">(at the last accounts)</span>`, before.kitty, before.events, before.family)}
         ${moved.map((t) => { const a = Number(t.amount), f = t.from || t.from_fund;
-          return fundRow(`Transfer: ${esc(t.reason)} <span class="muted">${short(parseDay(t.on_date))}</span>`, f === "kitty" ? -a : a, f === "events" ? -a : a); }).join("")}
-        ${fundRow(`Event ${P < 0 ? "loss" : "profit"}`, null, P)}
-        ${fundRow(`<b>${posted ? "After" : "After posting"}</b>`, after.kitty, after.events)}
+          return fundRow(`Transfer: ${esc(t.reason)} <span class="muted">${short(parseDay(t.on_date))}</span>`, f === "kitty" ? -a : a, f === "events" ? -a : a, null); }).join("")}
+        ${fundRow(`Event ${P < 0 ? "loss" : "profit"}`, null, fam ? null : P, fam ? P : null)}
+        ${fundRow(`<b>${posted ? "After" : "After posting"}</b>`, after.kitty, after.events, after.family)}
       </tbody></table></div>`;
 
     const L = "________";
@@ -751,10 +761,10 @@
         t.push(`Total ${money(total(k))}`, L);
       });
       t.push(`Receipts ${money(R)}`, `Less costs ${money(H + A)}`, `${P < 0 ? "Loss" : "Profit"} ${money(P)}`, L,
-        "Before funds", `Kitty fund ${money(before.kitty)}`, `Events fund ${money(before.events)}`, L,
+        "Before funds", `Kitty fund ${money(before.kitty)}`, `Events fund ${money(before.events)}`, ...(fam ? [`Family Events fund ${money(before.family)}`] : []), L,
         "Transfers between funds", ...(moved.length ? moved.map(transferLine) : ["None"]), L,
-        `Event ${P < 0 ? "loss from" : "profit to"} events fund ${money(Math.abs(P))}`, L,
-        "Updated funds", `Kitty fund ${money(after.kitty)}`, `Events fund ${money(after.events)}`);
+        `Event ${P < 0 ? "loss from" : "profit to"} ${fundName} ${money(Math.abs(P))}`, L,
+        "Updated funds", `Kitty fund ${money(after.kitty)}`, `Events fund ${money(after.events)}`, ...(fam ? [`Family Events fund ${money(after.family)}`] : []));
       return t.join("\n");
     };
 
@@ -762,7 +772,7 @@
       ${fundStats(fs)}
       <div class="tabs-scroll">${list.map((e) => `<button class="${e.id === pick.id ? "on" : ""}" data-ev="${e.id}">${esc(e.title)} · ${e.day ? short(parseDay(e.day)) : "TBC"}${postedOf(e) ? " ✓" : ""}</button>`).join("")}</div>
       <h2 style="margin-top:14px">${esc(pick.title)}</h2>
-      <p class="muted">${evDate(pick)} · ${posted ? `Accounts posted ${short(new Date(posted.posted_at))}` : "Not posted yet"}</p>
+      <p class="muted">${evDate(pick)} · Linked to the ${fundName} · ${posted ? `Accounts posted ${short(new Date(posted.posted_at))}` : "Not posted yet"}</p>
       ${KIND_ORDER.map(section).join("")}
       ${open ? `<h3>Add a receipt or cost</h3>
         ${appTickets && !has("Tickets paid in the app") ? `<button class="btn small" id="qTickets" style="margin:0 8px 8px 0">Add ${money(appTickets)} tickets paid in the app</button>` : ""}
@@ -777,7 +787,7 @@
         <div class="form-actions"><button class="btn solid block" id="eaDraft" ${lines.length ? "" : "disabled"}>Draft accounts</button></div>
         <div id="eaBox" hidden><label>Accounts (edit freely)</label><textarea id="eaText" rows="18" class="mono"></textarea>
           <p class="muted" style="font-size:14px">{photo 1}, {photo 2} and so on show that receipt's photo at that spot in the chat post.</p>
-          <div class="form-actions" style="display:grid;gap:10px"><button class="btn solid block" id="eaPost">Confirm and post to the Accounts chat</button><button class="btn block" id="eaCopy">Copy for WhatsApp</button></div></div>` : ""}
+          <div class="form-actions" style="display:grid;gap:10px"><button class="btn solid block" id="eaPost">Confirm and post to the ${fam ? "Family Events Accounts" : "Accounts"} chat</button><button class="btn block" id="eaCopy">Copy for WhatsApp</button></div></div>` : ""}
     </div></div>`;
 
     el.querySelectorAll("[data-ev]").forEach((b) => (b.onclick = () => go("eventaccounts:" + b.dataset.ev)));
@@ -804,11 +814,11 @@
     $("#eaDraft", el).onclick = () => { $("#eaText", el).value = draft(); $("#eaBox", el).hidden = false; $("#eaText", el).focus(); };
     $("#eaCopy", el).onclick = async () => { try { await navigator.clipboard.writeText(noPhotos($("#eaText", el).value)); toast("Copied. Paste it into WhatsApp"); } catch { $("#eaText", el).select(); toast("Select all and copy"); } };
     $("#eaPost", el).onclick = async () => {
-      if (!confirm(`Post the accounts for ${pick.title}? The ${P < 0 ? `loss of ${money(-P)} comes out of` : `profit of ${money(P)} goes into`} the events fund, and the receipts and costs can't be changed after.`)) return;
+      if (!confirm(`Post the accounts for ${pick.title}? The ${P < 0 ? `loss of ${money(-P)} comes out of` : `profit of ${money(P)} goes into`} the ${fundName}, and the receipts and costs can't be changed after.`)) return;
       try {
         $("#eaPost", el).disabled = true;
         await q(sb.rpc("post_event_accounts", { p_event: pick.id, p_body: $("#eaText", el).value }));
-        toast("Accounts posted to the Accounts chat"); refresh();
+        toast(`Accounts posted to the ${fam ? "Family Events Accounts" : "Accounts"} chat`); refresh();
       } catch (e) { $("#eaPost", el).disabled = false; fail(e); }
     };
   }
@@ -2057,6 +2067,7 @@
       <label>Where</label><input id="loc">
       <div class="grid2"><div><label>Price per place (£, 0 = free)</label><input id="pr" type="number" min="0" step="0.5" value="0"></div><div><label>Places</label><input id="cap" type="number" min="1" value="30"></div></div>
       <label>Who can book</label><select id="acc">${accessOpts("members")}</select>
+      <label>Linked fund (gets the profit, or pays the loss)</label><select id="fund">${fundOpts("events")}</select>
       <label>Details</label><textarea id="det"></textarea>
       <label>Picture (optional)</label><input id="pic" type="file" accept="image/*">
       <label>Link instead of booking here (optional, e.g. the debate's page in Let's Debate)</label><input id="lnk" type="url" placeholder="https://debate.ourhomelands.co.uk/debates/…">
@@ -2074,6 +2085,7 @@
             <div><label>Price (£)</label><input data-f="price" type="number" min="0" step="0.5" value="${Number(e.price)}"></div><div><label>Places</label><input data-f="capacity" type="number" min="1" value="${e.capacity}"></div>
             <div style="grid-column:1/-1"><label>Where</label><input data-f="location" value="${esc(e.location || "")}"></div>
             <div style="grid-column:1/-1"><label>Who can book</label><select data-f="access">${accessOpts(e.access)}</select></div>
+            <div style="grid-column:1/-1"><label>Linked fund (gets the profit, or pays the loss)</label><select data-f="fund" ${e.accounts_posted ? "disabled" : ""}>${fundOpts(e.fund || "events")}</select></div>
             <div style="grid-column:1/-1"><label>Details</label><textarea data-f="details" rows="6">${esc(e.details || "")}</textarea></div>
             <div style="grid-column:1/-1"><label>Link instead of booking here (optional)</label><input data-f="link" type="url" value="${esc(e.link || "")}" placeholder="https://debate.ourhomelands.co.uk/debates/…"></div>
             <div style="grid-column:1/-1"><label>Picture</label>${e.image ? `<img class="event-pic" src="${esc(e.image)}" alt="">` : ""}<input data-pic="${e.id}" type="file" accept="image/*">${e.image ? `<button class="btn small" data-nopic="${e.id}" style="margin-top:8px">Remove picture</button>` : ""}</div></div>
@@ -2108,7 +2120,7 @@
     if (soon.length) { const pick = () => whosIn($("#ciList", el), $("#ciEv", el).value); $("#ciEv", el).onchange = pick; pick(); }
     $("#add", el).onclick = async () => {
       const ev = { kind: "event", title: $("#t", el).value.trim(), day: $("#d", el).value, time: $("#tm", el).value, location: $("#loc", el).value.trim(),
-        price: Number($("#pr", el).value) || 0, capacity: Number($("#cap", el).value) || 1, access: $("#acc", el).value, details: $("#det", el).value.trim(),
+        price: Number($("#pr", el).value) || 0, capacity: Number($("#cap", el).value) || 1, access: $("#acc", el).value, fund: $("#fund", el).value, details: $("#det", el).value.trim(),
         link: $("#lnk", el).value.trim() || null };
       if (!ev.title || !ev.time) return toast("Fill in at least the name and start time");
       if (ev.link && !/^https?:\/\//.test(ev.link)) return toast("The link should start with https://");
@@ -2143,6 +2155,7 @@
       const box = $(`[data-edit="${b.dataset.upd}"]`, el), f = (k) => $(`[data-f="${k}"]`, box).value;
       if (!f("title").trim()) return toast("Give the event a name");
       const upd = { title: f("title").trim(), location: f("location").trim(), details: f("details").trim(), day: f("day") || null, time: f("time"), price: Number(f("price")) || 0, capacity: Number(f("capacity")) || 1, access: f("access"), link: f("link").trim() || null };
+      if (!$('[data-f="fund"]', box).disabled) upd.fund = f("fund");
       if (upd.link && !/^https?:\/\//.test(upd.link)) return toast("The link should start with https://");
       const file = $(`[data-pic="${b.dataset.upd}"]`, box).files[0];
       if (file) upd.image = await picture(file);
