@@ -862,7 +862,7 @@
         <li>No game is free: £6 pay and play, or £15 to join the kitty fund.${Number(ev.price) < 6 ? ` <b>Launch offer: ${money(ev.price).replace(".00", "")} pay and play for this game when you book in the app. Friends you add pay the full £6.</b>` : ""}</li>
         <li>No booking space? Come for the fun. If someone is late you'll be given their spot.</li>
         <li>Come early to guarantee play. No play is guaranteed if you're late.</li>
-        <li>Can't make it? Remove yourself here, and everyone below moves up a place.</li>
+        <li>Can't make it? Please cancel as soon as you know, to free up the space for someone else. Remove yourself here and everyone below moves up a place. This works on trust, and we, the organisers, trust you!</li>
       </ul>
       <h3>Guaranteed play and what to expect</h3>
       <p>Guaranteed play for places 1 to ${PITCH}, so long as you arrive on time. If we reach 28 or more players, we book a second pitch and accept a maximum of 30. If we reach 36, we play sudden death games on two pitches, with the last 10-minute game between the two teams with the most 2-goal wins.</p>
@@ -938,7 +938,7 @@
           ${!mine.paid ? `<p class="note">Please pay <b>${money(cashPart(mine))}</b>${Number(mine.credit_used) > 0 ? ` (${money(mine.credit_used)} of the ${money(mine.amount)} came from your credit)` : ""} ${new Date(mine.created_at) > payBy ? "within <b>30 minutes</b> of booking" : "before <b>Thursday 11pm</b>"}, or your place is released and you can't rebook this game.${me.family ? " Pay the organiser by bank transfer." : " Pay by card here, or by bank transfer to the organiser."}</p>
             ${me.family ? "" : `<button class="btn solid" data-pay="${esc(mine.code)}" style="margin-bottom:10px">Pay ${money(cashPart(mine))} by card</button>`}` : ""}
           ${me.family && mine.method === "transfer" ? `<p class="muted">As family you're added automatically each week. If you can't come, remove yourself to free your place.</p>`
-            : mine.charge === "payg" && mine.paid ? `<p class="muted">If you can't come, remove yourself and your ${money(mine.amount).replace(".00", "")} becomes credit for your next game.</p>` : ""}
+            : mine.charge === "payg" && mine.paid ? `<p class="muted">If you can't make it, please cancel as soon as you know, to free up the space for someone else. Your ${money(mine.amount).replace(".00", "")} becomes credit for your next game. This works on trust, and we, the organisers, trust you!</p>` : ""}
           <button class="btn" id="cancel">Remove me</button>`;
       } else if (pending()) body = `<p class="note">You can book once the admin has approved your membership.</p>`;
       else if (removed) body = `<p class="note">Your place was released because it wasn't paid in time, so you can't rebook this game. Message the organiser if something went wrong.</p>`;
