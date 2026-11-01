@@ -52,7 +52,6 @@
   const at = (day, t, addDays = 0) => { const d = parseDay(day); d.setDate(d.getDate() + addDays); const [h, m] = t.split(":").map(Number); d.setHours(h, m, 0, 0); return d; };
   const fbOpens = (ev) => at(ev.day, "13:00", -2);
   const fbPayBy = (ev) => at(ev.day, "23:00", -1);
-  const fbCreditUntil = (ev) => at(ev.day, "18:00");
   const eventStart = (ev) => at(ev.day, hhmm(ev.time));
   const eventEnd = (ev) => { const d = eventStart(ev); d.setHours(d.getHours() + 3); return d; };
   function ago(dateStr) {
@@ -439,7 +438,7 @@
   const FUND_INFO = `<details class="info"><summary><b>What the funds are</b></summary>
         <p><b>Kitty fund</b> runs the football. £15 kitty contributions and pay-and-play payments go in, and it pays the pitch hire and card fees. The kitty restarts when the fund drops below £150 or after 5 games, and anything over £100 then moves to the events fund.</p>
         <p><b>Events fund</b> is built up from the kitty and from owed money that's been paid. It's used for small come-together events and to buy new footballs and other things that keep the football going.</p>
-        <p><b>Credits</b> is money members have paid but not used: they paid but didn't play, or cancelled before Friday 6pm. It still belongs to them. When they pay for a game from their credit, it moves from credits into the kitty fund. Advance payments are only taken through the app, which records every credit added or used, so the credits fund always matches the total credit on members' accounts.</p>
+        <p><b>Credits</b> is money members have paid but not used: they paid but didn't play, or cancelled. It still belongs to them. When they pay for a game from their credit, it moves from credits into the kitty fund. Advance payments are only taken through the app, which records every credit added or used, so the credits fund always matches the total credit on members' accounts.</p>
         <p><b>BR3 Family Events fund</b> is kept in Square for family events. Each weekly subscription payment comes in by itself, with Square's fee taken off.</p>
       </details>`;
   const ledgerTable = (rows) => `<div class="scroll"><table><thead><tr><th>Date</th><th>Fund</th><th>Reason</th><th class="amt">Change</th><th class="amt">Balance</th></tr></thead><tbody>${rows.map((l) => `<tr><td>${short(parseDay(l.on_date))}</td><td>${FUND_NAME[l.fund] || ""}</td><td>${esc(l.what)}</td><td class="amt ${Number(l.amount) < 0 ? "neg" : ""}">${money(l.amount)}</td><td class="amt">${money(l.balance)}</td></tr>`).join("")}</tbody></table></div>`;
@@ -917,10 +916,10 @@
     if (!ev) {
       top = `<div class="card fb"><h2>No game scheduled</h2><p class="muted">The next Friday game hasn't been added yet.</p></div>`;
     } else {
-      const opens = fbOpens(ev), payBy = fbPayBy(ev), creditUntil = fbCreditUntil(ev), start = eventStart(ev);
-      const phase = now < opens ? "closed" : now < payBy ? "open" : now < creditUntil ? "locked" : now < start ? "late" : "played";
-      const PH = { closed: "Booking opens Wednesday 1pm", open: "Booking open", locked: "Pay deadline passed", late: "Cancellations no longer give credit", played: "Game played" };
-      const steps = [["Wed 1pm", "Booking opens", opens, "open"], ["Thu 11pm", "Unpaid places removed", payBy, "locked"], ["Fri 6pm", "Last chance to cancel for credit", creditUntil, "late"], [`Fri ${hhmm(ev.time)}`, `Game ${week} of up to 5 in kitty ${fs.session_no}`, start, "played"]];
+      const opens = fbOpens(ev), payBy = fbPayBy(ev), start = eventStart(ev);
+      const phase = now < opens ? "closed" : now < payBy ? "open" : now < start ? "locked" : "played";
+      const PH = { closed: "Booking opens Wednesday 1pm", open: "Booking open", locked: "Pay deadline passed", played: "Game played" };
+      const steps = [["Wed 1pm", "Booking opens", opens, "open"], ["Thu 11pm", "Unpaid places removed", payBy, "locked"], [`Fri ${hhmm(ev.time)}`, `Game ${week} of up to 5 in kitty ${fs.session_no}`, start, "played"]];
       top = `<div class="card fb">
         <div class="row" style="justify-content:space-between;flex-wrap:wrap"><h2>${esc(ev.title)}</h2><span class="tag">${PH[phase]}</span></div>
         <p class="muted">${fmtEvent(ev)} · ${esc(ev.location)}</p>
@@ -939,7 +938,7 @@
           ${!mine.paid ? `<p class="note">Please pay <b>${money(cashPart(mine))}</b>${Number(mine.credit_used) > 0 ? ` (${money(mine.credit_used)} of the ${money(mine.amount)} came from your credit)` : ""} ${new Date(mine.created_at) > payBy ? "within <b>30 minutes</b> of booking" : "before <b>Thursday 11pm</b>"}, or your place is released and you can't rebook this game.${me.family ? " Pay the organiser by bank transfer." : " Pay by card here, or by bank transfer to the organiser."}</p>
             ${me.family ? "" : `<button class="btn solid" data-pay="${esc(mine.code)}" style="margin-bottom:10px">Pay ${money(cashPart(mine))} by card</button>`}` : ""}
           ${me.family && mine.method === "transfer" ? `<p class="muted">As family you're added automatically each week. If you can't come, remove yourself to free your place.</p>`
-            : mine.charge === "payg" && mine.paid ? `<p class="muted">${now < creditUntil ? `Remove yourself before Friday 6pm and your ${money(mine.amount).replace(".00", "")} becomes credit for your next game.` : "It's after Friday 6pm, so removing yourself now won't give credit."}</p>` : ""}
+            : mine.charge === "payg" && mine.paid ? `<p class="muted">If you can't come, remove yourself and your ${money(mine.amount).replace(".00", "")} becomes credit for your next game.</p>` : ""}
           <button class="btn" id="cancel">Remove me</button>`;
       } else if (pending()) body = `<p class="note">You can book once the admin has approved your membership.</p>`;
       else if (removed) body = `<p class="note">Your place was released because it wasn't paid in time, so you can't rebook this game. Message the organiser if something went wrong.</p>`;
@@ -1084,7 +1083,7 @@
     const expected = r2(Math.max(here.length - kittyHere - newKitty, 0) * P + newKitty * 15);
     const taken = r2(grand + T.credit); // what the players who count paid, credit included
     const c = (v) => `<td class="amt">${v ? (v < 0 ? `(${Math.abs(v).toFixed(2)})` : Number(v).toFixed(2)) : "–"}</td>`; // £ is in the heading; minus in brackets
-    const who = (b) => `${esc(b.display_name)}<div class="muted" style="font-size:12px">${b.charge === "kitty" ? "Kitty £15" : `Pay & play ${money(b.amount)}`}${b.removed ? " · removed, now credit" : b.checked_in ? "" : " · not here"}</div>
+    const who = (b) => `${esc(b.display_name)}<div class="muted" style="font-size:12px">${b.charge === "kitty" ? "Kitty £15" : `Pay & play ${money(b.amount)}`}${b.removed ? "" : b.checked_in ? "" : b.charge === "payg" && b.paid && b.method !== "owes" ? "" : " · not here"}</div>${b.removed || (!b.checked_in && b.charge === "payg" && b.paid && b.method !== "owes") ? `<span class="tag warn">No show${b.removed ? ", removed" : ""}</span>` : ""}
       ${b.removed ? "" : full && b.method !== "credit" ? `<select data-meth="${b.id}" ${target.accounts_posted ? "disabled" : ""} style="padding:4px;margin-top:4px;font-size:13px"><option value="">Not paid</option>${Object.entries(METHODS).map(([k, v]) => `<option value="${k}" ${b.method === k ? "selected" : ""}>${v}</option>`).join("")}</select>`
         : !b.paid && b.method !== "credit" ? '<span class="tag warn">Unpaid</span>' : ""}`;
     return `<h3>Payments · ${esc(target.title)} ${short(parseDay(target.day))}</h3>
@@ -1093,7 +1092,7 @@
         ${rows.map((x) => `<tr><td>${who(x.b)}</td>${c(x.card)}${c(-x.fee)}${c(x.credit)}${c(x.cash)}${c(x.transfer)}</tr>`).join("") || '<tr><td colspan="6" class="muted">No one to pay yet.</td></tr>'}
         <tr><td><b>Total</b></td>${["card", "fee", "credit", "cash", "transfer"].map((k) => `<b>${c(k === "fee" ? -T[k] : T[k]).replace(/<\/?td[^>]*>/g, "")}</b>`).map((v) => `<td class="amt">${v}</td>`).join("")}</tr>
       </tbody></table></div>
-      <p class="muted">Figures in brackets are taken off. Card fees are what Square kept. If someone paid but didn't come, or was removed, what they paid goes on their account as credit and shows in the Credit column in brackets. Credit used to pay for a game shows without brackets.</p>
+      <p class="muted">Figures in brackets are taken off. Card fees are what Square kept. If someone paid but didn't come (No show), whether they removed themselves, were removed, or just weren't ticked as here, what they paid goes on their account as credit and shows in the Credit column in brackets. Credit used to pay for a game shows without brackets.</p>
       <div class="scroll"><table class="wrap"><tbody>
         <tr><td>Card ${money(T.card)} + cash ${money(T.cash)} + transfer ${money(T.transfer)}</td><td class="amt"><b>${money(grand)}</b></td></tr>
         <tr><td>Less card fees</td><td class="amt neg">−${money(T.fee)}</td></tr>
@@ -1765,7 +1764,7 @@
       ${debts.length ? `<p class="note">You owe ${money(debts.reduce((t, d) => t + Number(d.amount), 0))} from ${debts.map((d) => esc(d.reason)).join(", ")}. Please pay the organiser.</p>` : ""}
       <h2 style="margin-top:24px">My credit</h2>
       <p><b>${money(me.credit || 0)}</b> <span class="muted">held on your account</span></p>
-      <p class="muted">Credit comes from paying for football and then not playing, or cancelling before Friday 6pm. It's used automatically for your next booking.</p>
+      <p class="muted">Credit comes from paying for football and then not playing, or cancelling. It's used automatically for your next booking.</p>
       ${myCredit.length ? `<div class="scroll"><table><tbody>${myCredit.map((l) => `<tr><td>${short(new Date(l.created_at || l.on_date))}</td><td>${esc(l.what.slice(me.name.length + 2))}</td><td class="amt ${Number(l.amount) < 0 ? "neg" : ""}">${money(l.amount)}</td></tr>`).join("")}</tbody></table></div>` : '<p class="muted">No credit added or used yet.</p>'}
       <h2 style="margin-top:24px">My tickets</h2>
       ${upcoming.map((b) => `<button class="list-row block-row" data-ticket="${b.code}"><div><b>${esc(b.events.title)}</b><span class="muted">${short(parseDay(b.events.day))} · ${hhmm(b.events.time)} · ${b.status === "waitlist" ? "Waitlist" : b.paid ? "Paid" : "Not paid yet"}</span></div>${ICON.chev}</button>`).join("") || '<p class="muted">No upcoming bookings.</p>'}
