@@ -1083,7 +1083,7 @@
     + bs.filter((b) => b.topup_method === m && b.status === "booked").reduce((t, b) => t + Number(b.topup || 0), 0)).toFixed(2);
   // Payments for a game, person by person: card (with Square's fee), credit, cash and transfer, summed at the bottom,
   // then less the pitch hire and the credit movement, and what should have come in.
-  function paymentsBreakdown(target, bookings, cancelled, full, METHODS, pitchDefault) {
+  function paymentsBreakdown(target, bookings, cancelled, full, METHODS, pitchDefault, fs = {}, kittyMembers = null) {
     const r2 = (n) => Math.round(n * 100) / 100;
     const by = (b, m) => (b.paid && b.method === m ? cashPart(b) : 0) + (b.topup_method === m ? Number(b.topup || 0) : 0);
     // Credit column: credit used by people who count is a plus; money that goes on someone's account as credit
@@ -1123,9 +1123,44 @@
         <tr><td>Less Goals pitch hire <input id="pbHire" type="number" step="0.01" value="${pitchDefault}" data-before="${before}" style="width:90px;padding:6px;display:inline-block"></td><td class="amt neg" id="pbHireAmt">−${money(pitchDefault)}</td></tr>
         <tr><td><b>Left for the kitty</b></td><td class="amt"><b id="pbNet">${money(before - Number(pitchDefault))}</b></td></tr>
       </tbody></table></div>
-      <h4>Expected</h4>
-      <p class="muted">(${here.length} here − ${kittyHere} kitty players − ${newKitty} new kitty) × ${money(P)} + ${newKitty} new kitty × £15 = <b>${money(expected)}</b>.
-        Paid by everyone (card, credit, cash, transfer): <b>${money(taken)}</b>${taken === expected ? " ✓" : `, ${money(Math.abs(taken - expected))} ${taken > expected ? "more" : "less"}`}.${added ? ` Not counting ${money(added)} from people who paid but didn't come, which is now their credit.` : ""}</p>`;
+      ${(() => {
+        // Expected and actual, line by line: what the players who came should have paid, then what came in.
+        const payg = here.filter((b) => b.charge === "payg");
+        const full6 = (b) => Number(b.amount) + Number(b.intro_cover || 0); // the price before any new member offer
+        const paygSum = r2(payg.reduce((t, b) => t + full6(b), 0));
+        const same = payg.length && payg.every((b) => full6(b) === full6(payg[0]));
+        const joiners = bookings.filter((b) => b.charge === "kitty");
+        const kittyBooked = bookings.filter((b) => b.charge === "covered").length;
+        const offer = r2(payg.reduce((t, b) => t + Number(b.intro_cover || 0), 0));
+        const exp = r2(joiners.length * 15 + paygSum);
+        const netCredit = r2(used - added);
+        const got = r2(T.card + netCredit + T.cash + T.transfer + offer);
+        const sign = (v) => (v < 0 ? `(${money(-v)})` : money(v));
+        const line = (a, b, cls = "") => `<tr${cls ? ` class="${cls}"` : ""}><td>${a}</td><td class="amt">${b}</td></tr>`;
+        return `<h4>Expected and actual for this game</h4>
+        <div class="scroll"><table class="wrap"><tbody>
+          ${line("Turnout", here.length)}
+          ${line("Kitty players who came", `${kittyHere} out of ${kittyMembers ?? kittyBooked}`)}
+          ${line(`Joined the kitty: ${joiners.length} × £15`, money(joiners.length * 15))}
+          ${line(`Paid and played: ${payg.length}${same ? ` × ${money(full6(payg[0]))}` : ""}`, money(paygSum))}
+          ${line("<b>Total expected</b>", `<b>${money(exp)}</b>`)}
+        </tbody></table></div>
+        <h4>Received</h4>
+        <div class="scroll"><table class="wrap"><tbody>
+          ${line("Card via Square", money(T.card))}
+          ${line(`Credits (used ${money(used)} − kept as credit ${money(added)})`, sign(netCredit))}
+          ${line('Cash<div class="muted" style="font-size:12px">to be paid into Square</div>', money(T.cash))}
+          ${line('Transfers<div class="muted" style="font-size:12px">from the organiser for family</div>', money(T.transfer))}
+          ${line("From the events fund (new member offer)", money(offer))}
+          ${line("<b>Total received</b>", `<b>${money(got)}</b>`)}
+        </tbody></table></div>
+        <p class="note">${got === exp ? "Balanced ✓" : `Not balanced: ${money(Math.abs(got - exp))} ${got > exp ? "more" : "less"} than expected.`}</p>
+        ${offer ? `<div class="scroll"><table class="wrap"><tbody>
+          ${line("Events fund before", money(fs.events))}
+          ${line("New member offer", `(${money(offer)})`)}
+          ${line("<b>Events fund after</b>", `<b>${money(Number(fs.events) - offer)}</b>`)}
+        </tbody></table></div>` : ""}`;
+      })()}`;
   }
   // Football Supervisors: only the night's jobs (scan in, head count, who's not in, add someone with a QR to pay).
   // Football Accounts: payments, accounts and settings, for the admin only.
@@ -1157,6 +1192,8 @@
     const onList = new Set(currentBookings.map((b) => b.user_id).filter(Boolean));
     const full = isAdmin(); // organisers get door duty only
     const debts = full ? await q(sb.from("debts").select("*, profiles(name)").eq("cleared", false).order("on_date")) : [];
+    // How many are in the current kitty, for "9 out of 11 kitty players attended".
+    const kittyMembers = full && !night ? (await sb.from("profiles").select("id", { count: "exact", head: true }).eq("kitty_session", fs.session_no)).count : null;
     // cancelled before Friday 6pm: their money is in this game's takings but now belongs to the credits fund
     const cancelled = target ? (await q(sb.from("bookings").select("*").eq("event_id", target.id).eq("status", "cancelled")))
       .filter((b) => b.status === "cancelled" && b.charge === "payg" && b.paid && ["card", "transfer", "cash"].includes(b.method)) : [];
@@ -1196,7 +1233,7 @@
       <div class="form-actions"><button class="btn solid block" id="wiAdd">Add and mark as here</button></div>`}` : ""}
     </div>` : `<div class="card fb"><h2>Football Accounts</h2>
       ${target ? "" : '<p class="muted">No game to show yet.</p>'}
-      ${target ? paymentsBreakdown(target, bookings, cancelled, full, METHODS, pitchDefault) : ""}
+      ${target ? paymentsBreakdown(target, bookings, cancelled, full, METHODS, pitchDefault, fs, kittyMembers) : ""}
       ${full && target ? `      ${!target.accounts_posted && eventStart(target) <= new Date() ? `
         ${debts.length ? `<h3>Owed from earlier games</h3>${debts.map((d) => `<label class="check"><input type="checkbox" data-clear="${d.id}"> ${esc(d.profiles?.name || "Member")} owes ${money(d.amount)} (${esc(d.reason)})</label>`).join("")}` : ""}
         <div class="grid2">
