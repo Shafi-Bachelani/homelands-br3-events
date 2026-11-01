@@ -487,8 +487,9 @@
       <p class="note">Posted accounts, and every move between funds, are in the <a href="#chat:football-accounts">Accounts chat</a>.</p>
       <div class="form-actions"><button class="btn solid block" data-go="chat:football-accounts">Open the Accounts chat</button>${isAdmin() ? '<button class="btn block" data-go="eventaccounts">Events accounts</button>' : ""}${isAdmin() ? '<button class="btn block" data-go="squarecheck">Square check</button>' : ""}</div>
       ${isAdmin() ? `<h3>Family Events fund</h3>
-        <p class="muted">The Individual, Concessionary and Family subscriptions come in from Square by themselves every Saturday morning (or when you tap Sync from Square on Square check), with Square's fee taken off. Use this for the opening balance, other money in, and money spent.</p>
+        <p class="muted">The Individual, Concessionary and Family subscriptions come in from Square by themselves every Saturday morning, covering the last 7 days (or when you tap Sync from Square on Square check), with Square's fee taken off. Use this for the opening balance, other money in, and money spent.</p>
         ${familyWeeks(subs)}
+        <p class="note">Each week's subscriptions, and any money in or spent recorded here, are posted to the <a href="#chat:family-accounts">Family Events Accounts chat</a> on the Joined events tab.</p>
         <div class="grid2"><div><label>Money</label><select id="yDir"><option value="1">In</option><option value="-1">Spent</option></select></div>
           <div><label>Amount £</label><input id="yAmt" type="number" step="0.01" min="0.01" inputmode="decimal"></div></div>
         <label>Reason (everyone can see this)</label><input id="yWhy" placeholder="e.g. Opening balance, or Family day hall hire">
@@ -1401,8 +1402,8 @@
 
   const ANNOUNCE = "announcements";
   // "football-accounts" is the one Accounts chat: football, events and transfers. Events Accounts was folded into it.
-  const ORG_POSTS = ["football-accounts"]; // chats only the admin posts in
-  const AUTO_GROUPS = ["football-accounts"]; // every approved member is in it, no sign-up
+  const ORG_POSTS = ["football-accounts", "family-accounts"]; // chats only the admin posts in
+  const AUTO_GROUPS = ["football-accounts", "family-accounts"]; // every approved member is in it, no sign-up
   // The accounts chats always show the newest post first; pinning doesn't apply there.
   const byGroup = (posts, id) => { const gp = posts.filter((p) => p.group_id === id);
     return ORG_POSTS.includes(id) ? gp.sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0)) : gp; };
@@ -1459,12 +1460,12 @@
       wirePosts(el, posts);
       return;
     }
-    const JOINED_ORDER = ["football-accounts", "quran"];
+    const JOINED_ORDER = ["football-accounts", "family-accounts", "quran"];
     const firstIn = (g) => { const i = JOINED_ORDER.indexOf(g.id); return i < 0 ? JOINED_ORDER.length : i; };
     const clubs = gs.filter((g) => g.members_only).sort((a, b) => firstIn(a) - firstIn(b)).map((g) => {
       const inIt = inGroup(g.id);
       const gp = byGroup(posts, g.id).slice(0, 4);
-      const icon = { "football-accounts": "🧾" }[g.id] || "📖";
+      const icon = { "football-accounts": "🧾", "family-accounts": "👨‍👩‍👧" }[g.id] || "📖";
       return `<section class="news club${GROUP_LOOK[g.id] ? ` ${GROUP_LOOK[g.id]}` : ""}">${groupHero(g.id, inIt)}<div class="row" style="justify-content:space-between"><h2>${inIt ? `<a href="#chat:${encodeURIComponent(g.id)}" style="color:inherit">${icon} ${esc(g.name)}</a>` : `${icon} ${esc(g.name)}`}</h2><span class="row" style="gap:8px">${inIt && !joined.includes(g.id) && !AUTO_GROUPS.includes(g.id) && !pending() ? `<button class="btn small" data-join="${esc(g.id)}">Sign up</button>` : ""}${inIt && (!ORG_POSTS.includes(g.id) || isOrg()) ? `<button class="btn small" data-compose="text" data-group="${esc(g.id)}">Post</button>` : ""}</span></div>
         ${inIt ? gp.map((p) => postHtml(p, comments.filter((c) => c.post_id === p.id), votes.filter((v) => v.post_id === p.id))).join("") || '<p class="muted">Nothing posted yet.</p>'
           : `<p class="muted">${esc(g.about)}</p>${pending() ? PENDING_NOTE : `<button class="btn solid" data-join="${esc(g.id)}">Sign up · Free</button>`}`}</section>`;
