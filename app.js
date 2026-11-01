@@ -449,12 +449,33 @@
   // Net change from transfers not yet shown in any posted accounts, per fund.
   const pendingNet = (ts) => { const n = { kitty: 0, events: 0 }; ts.filter((t) => !t.accounts_post_id).forEach((t) => { n[t.to_fund] += Number(t.amount); n[t.from_fund] -= Number(t.amount); }); return n; };
   const transferLine = (t) => `${short(parseDay(t.on_date))} ${MOVE_FUND[t.from || t.from_fund]} to ${MOVE_FUND[t.to || t.to_fund]} ${money(t.amount)}: ${t.reason}`;
+  // Family Events subscriptions week by week (weeks start on Monday), per plan: how many paid, paid, Square's fee and net.
+  function familyWeeks(subs) {
+    const ok = subs.filter((p) => p.status === "COMPLETED");
+    if (!ok.length) return '<p class="muted">No subscription payments in the app yet.</p>';
+    const monday = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; };
+    const plan = (l) => String(l || "Subscription").replace(/\s*\(.*\)\s*$/, "") || "Subscription";
+    const groups = new Map();
+    ok.forEach((p) => {
+      const wk = monday(p.paid_at).getTime(), k = `${wk}|${plan(p.label)}`;
+      const g = groups.get(k) || { wk, plan: plan(p.label), n: 0, gross: 0, fee: 0, net: 0 };
+      g.n++; g.gross += Number(p.gross); g.fee += Number(p.fee); g.net += Number(p.gross) - Number(p.fee) - Number(p.refunded || 0);
+      groups.set(k, g);
+    });
+    const list = [...groups.values()].sort((a, b) => b.wk - a.wk || a.plan.localeCompare(b.plan));
+    const sum = (k) => list.reduce((t, g) => t + g[k], 0);
+    return `<h4>Subscriptions by week</h4><div class="scroll"><table class="wrap pay"><thead><tr><th>Week of</th><th>Plan</th><th class="amt">No.</th><th class="amt">Paid £</th><th class="amt">Fee</th><th class="amt">Net</th></tr></thead><tbody>
+      ${list.map((g) => `<tr><td>${new Date(g.wk).getDate()} ${MONTHS[new Date(g.wk).getMonth()]}</td><td>${esc(g.plan)}</td><td class="amt">${g.n}</td><td class="amt">${g.gross.toFixed(2)}</td><td class="amt">(${g.fee.toFixed(2)})</td><td class="amt">${g.net.toFixed(2)}</td></tr>`).join("")}
+      <tr><td colspan="2"><b>Total</b></td><td class="amt"><b>${sum("n")}</b></td><td class="amt"><b>${sum("gross").toFixed(2)}</b></td><td class="amt"><b>(${sum("fee").toFixed(2)})</b></td><td class="amt"><b>${sum("net").toFixed(2)}</b></td></tr>
+    </tbody></table></div>`;
+  }
   async function funds(el, alive, which = "") {
     if (!me) return needSignIn(el, "see the funds");
     loading(el);
     let lq = sb.from("ledger").select("*").order("id", { ascending: false }).limit(300);
     if (FUND_NAME[which]) lq = lq.eq("fund", which);
-    const [fs, rows, accts] = await Promise.all([q(sb.from("fund_state").select("*").single()), isAdmin() ? q(lq) : [], isOrg() ? q(sb.from("profiles").select("credit")) : []]);
+    const [fs, rows, accts, subs] = await Promise.all([q(sb.from("fund_state").select("*").single()), isAdmin() ? q(lq) : [], isOrg() ? q(sb.from("profiles").select("credit")) : [],
+      isAdmin() ? q(sb.from("square_payments").select("paid_at,status,gross,fee,refunded,label").eq("kind", "subscription").order("paid_at", { ascending: false }).limit(300)).catch(() => []) : []]);
     const onAccounts = Math.round(accts.reduce((t, r) => t + Number(r.credit || 0), 0) * 100) / 100;
     if (!alive()) return;
     el.innerHTML = `<div class="events"><div class="card fb"><h2>Funds & accounts</h2>
@@ -466,7 +487,8 @@
       <p class="note">Posted accounts, and every move between funds, are in the <a href="#chat:football-accounts">Accounts chat</a>.</p>
       <div class="form-actions"><button class="btn solid block" data-go="chat:football-accounts">Open the Accounts chat</button>${isAdmin() ? '<button class="btn block" data-go="eventaccounts">Events accounts</button>' : ""}${isAdmin() ? '<button class="btn block" data-go="squarecheck">Square check</button>' : ""}</div>
       ${isAdmin() ? `<h3>Family Events fund</h3>
-        <p class="muted">Subscription payments come in by themselves. Use this for the opening balance, other money in, and money spent.</p>
+        <p class="muted">The Individual, Concessionary and Family subscriptions come in from Square by themselves every Saturday morning (or when you tap Sync from Square on Square check), with Square's fee taken off. Use this for the opening balance, other money in, and money spent.</p>
+        ${familyWeeks(subs)}
         <div class="grid2"><div><label>Money</label><select id="yDir"><option value="1">In</option><option value="-1">Spent</option></select></div>
           <div><label>Amount £</label><input id="yAmt" type="number" step="0.01" min="0.01" inputmode="decimal"></div></div>
         <label>Reason (everyone can see this)</label><input id="yWhy" placeholder="e.g. Opening balance, or Family day hall hire">
@@ -612,7 +634,7 @@
         const res = await fetch("/.netlify/functions/square-sync", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token || ""}` }, body: JSON.stringify({ from: $("#sqFrom", el).value, to: $("#sqTo", el).value }) });
         const r = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(r.error || "Couldn't reach Square.");
-        toast(`${r.checked} Square payment${r.checked === 1 ? "" : "s"} checked, ${r.updated} updated`);
+        toast(`${r.checked} Square payment${r.checked === 1 ? "" : "s"} checked, ${r.updated} updated${r.family ? `, ${r.family} to Family Events` : ""}`);
         go(`squarecheck:${$("#sqFrom", el).value}~${$("#sqTo", el).value}`);
       } catch (err) { btn.disabled = false; btn.textContent = "Sync from Square"; fail(err); }
     };
