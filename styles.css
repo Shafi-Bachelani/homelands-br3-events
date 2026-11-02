@@ -354,3 +354,9 @@ label.check.risk { font-weight: 700; margin: 4px 0 10px; }
 .confetti i { position: absolute; top: -12px; width: 8px; height: 14px; border-radius: 2px; opacity: .95; animation-name: confetti-fall; animation-timing-function: ease-in; animation-fill-mode: forwards; }
 @keyframes confetti-fall { to { top: 105%; margin-left: var(--x); transform: rotate(720deg); opacity: .7; } }
 #modal[data-locked] .close { display: none; }
+/* leaderboard */
+.lb { display: grid; gap: 8px; }
+.lb-row { display: flex; align-items: center; gap: 10px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.lb-row.me { border-color: var(--green); }
+.lb-rank { width: 28px; text-align: center; font-size: 20px; font-weight: 800; color: var(--muted); }
+.lb-score { font-size: 20px; color: var(--green); }

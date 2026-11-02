@@ -142,9 +142,9 @@
   };
 
   // ---------- router ----------
-  const TABS = ["events", "groups", "schedule", "about", "more"];
-  const ROUTES = { about, home: about, events, groups, grouplist, chat, schedule, more, services, counselling, messages, notifications, account, football, admin, funds, eventaccounts, squarecheck, supervisors, footballadmin, guest, welcome };
-  const PARENT = { grouplist: "groups", chat: "groups", services: "more", counselling: "more", football: "events", funds: "more", eventaccounts: "more", squarecheck: "more", supervisors: "more", footballadmin: "more", guest: null, account: null, welcome: "more", admin: "more", messages: null, notifications: null };
+  const TABS = ["events", "groups", "schedule", "leaderboard", "more"];
+  const ROUTES = { about, home: about, events, groups, grouplist, chat, schedule, more, services, counselling, messages, notifications, account, football, admin, funds, eventaccounts, squarecheck, supervisors, footballadmin, guest, welcome, leaderboard };
+  const PARENT = { grouplist: "groups", chat: "groups", services: "more", counselling: "more", football: "events", funds: "more", eventaccounts: "more", squarecheck: "more", supervisors: "more", footballadmin: "more", guest: null, account: null, welcome: "more", about: "more", admin: "more", messages: null, notifications: null };
   let lastTab = "events", seq = 0;
 
   function go(route) { if (location.hash.slice(1) === route) render(); else location.hash = route; }
@@ -245,6 +245,42 @@
     sb.rpc("i_was_here").then(({ error }) => { if (!error) { state.seenDay = `${me.id}:${dayKey(new Date())}`; save(); } });
   }
   document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && markSeen());
+
+  // ---------- LEADERBOARD ----------
+  // The ten members who take part most in the app, this month or all time. It refreshes every 30 seconds while open.
+  let lbPeriod = "month";
+  async function leaderboard(el, alive) {
+    if (!me) return needSignIn(el, "see the leaderboard");
+    if (!el.firstChild) loading(el);
+    const rows = await q(sb.rpc("leaderboard", { p_period: lbPeriod })).catch(() => null);
+    if (!alive()) return;
+    const MEDAL = ["🥇", "🥈", "🥉"];
+    const top = (rows || []).filter((r) => !r.me || rows.indexOf(r) < 10), mine = (rows || []).find((r) => r.me);
+    const bits = (r) => [[r.days, "day", "days"], [r.bookings, "booking", "bookings"], [r.posts, "post", "posts"], [r.comments, "comment", "comments"], [r.reactions, "reaction", "reactions"]]
+      .filter(([n]) => n).map(([n, a, b]) => `${n} ${n === 1 ? a : b}`).join(" · ");
+    const row = (r, i) => `<div class="lb-row ${r.me ? "me" : ""}"><span class="lb-rank">${r.rank <= 3 ? MEDAL[r.rank - 1] : r.rank}</span>
+      <div class="avatar" style="width:40px;height:40px">${esc(initials(r.name))}</div>
+      <div style="flex:1;min-width:0"><b>${esc(r.name)}${r.me ? " (you)" : ""}</b><div class="muted" style="font-size:13px">${bits(r)}</div></div><b class="lb-score">${r.score}</b></div>`;
+    const inTop = top.some((r) => r.me);
+    el.innerHTML = `<div class="pad" style="padding-top:20px">
+      <h1>Leaderboard</h1>
+      <p class="muted" style="line-height:1.5">Our most active members. Everything you do in the app counts, so join in to climb the table! Organisers aren't included.</p>
+      <div class="seg"><button data-p="month" class="${lbPeriod === "month" ? "on" : ""}">${MONTHS_LONG[new Date().getMonth()]}</button><button data-p="all" class="${lbPeriod === "all" ? "on" : ""}">All time</button></div>
+      ${rows === null ? '<p class="note">The leaderboard is being set up. Check back soon.</p>'
+        : top.length ? `<div class="lb">${top.map(row).join("")}</div>${mine && !inTop ? `<p class="muted" style="margin:14px 0 4px">Your place</p><div class="lb">${row(mine)}</div>` : ""}`
+        : '<p class="muted">Nobody has scored yet this month. Be the first!</p>'}
+      ${rows && !mine && me.role === "member" ? '<p class="muted" style="margin-top:12px">You\'re not on the board yet. Book a game, post or react in the chats to get on it.</p>' : ""}
+      <details class="info" style="margin-top:16px"><summary><b>How points work</b></summary>
+        <p>1 point for each day you open the app<br>3 points for each booking, football or events (friends you book count too)<br>3 points for each post in the chats<br>2 points for each comment<br>1 point for each reaction or poll vote</p>
+        <p class="muted">The table updates by itself while you're looking at it. The month's table starts again on the 1st.</p></details>
+    </div>`;
+    el.querySelectorAll("[data-p]").forEach((b) => (b.onclick = () => { lbPeriod = b.dataset.p; leaderboard(el, alive); }));
+    clearTimeout(leaderboard.t);
+    leaderboard.t = setTimeout(function tick() {
+      if (!alive()) return;
+      if (document.visibilityState === "visible") leaderboard(el, alive); else leaderboard.t = setTimeout(tick, 30000);
+    }, 30000);
+  }
 
   const initials = (n) => String(n || "?").split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
 
@@ -1936,6 +1972,7 @@
       <button class="menu-row" data-to="funds">${ICON.poll}<span>Funds & accounts ${ICON.chev}</span></button>
       <button class="menu-row" data-to="counselling">${ICON.star}<span>Counselling ${ICON.chev}</span></button>
       <button class="menu-row" data-to="welcome">${ICON.user}<span>Welcome & our agreement ${ICON.chev}</span></button>
+      <button class="menu-row" data-to="about">${ICON.star}<span>About us ${ICON.chev}</span></button>
       ${isDoor() ? `<h3 class="menu-head">Organisers · on the night</h3>
       <button class="menu-row" data-to="supervisors">${ICON.ball}<span>Football Supervisors ${ICON.chev}</span></button>
       ${isAdmin() ? "" : `<button class="menu-row" data-to="admin">${ICON.tools}<span>Check in at other events ${ICON.chev}</span></button>`}` : ""}
@@ -2416,11 +2453,11 @@
         if (n > r.strikes) {
           const why = prompt(`Strike ${n} for ${m.name}. What happened? (Only you see this.)`, "");
           if (why === null) return;
-          note = [r.strike_note, `${short(new Date())}: strike ${n}${why.trim() ? ` – ${why.trim()}` : ""}`].filter(Boolean).join("\n");
+          note = [r.strike_note, `${short(new Date())} ${new Date().getFullYear()}: strike ${n}${why.trim() ? ` – ${why.trim()}` : ""}`].filter(Boolean).join("\n");
           if (n >= 2) toast("That's the second strike: under the two strike rule you can remove them");
         } else {
           if (!confirm(`Take a strike off ${m.name}? They'll have ${n}.`)) return;
-          note = [r.strike_note, `${short(new Date())}: strike taken off, now ${n}`].filter(Boolean).join("\n");
+          note = [r.strike_note, `${short(new Date())} ${new Date().getFullYear()}: strike taken off, now ${n}`].filter(Boolean).join("\n");
         }
         try { await q(sb.rpc("set_strikes", { p_id: m.id, p_strikes: n, p_note: note })); r.strikes = n; r.strike_note = note; showMembers(); } catch (e) { fail(e); }
       }));
