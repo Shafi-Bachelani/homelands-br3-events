@@ -131,6 +131,7 @@
     ball: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7l4 3-1.5 4.5h-5L8 10z"/></svg>',
     user: '<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg>',
     tools: '<svg viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z"/></svg>',
+    bell: '<svg viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4zM10 20a2 2 0 0 0 4 0"/></svg>',
     smallcal: '<svg viewBox="0 0 24 24" class="fill" style="width:18px;height:18px;vertical-align:-3px"><path d="M7 2v2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2V2h-2v2H9V2zM5 9h14v11H5z"/></svg>',
   };
   const SOCIAL = {
@@ -143,8 +144,8 @@
 
   // ---------- router ----------
   const TABS = ["events", "groups", "schedule", "leaderboard", "more"];
-  const ROUTES = { about, home: about, events, groups, grouplist, chat, schedule, more, services, counselling, messages, notifications, account, football, admin, funds, eventaccounts, squarecheck, supervisors, footballadmin, guest, welcome, leaderboard };
-  const PARENT = { grouplist: "groups", chat: "groups", services: "more", counselling: "more", football: "events", funds: "more", eventaccounts: "more", squarecheck: "more", supervisors: "more", footballadmin: "more", guest: null, account: null, welcome: "more", about: "more", admin: "more", messages: null, notifications: null };
+  const ROUTES = { about, home: about, events, groups, grouplist, chat, schedule, more, services, counselling, messages, notifications, account, football, admin, funds, eventaccounts, squarecheck, supervisors, footballadmin, guest, welcome, leaderboard, join: joinGuide };
+  const PARENT = { grouplist: "groups", chat: "groups", services: "more", counselling: "more", football: "events", funds: "more", eventaccounts: "more", squarecheck: "more", supervisors: "more", footballadmin: "more", guest: null, account: null, welcome: "more", join: "more", about: "more", admin: "more", messages: null, notifications: null };
   let lastTab = "events", seq = 0;
 
   function go(route) { if (location.hash.slice(1) === route) render(); else location.hash = route; }
@@ -157,7 +158,7 @@
     // Chat screens keep the logo header; their subhead link already goes back.
     $("#backBtn").hidden = TABS.includes(route) || ["home", "chat", "grouplist"].includes(route);
     $("#brand").hidden = !$("#backBtn").hidden;
-    $("#bellDot").hidden = state.seenNotes >= D.announcements.length;
+    updateBell();
     const token = ++seq, alive = () => token === seq;
     view.innerHTML = "";
     view.scrollTo(0, 0);
@@ -226,6 +227,44 @@
     el.innerHTML = `<div class="pad" style="padding-top:24px">${WELCOME}
       ${me ? (me.agreed_at ? `<p class="note">You agreed to this on ${longDate(new Date(me.agreed_at))}.</p>` : '<div class="form-actions"><button class="btn solid block" id="agreeNow">I agree</button></div>') : ""}</div>`;
     const a = $("#agreeNow", el); if (a) a.onclick = () => agree().then(refresh).catch(fail);
+  }
+  // ---------- HOW TO JOIN AND INSTALL THE APP ----------
+  // A step-by-step guide anyone can open without an account, to share on WhatsApp or show on a phone.
+  function joinGuide(el) {
+    const link = location.origin + location.pathname.replace(/index\.html$/, "");
+    const guideLink = link + "#join";
+    const ios = isIOS(), android = /android/i.test(navigator.userAgent), home = installed();
+    const iphoneSteps = `<ol><li>Open the link in <b>Safari</b></li><li>Tap the Share button <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-4px"><path d="M12 3v12M8 7l4-4 4 4M6 11v9h12v-9"/></svg> at the bottom (or top) of the screen</li><li>Scroll down and tap <b>Add to Home Screen</b></li><li>Tap <b>Add</b>. The Homelands icon appears on your home screen</li></ol>`;
+    const androidSteps = `<ol><li>Open the link in <b>Chrome</b></li><li>Tap the <b>⋮</b> menu at the top right</li><li>Tap <b>Add to home screen</b> or <b>Install app</b></li><li>Tap <b>Install</b>. The Homelands icon appears on your home screen</li></ol>`;
+    const step = (n, title, body) => `<div class="step"><span class="num">${n}</span><div><h3>${title}</h3>${body}</div></div>`;
+    const pushState = !pushSupported() ? "" : Notification.permission === "granted" ? '<p class="ok">✓ Notifications are on for this phone.</p>'
+      : Notification.permission === "default" && me && !pending() ? '<button class="btn solid block" id="gPush">Turn on notifications</button>' : "";
+    el.innerHTML = `<div class="pad guide" style="padding-top:24px">
+      <h1>How to join and install the app</h1>
+      <p style="line-height:1.5">Our community is moving from WhatsApp to this app, for football, events and chats. It takes about five minutes. If you get stuck, ask anyone at Friday football and we'll help.</p>
+      ${step(1, "Open the app", `<p>On your phone, open <a href="${esc(link)}">${esc(link.replace(/^https?:\/\//, "").replace(/\/$/, ""))}</a>. On an iPhone, use Safari.</p>
+        <details class="past"><summary>Show a QR code to scan</summary><div id="gQr" class="guide-qr"></div></details>`)}
+      ${step(2, "Join", me ? `<p class="ok">✓ You're signed in as ${esc(me.name)}.</p>` : `<p>Tap <b>Sign in or join</b>, then <b>Join</b>. Fill in your full name, postcode, email and a password, read our welcome and tick to agree.</p><button class="btn solid block" data-go="account">Join now</button>`)}
+      ${step(3, "Send your membership application", me && !pending() ? '<p class="ok">✓ You\'re approved.</p>' : `<p>Straight after joining you'll be asked to fill in a short membership application. Please do it then and there: accounts without one are removed after 24 hours. The admin then approves you, and you can book and post.</p>${me && pending() ? `<a class="btn solid block" href="${applyUrl()}" target="_blank" rel="noopener">Complete your application</a>` : ""}`)}
+      ${step(4, "Add it to your home screen", home ? '<p class="ok">✓ Done. You\'re using the app from your home screen.</p>' : `<p>So it opens in one tap like any other app${ios ? ", and so it can send you notifications" : ""}.</p>
+        ${installEvt ? '<button class="btn solid block" id="gInstall">Add to home screen</button>' : ""}
+        ${ios || !android ? `<p><b>iPhone</b></p>${iphoneSteps}` : ""}
+        ${android || !ios ? `<p><b>Android</b></p>${androidSteps}` : ""}`)}
+      ${step(5, "Turn on notifications", `<p>Open the app from its new icon on your home screen. Tap the bell 🔔 at the top, then <b>Turn on notifications</b>, and tap <b>Allow</b>. You'll then get a buzz for announcements, new events, when football booking opens, and reminders before games you've booked. You choose what you get.</p>${pushState}`)}
+      ${step(6, "You're in", `<p><b>Events</b> is where you book football and other events. <b>Chats</b> is for talking with everyone. <b>Schedule</b> shows your tickets. The bell 🔔 shows your notifications.</p>`)}
+      <h2 style="margin-top:24px">Something not working?</h2>
+      <details class="info"><summary><b>No buzz on my iPhone</b></summary><p>Notifications need iOS 16.4 or newer, and only work when you open the app from its home screen icon. Check that a Focus mode (like Personal or Sleep) isn't on: swipe down from the top right corner. Then open Settings, Notifications, Homelands, and make sure Allow Notifications is on.</p></details>
+      <details class="info"><summary><b>I can't see Add to Home Screen</b></summary><p>On an iPhone, open the link in Safari rather than in WhatsApp or another app: press and hold the link and choose Open in Safari. On Android, open it in Chrome.</p></details>
+      <details class="info"><summary><b>I forgot my password</b></summary><p>On the sign-in screen, type your email and tap <b>Forgot your password?</b>. We'll email you a link to choose a new one.</p></details>
+      <details class="info"><summary><b>I've joined but can't book</b></summary><p>New members can look around but can't book or post until the admin approves them. Make sure you've sent the membership application (step 3).</p></details>
+      <div class="form-actions" style="display:grid;gap:10px"><button class="btn solid block" id="gShare">${ICON.share} Share this guide</button></div>
+    </div>`;
+    qr($("#gQr", el), link, 200);
+    $("#gShare", el).onclick = () => share("Join us on the Homelands app", "Our community is moving to the Homelands app for football, events and chats. Here's how to join and install it:", guideLink);
+    const ins = $("#gInstall", el);
+    if (ins) ins.onclick = async () => { const e = installEvt; installEvt = null; e.prompt(); try { await e.userChoice; } catch {} refresh(); };
+    const gp = $("#gPush", el);
+    if (gp) gp.onclick = () => { gp.disabled = true; turnOnPush().then(() => { toast("Notifications are on ✓"); refresh(); }).catch((e) => { gp.disabled = false; fail(e); }); };
   }
   async function agree() { await q(sb.rpc("agree_welcome")); await loadMe(); toast("Thank you, and welcome"); }
   // Shown once to signed-in members who haven't agreed yet. It stays until they tap I agree.
@@ -1975,6 +2014,8 @@
       <button class="menu-row" data-to="counselling">${ICON.star}<span>Counselling ${ICON.chev}</span></button>
       <button class="menu-row" data-to="welcome">${ICON.user}<span>Welcome & our agreement ${ICON.chev}</span></button>
       <button class="menu-row" data-to="about">${ICON.star}<span>About us ${ICON.chev}</span></button>
+      <button class="menu-row" data-to="notifications">${ICON.bell}<span>Phone notifications ${ICON.chev}</span></button>
+      <button class="menu-row" data-to="join">${ICON.phone}<span>How to join & install the app ${ICON.chev}</span></button>
       ${isDoor() ? `<h3 class="menu-head">Organisers · on the night</h3>
       <button class="menu-row" data-to="supervisors">${ICON.ball}<span>Football Supervisors ${ICON.chev}</span></button>
       ${isAdmin() ? "" : `<button class="menu-row" data-to="admin">${ICON.tools}<span>Check in at other events ${ICON.chev}</span></button>`}` : ""}
@@ -2081,14 +2122,14 @@
       const name = $("#nm", el).value.trim(); if (!name) return;
       try { await q(sb.from("profiles").update({ name }).eq("id", me.id)); await loadMe(); toast("Saved"); refresh(); } catch (e) { fail(e); }
     };
-    $("#out", el).onclick = async () => { await sb.auth.signOut(); me = null; go("events"); };
+    $("#out", el).onclick = async () => { await forgetThisPhone(false); await sb.auth.signOut(); me = null; updateBell(true); go("events"); };
   }
 
   function signInScreen(el) {
     const guest = state.guestTickets.length ? `<h2 style="margin-top:28px">Guest tickets on this phone</h2>${state.guestTickets.map((c) => `<button class="list-row block-row" data-ticket="${esc(c)}"><div><b class="mono">${esc(c)}</b><span class="muted">Tap to show</span></div>${ICON.chev}</button>`).join("")}` : "";
     el.innerHTML = `<div class="pad" style="padding-top:24px">
       <h1>Sign in or join</h1>
-      <p class="muted" style="line-height:1.5">Members can book football and members-only events, post in the groups, and invite guests.</p>
+      <p class="muted" style="line-height:1.5">Members can book football and members-only events, post in the groups, and invite guests. New here? <a href="#join">See how to join and install the app</a>.</p>
       <div class="seg"><button data-mode="in" class="on">Sign in</button><button data-mode="up">Join</button></div>
       <div id="nameRow" hidden><label>Your full name</label><input id="nm" autocomplete="name">
         <label>Your postcode</label><input id="pc" autocomplete="postal-code" placeholder="e.g. BR3 1AA" style="text-transform:uppercase">
@@ -2141,6 +2182,7 @@
         }
         await loadMe(); toast(`Welcome, ${me?.name || ""}`); go("events"); markSeen();
         if (mode === "in") setTimeout(askAgreement, 600);
+        updateBell(true); keepPushFresh(); setTimeout(offerPush, 2500);
       } catch (e) { $("#go", el).disabled = false; fail(e); }
     };
     $("#forgot", el).onclick = async (e) => {
@@ -2491,11 +2533,162 @@
       render();
     };
   }
-  function notifications(el) {
-    state.seenNotes = D.announcements.length; save();
-    el.innerHTML = `<div class="pad" style="padding-top:24px"><h1>Notifications</h1>` +
-      (D.announcements.map((a) => `<div class="list-row"><div><b style="font-size:16px">${esc(D.admin.name)}</b><span class="muted">${bold(a.text)}</span><div class="muted" style="font-size:13px;margin-top:4px">${agoLong(a.date)}</div></div></div>`).join("")
-        || '<div class="empty"><h2>You\'re all caught up</h2></div>') + "</div>";
+  // ---------- NOTIFICATIONS (the bell) ----------
+  // Phone notifications are web push: the phone keeps a subscription, the database queues each
+  // notification (supabase/add-phone-notifications.sql) and netlify/functions/push sends it.
+  const PREF_LIST = [
+    ["announcements", "Announcements", "When the admin posts in Announcements"],
+    ["events", "New events", "When an event is added, or gets its date"],
+    ["football", "Football booking open", "Wednesday at 1pm, when booking opens for Friday"],
+    ["reminders", "Reminders", "The day before an event or game you've booked"],
+    ["replies", "Comments", "On your posts, and posts you've commented on"],
+    ["mygroups", "Chats you've signed up to", "Like the Quran Recitation Target"],
+    ["chats", "Every other chat post", "Including the accounts chats. This can be a lot"],
+  ];
+  const PREF_DEFAULT = { announcements: true, events: true, football: true, reminders: true, replies: true, mygroups: true, chats: false };
+  async function notifications(el, alive) {
+    if (!me) return needSignIn(el, "get notifications");
+    loading(el);
+    const [list, prefs, stats, sub] = await Promise.all([
+      q(sb.from("notices").select("id,title,body,url,created_at,read_at").order("id", { ascending: false }).limit(40)).catch(() => null),
+      q(sb.from("push_prefs").select("*").eq("user_id", me.id).maybeSingle()).catch(() => null),
+      isAdmin() ? q(sb.rpc("push_stats")).catch(() => null) : null,
+      currentSub().catch(() => null),
+    ]);
+    if (!alive()) return;
+    if (list === null) {
+      el.innerHTML = `<div class="empty"><h2>Notifications are coming soon</h2><p class="muted" style="line-height:1.5">${isAdmin() ? "Run add-phone-notifications.sql in the Supabase SQL Editor, then come back here." : "Check back soon."}</p></div>`;
+      return;
+    }
+    const p = { ...PREF_DEFAULT, ...(prefs || {}) };
+    const prefRows = PREF_LIST.filter(([k]) => k !== "football" || !eventsOnly())
+      .map(([k, name, about]) => `<label class="check pref"><input type="checkbox" data-pref="${k}" ${p[k] ? "checked" : ""}><span><b>${name}</b><span class="muted">${about}</span></span></label>`).join("");
+    el.innerHTML = `<div class="pad" style="padding-top:24px"><h1>Notifications</h1>
+      <div class="card fb">${pushStatusHtml(sub)}</div>
+      ${stats ? `<p class="muted" style="margin-top:12px">${stats.on} of ${stats.members} approved members have notifications on (${stats.phones} phone${stats.phones === 1 ? "" : "s"}).</p>` : ""}
+      <h2 style="margin-top:24px">What to tell me about</h2>
+      <div class="prefs">${prefRows}</div>
+      <h2 style="margin-top:24px">Recent</h2>
+      ${list.map((n) => `<button class="list-row block-row${n.read_at ? "" : " unread"}" data-open="${esc(n.url)}"><div><b>${esc(n.title)}</b><span class="muted">${esc(n.body)}</span><div class="muted" style="font-size:13px;margin-top:4px">${agoLong(n.created_at)}</div></div></button>`).join("")
+        || '<p class="muted">Nothing yet. New announcements, events and reminders will show here.</p>'}
+    </div>`;
+    wirePush(el, sub);
+    el.querySelectorAll("[data-pref]").forEach((c) => (c.onchange = async () => {
+      const row = { user_id: me.id };
+      el.querySelectorAll("[data-pref]").forEach((x) => (row[x.dataset.pref] = x.checked));
+      try { await q(sb.from("push_prefs").upsert(row)); toast("Saved"); } catch (e) { c.checked = !c.checked; fail(e); }
+    }));
+    el.querySelectorAll("[data-open]").forEach((b) => (b.onclick = () => go(b.dataset.open.replace(/^#/, "") || "events")));
+    if (list.some((n) => !n.read_at)) sb.rpc("read_notices").then(() => updateBell(true));
+  }
+  // The box at the top of the Notifications screen: what this phone can do, and the button for it.
+  function pushStatusHtml(sub) {
+    if (!pushSupported()) {
+      if (isIOS() && !installed()) return `<h2>Add the app to your home screen first</h2>
+        <p>On an iPhone, notifications only work from the app's icon on your home screen. Add it, open it from there, and come back here.</p>
+        <button class="btn solid block" data-go="join" style="margin-top:8px">Show me how</button>`;
+      return `<h2>Notifications aren't available here</h2><p>This browser can't show notifications. On an iPhone you need iOS 16.4 or newer (Settings, General, Software Update). On Android, use Chrome.</p>`;
+    }
+    if (Notification.permission === "denied") return `<h2>Notifications are blocked</h2>
+      <p>${isIOS() ? "Open your iPhone's Settings, then Notifications, then Homelands, and switch on Allow Notifications." : "Tap the padlock or the ⓘ next to the address (or press and hold the app icon, then App info) and allow Notifications."} Then come back here.</p>`;
+    if (sub && Notification.permission === "granted") return `<h2>✓ Notifications are on</h2>
+      <p class="muted">You'll get a buzz on this phone for the things ticked below.</p>
+      <div class="form-actions" style="display:grid;gap:10px"><button class="btn solid block" id="pushTest">Send me a test</button><button class="btn block" id="pushOff">Turn off on this phone</button></div>`;
+    return `<h2>Turn on notifications</h2><p>Get a buzz on your phone for announcements, new events, football booking and reminders, just like WhatsApp.</p>
+      <button class="btn solid block" id="pushOn" style="margin-top:8px">Turn on notifications</button>`;
+  }
+  function wirePush(el) {
+    const on = $("#pushOn", el), off = $("#pushOff", el), test = $("#pushTest", el);
+    if (on) on.onclick = () => { on.disabled = true; turnOnPush().then(() => { toast("Notifications are on ✓"); refresh(); }).catch((e) => { on.disabled = false; fail(e); refresh(); }); };
+    if (off) off.onclick = () => forgetThisPhone(true).then(() => { toast("Turned off on this phone"); refresh(); }).catch(fail);
+    if (test) test.onclick = async () => {
+      test.disabled = true;
+      try { await q(sb.rpc("test_push")); toast("Sent. It should arrive in a few seconds"); } catch (e) { fail(e); }
+      setTimeout(() => (test.disabled = false), 4000);
+    };
+  }
+
+  const pushSupported = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window && window.isSecureContext;
+  const PUSH_KEY = "homelands-push-key";
+  const fromB64 = (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
+  const toB64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  async function pushKey() {
+    try { const k = localStorage.getItem(PUSH_KEY); if (k) return k; } catch {}
+    const r = await fetch("/.netlify/functions/push?key").then((x) => x.json()).catch(() => ({}));
+    if (!r.key) throw new Error("Notifications aren't ready yet. Please try again later.");
+    try { localStorage.setItem(PUSH_KEY, r.key); } catch {}
+    return r.key;
+  }
+  async function currentSub() {
+    if (!pushSupported()) return null;
+    const reg = await navigator.serviceWorker.ready;
+    return reg.pushManager.getSubscription();
+  }
+  const deviceName = () => (isIOS() ? "iPhone" : /android/i.test(navigator.userAgent) ? "Android" : "Computer");
+  // Asks for permission (the first thing it does, so iPhones count it as part of the tap), then saves this phone.
+  async function turnOnPush(ask = true) {
+    if (!pushSupported()) throw new Error("This phone can't show notifications from here.");
+    const perm = ask ? await Notification.requestPermission() : Notification.permission;
+    if (perm !== "granted") throw new Error(perm === "denied" ? "Notifications are blocked. See the steps on this screen to allow them." : "Notifications weren't turned on.");
+    const reg = await navigator.serviceWorker.ready;
+    const key = await pushKey();
+    let sub = await reg.pushManager.getSubscription();
+    // A subscription made with a different key can't receive anything, so make a new one.
+    if (sub && sub.options?.applicationServerKey && toB64(sub.options.applicationServerKey) !== key) { await sub.unsubscribe().catch(() => {}); sub = null; }
+    sub ||= await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: fromB64(key) });
+    const j = sub.toJSON();
+    await q(sb.rpc("save_push", { p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth, p_device: deviceName() }));
+    state.pushSaved = `${me.id}:${dayKey(new Date())}`; save();
+  }
+  // Stops notifications to this phone for the signed-in member. With unsubscribe, the phone forgets it too.
+  async function forgetThisPhone(unsubscribe) {
+    try {
+      const sub = await Promise.race([currentSub(), new Promise((r) => setTimeout(() => r(null), 1500))]);
+      if (!sub) return;
+      await sb.rpc("forget_push", { p_endpoint: sub.endpoint });
+      if (unsubscribe) await sub.unsubscribe();
+      state.pushSaved = ""; save();
+    } catch {}
+  }
+  // Once a day, re-save this phone so it keeps working (and moves to whoever is signed in now).
+  async function keepPushFresh() {
+    if (!me || pending() || !pushSupported() || Notification.permission !== "granted") return;
+    if (state.pushSaved === `${me.id}:${dayKey(new Date())}`) return;
+    try { await turnOnPush(false); } catch {}
+  }
+  // The dot on the bell: notifications not yet seen.
+  let bellAt = 0;
+  async function updateBell(force) {
+    const dot = $("#bellDot");
+    if (!me) { dot.hidden = true; return; }
+    if (!force && Date.now() - bellAt < 30000) return;
+    bellAt = Date.now();
+    const { count, error } = await sb.from("notices").select("id", { count: "exact", head: true }).is("read_at", null);
+    if (error) return;
+    dot.hidden = !count;
+    try { if (count) navigator.setAppBadge?.(count); else navigator.clearAppBadge?.(); } catch {}
+  }
+  // A tapped notification opens the app at the right screen.
+  if ("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message", (e) => { if (e.data && "go" in e.data) { go(e.data.go || "events"); updateBell(true); } });
+  document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && updateBell());
+  // Asks members once (then every few days until they decide) to turn notifications on.
+  const PUSH_LATER = "homelands-push-later";
+  function offerPush() {
+    if (!me || pending() || !pushSupported() || Notification.permission !== "default" || !$("#modal").hidden) return;
+    try { if (Date.now() < Number(localStorage.getItem(PUSH_LATER) || 0)) return; } catch {}
+    const later = () => { try { localStorage.setItem(PUSH_LATER, String(Date.now() + 3 * 864e5)); } catch {} closeModal(); };
+    modal(`<button class="close" aria-label="Close">×</button>
+      <div class="row" style="gap:14px"><img src="images/icon-192.png" alt="" style="width:56px;height:56px;border-radius:12px"><h2 style="margin:0">Turn on notifications?</h2></div>
+      <p style="line-height:1.5;margin-top:12px">Get a buzz on your phone for announcements, new events, when football booking opens and reminders before games, just like WhatsApp. You can choose what you get under the bell 🔔 at the top.</p>
+      <div class="form-actions"><button class="btn solid block" id="pushGo">Turn on notifications</button>
+        <button class="btn block" id="pushLater" style="margin-top:10px">Not now</button></div>`, (m) => {
+      $("#pushLater", m).onclick = later;
+      $(".close", m).onclick = later;
+      $("#pushGo", m).onclick = () => {
+        const b = $("#pushGo", m); b.disabled = true;
+        turnOnPush().then(() => { closeModal(); toast("Notifications are on ✓"); }).catch((e) => { later(); fail(e); });
+      };
+    });
   }
 
   // A password-reset link lands here with a temporary session.
@@ -2540,6 +2733,7 @@
     await render();
     markSeen();
     if (!AUTH_ERROR && !RECOVERY) askAgreement();
+    updateBell(true); keepPushFresh(); setTimeout(offerPush, 6000);
     if (AUTH_ERROR) modal(`<h2>That link didn't work</h2><p class="muted" style="line-height:1.5">${esc(AUTH_ERROR)}. Reset links work once and expire after an hour, so tap "Forgot your password?" on the sign-in page to get a new one.</p>`);
     else if (RECOVERY && (await sb.auth.getSession()).data.session) newPassword();
   });
@@ -2557,7 +2751,7 @@
     const later = () => { try { localStorage.setItem(INSTALL_KEY, String(Date.now() + 7 * 864e5)); } catch {} closeModal(); };
     modal(`<button class="close" aria-label="Close">×</button>
       <div class="row" style="gap:14px"><img src="images/icon-192.png" alt="" style="width:56px;height:56px;border-radius:12px"><h2 style="margin:0">Add Homelands to your home screen</h2></div>
-      <p class="muted" style="margin-top:12px">Open the app in one tap, like any other app on your phone.</p>
+      <p class="muted" style="margin-top:12px">Open the app in one tap, like any other app on your phone${isIOS() ? ". On an iPhone this is also how you get notifications" : ""}.</p>
       ${installEvt ? "" : `<ol style="margin:12px 0 0 20px;line-height:1.7"><li>Tap the Share button <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-4px"><path d="M12 3v12M8 7l4-4 4 4M6 11v9h12v-9"/></svg> at the bottom of Safari</li><li>Scroll down and tap <b>Add to Home Screen</b></li><li>Tap <b>Add</b></li></ol>`}
       <div class="form-actions">${installEvt ? `<button class="btn solid block" id="instGo">Add to home screen</button>` : ""}
         <button class="btn block" id="instLater" style="margin-top:10px">${installEvt ? "Not now" : "Got it"}</button></div>`, (m) => {
