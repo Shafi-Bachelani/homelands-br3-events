@@ -230,7 +230,8 @@
   async function agree() { await q(sb.rpc("agree_welcome")); await loadMe(); toast("Thank you, and welcome"); }
   // Shown once to signed-in members who haven't agreed yet. It stays until they tap I agree.
   function askAgreement() {
-    if (!me || me.agreed_at || isAdmin() || !$("#modal").hidden) return;
+    // Only once the database has the agreed_at column (add-welcome-and-members.sql has been run).
+    if (!me || !("agreed_at" in me) || me.agreed_at || isAdmin() || !$("#modal").hidden) return;
     modal(`<p class="muted" style="margin-top:0">Please read our welcome. We're now using the app to bring us all together, so we ask everyone to agree to it once.</p>
       <div class="welcome-scroll">${WELCOME}</div>
       <div class="form-actions"><button class="btn solid block" id="agreeGo">I agree</button></div>`, (m) => {
