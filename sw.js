@@ -1,5 +1,5 @@
 // Lets the app open even with no internet. Bump the version when you change files.
-const CACHE = "homelands-2026-11-02b";
+const CACHE = "homelands-2026-11-02c";
 const FILES = ["./", "index.html", "styles.css", "app.js", "data.js", "config.js", "vendor/supabase.js", "vendor/qrcode.min.js", "manifest.json", "images/logo.png", "images/banner.png", "images/icon-192.png", "images/icon-512.png", "images/footie.jpg", "images/footie-banner.jpg", "images/quran.jpg", "images/quran-banner.jpg"];
 
 self.addEventListener("install", (e) => e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting())));
@@ -14,4 +14,27 @@ self.addEventListener("fetch", (e) => {
     fetch(e.request).then((res) => { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(e.request, copy)); return res; })
       .catch(() => caches.match(e.request))
   );
+});
+
+// Phone notifications: show each one, and open the app at the right screen when it's tapped.
+self.addEventListener("push", (e) => {
+  let m = {};
+  try { m = e.data ? e.data.json() : {}; } catch { m = { body: e.data && e.data.text() }; }
+  e.waitUntil(Promise.all([
+    self.registration.showNotification(m.title || "Creating Our Homelands", {
+      body: m.body || "", icon: "images/icon-192.png", badge: "images/icon-192.png",
+      tag: m.tag || undefined, renotify: !!m.tag, data: { url: m.url || "" },
+    }),
+    self.navigator.setAppBadge ? self.navigator.setAppBadge().catch(() => {}) : null,
+  ]));
+});
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  const hash = e.notification.data?.url || "";
+  e.waitUntil((async () => {
+    const list = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    const open = list.find((c) => c.url.startsWith(self.registration.scope));
+    if (open) { open.postMessage({ go: hash.replace(/^#/, "") }); return open.focus().catch(() => {}); }
+    return self.clients.openWindow(new URL("./index.html" + hash, self.registration.scope).href);
+  })());
 });

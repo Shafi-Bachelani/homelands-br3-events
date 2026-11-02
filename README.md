@@ -23,6 +23,10 @@ The first person to sign up becomes the admin.
 - `SUPABASE_SECRET_KEY`: Supabase, then Project Settings, API Keys, then the secret key
 - `SQUARE_WEBHOOK_SIGNATURE_KEY` (optional): from the Square webhook subscription for `payment.updated`
 
+## Phone notifications
+
+Members turn them on under the bell at the top (on an iPhone, after adding the app to the home screen). Run `supabase/add-phone-notifications.sql` once. The database queues each notification in `notices` and calls `netlify/functions/push`, which encrypts and sends it with Web Push (`netlify/lib/webpush.mjs`, no extra packages). `push-hourly.mjs` sends the timed ones: football booking open and reminders the day before. The push keys are made automatically on first use and kept in the database, so nothing extra goes in Netlify. The joining guide is at `#join`.
+
 ## Copyright
 
 Copyright (c) 2026 Al Ansaar Association. All rights reserved. See [LICENSE](LICENSE). The code is public only so the site can be updated; it is not open source.
