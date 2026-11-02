@@ -7,7 +7,7 @@ export default async () => {
   if (!process.env.SUPABASE_SECRET_KEY) return json({ error: "Not set up." }, 503);
   try {
     const queued = await db("rpc/queue_due_notices", { method: "POST", body: "{}" });
-    // Football Awards: tell players when voting opens, post the results when it closes (add-football-awards.sql).
+    // Football Awards: tell players when voting opens, post the results when it closes (add-football-awards.sql, update-football-awards.sql).
     const awards = await db("rpc/post_due_awards", { method: "POST", body: "{}" }).catch((e) => `not set up: ${e.message}`);
     const r = await sendWaiting();
     console.log("Hourly notifications", { queued, awards, ...r });
