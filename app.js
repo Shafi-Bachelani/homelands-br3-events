@@ -1689,6 +1689,8 @@
   const byGroup = (posts, id) => { const gp = posts.filter((p) => p.group_id === id);
     return ORG_POSTS.includes(id) ? gp.sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0)) : gp; };
   const inGroup = (id) => joined.includes(id) || isOrg() || (AUTO_GROUPS.includes(id) && !!me && !pending());
+  // Football chats (Friday Football, Footballing Events) are hidden from events-only members.
+  const seesGroup = (g) => !g.football_only || !eventsOnly() || isDoor();
   const PENDING_NOTE = '<p class="note">You can join in once the admin has approved your membership.</p>';
   // Chats: open, informal chats anyone can join in. Joined: sign-up chats (like the Quran target).
   // Announcements are pinned at the top of both.
@@ -1702,7 +1704,7 @@
     if (!me) return needSignIn(el, "see the groups");
     loading(el);
     const [gs, posts, comments, votes] = await Promise.all([
-      q(sb.from("groups").select("*").order("sort")),
+      q(sb.from("groups").select("*").order("sort")).then((all) => all.filter(seesGroup)),
       q(sb.from("posts").select("*").order("pinned", { ascending: false }).order("created_at", { ascending: false }).limit(100)),
       q(sb.from("comments").select("*").order("created_at")),
       q(sb.from("poll_votes").select("*")),

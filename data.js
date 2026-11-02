@@ -65,7 +65,7 @@ const APP_DATA = {
     },
     {
       "id": "hub",
-      "name": "Al-Ansaar Community Hub",
+      "name": "Community Hub",
       "about": "The main hub for everyone in the community."
     }
   ],
@@ -81,7 +81,7 @@ const APP_DATA = {
       "id": "p2",
       "group": "hub",
       "date": "2026-06-14",
-      "text": "Welcome to our group **Al-Ansaar Community Hub**! A space for us to connect and share with each other. Start by posting your thoughts, sharing media, or creating a poll.",
+      "text": "Welcome to our group **Community Hub**! A space for us to connect and share with each other. Start by posting your thoughts, sharing media, or creating a poll.",
       "views": 23
     }
   ],
