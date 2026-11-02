@@ -336,3 +336,21 @@ label.check.risk { font-weight: 700; margin: 4px 0 10px; }
 .scroll table.pay select { max-width: 92px; }
 .events > .card, .events > div { min-width: 0; max-width: 100%; }
 .scroll { max-width: 100%; }
+/* welcome and our agreement */
+.welcome h2 { margin: 0 0 10px; font-size: 20px; letter-spacing: .02em; }
+.welcome p { line-height: 1.55; margin: 0 0 10px; }
+.welcome-scroll { max-height: 46vh; overflow-y: auto; background: var(--field); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin: 8px 0 12px; }
+/* member search */
+.member-search input[type="search"] { margin-bottom: 8px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+.chips button { border: 1px solid var(--line); background: var(--field); color: var(--muted); border-radius: 999px; padding: 6px 12px; font-weight: 700; font-size: 14px; }
+.chips button.on { background: var(--green); color: var(--ink); border-color: var(--green); }
+.member-facts { font-size: 14px; line-height: 1.5; margin: 4px 0; }
+.member-row .strikes span { font-size: 14px; }
+/* chat rewards */
+.star-badge { font-size: 16px; }
+.news.stars p { margin: 6px 0; line-height: 1.45; }
+.confetti { position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: 9999; }
+.confetti i { position: absolute; top: -12px; width: 8px; height: 14px; border-radius: 2px; opacity: .95; animation-name: confetti-fall; animation-timing-function: ease-in; animation-fill-mode: forwards; }
+@keyframes confetti-fall { to { top: 105%; margin-left: var(--x); transform: rotate(720deg); opacity: .7; } }
+#modal[data-locked] .close { display: none; }
