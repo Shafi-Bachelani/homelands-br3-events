@@ -1201,7 +1201,7 @@
     const fund = `<div class="card fb"><p class="muted" style="margin:0">Kitty fund <b>${money(fs.kitty)}</b> · kitty ${fs.session_no}, ${fs.games_played} of 5 games played${fs.games_played < 5 ? `, next is game ${fs.games_played + 1} of 5` : ""}. Past accounts are in the <a href="#chat:football-accounts">Accounts chat</a>.</p>
       ${isDoor() ? `<div class="form-actions"><button class="btn solid block" data-go="supervisors">Football Supervisors</button>${isAdmin() ? '<button class="btn block" data-go="footballadmin">Football Accounts</button>' : ""}</div>` : ""}</div>`;
 
-    el.innerHTML = `<div class="events">${offerBanner(allGames, true)}${introBanner(fs.intro_offer, true)}${top}${ev ? footballInfo(ev, fs) : ""}${you}<div id="awards"></div>${players}${fund}</div>`;
+    el.innerHTML = `<div class="events">${offerBanner(allGames, true)}${introBanner(fs.intro_offer, true)}${top}${ev ? footballInfo(ev, fs) : ""}${you}${players}<div id="awards"></div>${fund}</div>`;
     footballAwards($("#awards", el), alive);
     el.querySelectorAll("[data-ticket]").forEach((b) => (b.onclick = () => showTicket(b.dataset.ticket)));
 
