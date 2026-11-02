@@ -1131,9 +1131,12 @@
       top = `<div class="card fb"><h2>No game scheduled</h2><p class="muted">The next Friday game hasn't been added yet.</p></div>`;
     } else {
       const opens = fbOpens(ev), payBy = fbPayBy(ev), start = eventStart(ev);
-      const phase = now < opens ? "closed" : now < payBy ? "open" : now < start ? "locked" : "played";
-      const PH = { closed: "Booking opens Wednesday 1pm", open: "Booking open", locked: "Pay deadline passed", played: "Game played" };
-      const steps = [["Wed 1pm", "Booking opens", opens, "open"], ["Thu 11pm", "Unpaid places removed", payBy, "locked"], [`Fri ${hhmm(ev.time)}`, `Game ${week} of up to 5 in kitty ${fs.session_no}`, start, "played"]];
+      // Football Awards voting: 11pm on match day (or an hour after kick-off if later) for 24 hours, as in award_opens().
+      const voteOpens = new Date(Math.max(at(ev.day, "23:00"), start.getTime() + 36e5)), voteCloses = new Date(voteOpens.getTime() + 864e5);
+      const phase = now < opens ? "closed" : now < payBy ? "open" : now < start ? "locked" : now < voteOpens ? "played" : "voting";
+      const PH = { closed: "Booking opens Wednesday 1pm", open: "Booking open", locked: "Pay deadline passed", played: "Game played", voting: "Awards voting open" };
+      const steps = [["Wed 1pm", "Booking opens", opens, "open"], ["Thu 11pm", "Unpaid places removed", payBy, "locked"], [`Fri ${hhmm(ev.time)}`, `Game ${week} of up to 5 in kitty ${fs.session_no}`, start, "played"],
+        ["Fri 11pm", "Football Awards vote opens", voteOpens, "voting"], ["Sat 11pm", "Vote closes and results posted", voteCloses, "results"]];
       top = `<div class="card fb">
         <div class="row" style="justify-content:space-between;flex-wrap:wrap"><h2>${esc(ev.title)}</h2><span class="tag">${PH[phase]}</span></div>
         <p class="muted">${fmtEvent(ev)} · ${esc(ev.location)}</p>
@@ -1157,7 +1160,7 @@
       } else if (pending()) body = `<p class="note">You can book once the admin has approved your membership.</p>`;
       else if (removed) body = `<p class="note">Your place was released because it wasn't paid in time, so you can't rebook this game. Message the organiser if something went wrong.</p>`;
       else if (phase === "closed") body = `<p>Booking for this game opens <b>Wednesday at 1pm</b>.</p>`;
-      else if (phase === "played") body = `<p>This game has been played.</p>`;
+      else if (phase === "played" || phase === "voting") body = `<p>This game has been played.</p>`;
       else if (bookings.length >= ev.capacity) body = `<p>All ${ev.capacity} places are taken.</p>`;
       else if (kitty) body = `${RISK}<p class="muted">Your kitty membership covers this game.</p><button class="btn solid" data-choice="payg">Book my place</button>`;
       else {
