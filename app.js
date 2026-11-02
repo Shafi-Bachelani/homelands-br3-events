@@ -1136,7 +1136,7 @@
       const phase = now < opens ? "closed" : now < payBy ? "open" : now < start ? "locked" : now < voteOpens ? "played" : "voting";
       const PH = { closed: "Booking opens Wednesday 1pm", open: "Booking open", locked: "Pay deadline passed", played: "Game played", voting: "Awards voting open" };
       const steps = [["Wed 1pm", "Booking opens", opens, "open"], ["Thu 11pm", "Unpaid places removed", payBy, "locked"], [`Fri ${hhmm(ev.time)}`, `Game ${week} of up to 5 in kitty ${fs.session_no}`, start, "played"],
-        ["Fri 11pm", "Football Awards vote opens", voteOpens, "voting"], ["Sat 11pm", "Vote closes and results posted", voteCloses, "results"]];
+        ["Fri 11pm", "🏆 Awards voting opens for tonight's players", voteOpens, "voting"], ["Sat 11pm", "Voting closes and the winners are announced", voteCloses, "results"]];
       top = `<div class="card fb">
         <div class="row" style="justify-content:space-between;flex-wrap:wrap"><h2>${esc(ev.title)}</h2><span class="tag">${PH[phase]}</span></div>
         <p class="muted">${fmtEvent(ev)} · ${esc(ev.location)}</p>
