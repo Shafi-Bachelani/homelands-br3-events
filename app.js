@@ -75,8 +75,9 @@
     $("#modalBody").innerHTML = html; $("#modal").hidden = false;
     onOpen && onOpen($("#modalBody"));
   }
-  const closeModal = () => ($("#modal").hidden = true);
-  $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal" || e.target.classList.contains("close")) closeModal(); });
+  const closeModal = () => { $("#modal").hidden = true; delete $("#modal").dataset.locked; };
+  // A locked pop-up (the welcome agreement) only closes from its own button.
+  $("#modal").addEventListener("click", (e) => { if (!$("#modal").dataset.locked && (e.target.id === "modal" || e.target.classList.contains("close"))) closeModal(); });
   // Unwraps a Supabase result, turning database errors into readable messages.
   async function q(p) {
     const { data, error } = await p;
@@ -142,8 +143,8 @@
 
   // ---------- router ----------
   const TABS = ["events", "groups", "schedule", "about", "more"];
-  const ROUTES = { about, home: about, events, groups, grouplist, chat, schedule, more, services, counselling, messages, notifications, account, football, admin, funds, eventaccounts, squarecheck, supervisors, footballadmin, guest };
-  const PARENT = { grouplist: "groups", chat: "groups", services: "more", counselling: "more", football: "events", funds: "more", eventaccounts: "more", squarecheck: "more", supervisors: "more", footballadmin: "more", guest: null, account: null, admin: "more", messages: null, notifications: null };
+  const ROUTES = { about, home: about, events, groups, grouplist, chat, schedule, more, services, counselling, messages, notifications, account, football, admin, funds, eventaccounts, squarecheck, supervisors, footballadmin, guest, welcome };
+  const PARENT = { grouplist: "groups", chat: "groups", services: "more", counselling: "more", football: "events", funds: "more", eventaccounts: "more", squarecheck: "more", supervisors: "more", footballadmin: "more", guest: null, account: null, welcome: "more", admin: "more", messages: null, notifications: null };
   let lastTab = "events", seq = 0;
 
   function go(route) { if (location.hash.slice(1) === route) render(); else location.hash = route; }
@@ -206,6 +207,44 @@
     $("#invite", el).onclick = () => share(C.name, `Join ${C.name} – ${C.tagline}`);
     $("#info", el).onclick = (e) => { e.preventDefault(); modal(`<h2>General Info</h2><p style="line-height:1.5">${esc(C.generalInfo)}</p>`); };
   }
+  // ---------- WELCOME AND OUR AGREEMENT ----------
+  // Everyone agrees to this when they join. Members who joined before it was in the app agree once, the next time they open it.
+  const WELCOME = `<div class="welcome">
+    <h2>WELCOME TO OUR HOMELANDS BR3</h2>
+    <p>This is simply a group of friends getting together to play football and enjoy other activities together. There is no formal organisation, and this is not associated with any Mosque. It is in the main for Muslims around Beckenham and our friends.</p>
+    <p>If you are here, I consider you my friend, and we are all friends of one another.</p>
+    <p><b>Joining</b> is by invitation and approval only, and is not a right.</p>
+    <p><b>Even friends deserve respect.</b> There is a two strike rule. If you are in a fracas on the pitch, walk away. I'll give you the benefit of the doubt the first time. The second time, I'll say bye bye.</p>
+    <p>If you undermine this group, its activities or its planning, or if I no longer consider you a friend to me or the group, your account may be removed without warning.</p>
+    <p><b>Bringing people together</b> is both a blessing and a passion. Your friends are always welcome on the pitch, as long as you book them in and come with them. And more importantly we hope to organise far more than football for us all.</p>
+    <p><b>This App is here to cement a community,</b><br>and if you want for us to all organise other things for one another please be in contact, and if you want the chats to encourage further conversation then let me know. Activity on the chat is rewarded within the chats themselves :))</p>
+    <p><b>Inactive accounts</b> may be closed. Any credit you hold can be claimed for 12 months, after which it goes to charity on your behalf.</p>
+    <p><b>The Al Ansaar Association</b> is not a charity, but an unincorporated Association of like minded people that supports grass roots initiatives like this, and forms the backdrop for this to happen.</p>
+  </div>`;
+  const longDate = (d) => `${d.getDate()} ${MONTHS_LONG[d.getMonth()]} ${d.getFullYear()}`;
+  function welcome(el) {
+    el.innerHTML = `<div class="pad" style="padding-top:24px">${WELCOME}
+      ${me ? (me.agreed_at ? `<p class="note">You agreed to this on ${longDate(new Date(me.agreed_at))}.</p>` : '<div class="form-actions"><button class="btn solid block" id="agreeNow">I agree</button></div>') : ""}</div>`;
+    const a = $("#agreeNow", el); if (a) a.onclick = () => agree().then(refresh).catch(fail);
+  }
+  async function agree() { await q(sb.rpc("agree_welcome")); await loadMe(); toast("Thank you, and welcome"); }
+  // Shown once to signed-in members who haven't agreed yet. It stays until they tap I agree.
+  function askAgreement() {
+    if (!me || me.agreed_at || isAdmin() || !$("#modal").hidden) return;
+    modal(`<p class="muted" style="margin-top:0">Please read our welcome. We're now using the app to bring us all together, so we ask everyone to agree to it once.</p>
+      <div class="welcome-scroll">${WELCOME}</div>
+      <div class="form-actions"><button class="btn solid block" id="agreeGo">I agree</button></div>`, (m) => {
+      $("#modal").dataset.locked = "1";
+      $("#agreeGo", m).onclick = async () => { try { $("#agreeGo", m).disabled = true; await agree(); closeModal(); refresh(); } catch (e) { $("#agreeGo", m).disabled = false; fail(e); } };
+    });
+  }
+  // Counts the days each member opens the app, for the admin's member search.
+  function markSeen() {
+    if (!me || state.seenDay === `${me.id}:${dayKey(new Date())}`) return;
+    sb.rpc("i_was_here").then(({ error }) => { if (!error) { state.seenDay = `${me.id}:${dayKey(new Date())}`; save(); } });
+  }
+  document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && markSeen());
+
   const initials = (n) => String(n || "?").split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
 
   // ---------- EVENTS ----------
@@ -434,13 +473,14 @@
   }
 
   // ---------- FUNDS ----------
-  const FUND_NAME = { kitty: "Kitty", events: "Events", credits: "Credits", family: "Family Events" };
+  const FUND_NAME = { kitty: "Kitty", events: "Events", credits: "Credits", family: "Family Events", unclaimed: "Unclaimed credit" };
   const fundStats = (fs) => `<div class="stats"><div><span>Kitty fund</span><b>${money(fs.kitty)}</b></div><div><span>Events fund</span><b>${money(fs.events)}</b></div><div><span>Credits</span><b>${money(fs.credits || 0)}</b></div></div>`;
   const FUND_INFO = `<details class="info"><summary><b>What the funds are</b></summary>
         <p><b>Kitty fund</b> runs the football. £15 kitty contributions and pay-and-play payments go in, and it pays the pitch hire and card fees. The kitty restarts when the fund drops below £150 or after 5 games, and anything over £100 then moves to the events fund.</p>
         <p><b>Events fund</b> is built up from the kitty and from owed money that's been paid. It's used for small come-together events and to buy new footballs and other things that keep the football going.</p>
         <p><b>Credits</b> is money members have paid but not used: they paid but didn't play, or cancelled. It still belongs to them. When they pay for a game from their credit, it moves from credits into the kitty fund. Advance payments are only taken through the app, which records every credit added or used, so the credits fund always matches the total credit on members' accounts.</p>
         <p><b>BR3 Family Events fund</b> is kept in Square for family events. Each weekly subscription payment comes in by itself, with Square's fee taken off.</p>
+        <p><b>Unclaimed credit</b> is credit left on accounts that have been closed. It still belongs to them and can be claimed for 12 months, paid back by bank transfer with their consent. After that it goes to a charity on their behalf, and the receipt is kept.</p>
       </details>`;
   const ledgerTable = (rows) => `<div class="scroll"><table><thead><tr><th>Date</th><th>Fund</th><th>Reason</th><th class="amt">Change</th><th class="amt">Balance</th></tr></thead><tbody>${rows.map((l) => `<tr><td>${short(parseDay(l.on_date))}</td><td>${FUND_NAME[l.fund] || ""}</td><td>${esc(l.what)}</td><td class="amt ${Number(l.amount) < 0 ? "neg" : ""}">${money(l.amount)}</td><td class="amt">${money(l.balance)}</td></tr>`).join("")}</tbody></table></div>`;
 
@@ -475,6 +515,7 @@
     loading(el);
     let lq = sb.from("ledger").select("*").order("id", { ascending: false }).limit(300);
     if (FUND_NAME[which]) lq = lq.eq("fund", which);
+    const unclaimed = isAdmin() ? await q(sb.from("unclaimed_credit").select("id,name,email,amount,removed_at,claim_by,status,settled_at,settled_note").order("id", { ascending: false }).limit(100)).catch(() => []) : [];
     const [fs, rows, accts, subs] = await Promise.all([q(sb.from("fund_state").select("*").single()), isAdmin() ? q(lq) : [], isOrg() ? q(sb.from("profiles").select("credit")) : [],
       isAdmin() ? q(sb.from("square_payments").select("paid_at,status,gross,fee,refunded,label").eq("kind", "subscription").order("paid_at", { ascending: false }).limit(300)).catch(() => []) : []]);
     // The latest Square balance PDF (just its date here; the file loads after the page shows).
@@ -483,7 +524,8 @@
     if (!alive()) return;
     el.innerHTML = `<div class="events"><div class="card fb"><h2>Funds & accounts</h2>
       <div class="stats four"><div><span>Kitty fund</span><b>${money(fs.kitty)}</b></div><div><span>Events fund</span><b>${money(fs.events)}</b></div><div><span>Credits</span><b>${money(fs.credits || 0)}</b></div><div><span>Family Events</span><b>${money(fs.family || 0)}</b></div></div>
-      <p class="muted">All funds together: <b>${money(Number(fs.kitty) + Number(fs.events) + Number(fs.credits || 0) + Number(fs.family || 0))}</b></p>
+      ${Number(fs.unclaimed) ? `<p class="muted">Unclaimed credit from closed accounts: <b>${money(fs.unclaimed)}</b></p>` : ""}
+      <p class="muted">All funds together: <b>${money(Number(fs.kitty) + Number(fs.events) + Number(fs.credits || 0) + Number(fs.family || 0) + Number(fs.unclaimed || 0))}</b></p>
       ${isOrg() ? (onAccounts === Math.round(Number(fs.credits || 0) * 100) / 100 ? `<p class="note">Credits tally ✓ The credits fund matches the ${money(onAccounts)} of credit on members' accounts.</p>`
         : `<p class="note">Credits don't tally: members' accounts hold ${money(onAccounts)} but the credits fund shows ${money(fs.credits || 0)}.</p>`) : ""}
       <div class="note"><b>Square balance</b><br>${stmt ? `Open the Square photo to see that it matches the All funds together figure. <span class="muted">Uploaded ${short(new Date(stmt.uploaded_at))}.</span>
@@ -500,6 +542,11 @@
           <div><label>Amount £</label><input id="yAmt" type="number" step="0.01" min="0.01" inputmode="decimal"></div></div>
         <label>Reason (everyone can see this)</label><input id="yWhy" placeholder="e.g. Opening balance, or Family day hall hire">
         <div class="form-actions"><button class="btn solid block" id="yGo">Record it</button></div>` : ""}
+      ${isAdmin() && unclaimed.length ? `<h3>Unclaimed credit</h3>
+        <p class="muted">Credit left when you removed someone. They can claim it for 12 months: pay it back by bank transfer with their consent, then tap Paid back. After the claim date, give it to a charity on their behalf and add a photo of the receipt.</p>
+        ${unclaimed.map((u) => `<div class="member-row"><div><b>${esc(u.name)} · ${money(u.amount)}</b><div class="muted" style="font-size:14px">${u.email ? `${esc(u.email)} · ` : ""}Removed ${short(new Date(u.removed_at))} · ${u.status === "held" ? `claimable until ${short(parseDay(u.claim_by))} ${u.claim_by.slice(0, 4)}${parseDay(u.claim_by) < today() ? " · <b>claim time is over</b>" : ""}`
+          : `${u.status === "paid" ? "Paid back" : "Given to charity"} ${short(new Date(u.settled_at))}${u.settled_note ? ` (${esc(u.settled_note)})` : ""}`}</div></div>
+          ${u.status === "held" ? `<div class="row" style="gap:8px;margin-top:8px"><button class="btn small" data-upaid="${u.id}">Paid back</button><button class="btn small" data-ucharity="${u.id}">To charity</button></div>` : u.status === "charity" ? `<button class="btn small" data-ureceipt="${u.id}">Receipt</button>` : ""}</div>`).join("")}` : ""}
       ${isAdmin() ? `<h3>Move money between funds</h3>
         <p class="muted">For example, the kitty's excess over £100 into the events fund, or the events fund paying for a football game. Every move is posted to the Accounts chat with its reason.</p>
         <div class="grid2"><div><label>From</label><select id="tFrom"><option value="kitty">Kitty fund (${money(fs.kitty)})</option><option value="events">Events fund (${money(fs.events)})</option></select></div>
@@ -509,7 +556,7 @@
         <label>Reason (everyone can see this)</label><input id="tWhy" placeholder="e.g. Kitty excess after 5 games">
         <div class="form-actions"><button class="btn solid block" id="tGo">Move money</button></div>` : ""}
       ${isAdmin() ? `<details class="info" ${which ? "open" : ""}><summary><b>Fund history (admin only)</b></summary>
-      <div class="seg small">${[["", "All"], ["kitty", "Kitty"], ["events", "Events"], ["credits", "Credits"], ["family", "Family"]].map(([k, v]) => `<button class="${k === (FUND_NAME[which] ? which : "") ? "on" : ""}" data-f="${k}">${v}</button>`).join("")}</div>
+      <div class="seg small">${[["", "All"], ["kitty", "Kitty"], ["events", "Events"], ["credits", "Credits"], ["family", "Family"], ["unclaimed", "Unclaimed"]].map(([k, v]) => `<button class="${k === (FUND_NAME[which] ? which : "") ? "on" : ""}" data-f="${k}">${v}</button>`).join("")}</div>
       ${rows.length ? ledgerTable(rows) : '<p class="muted">No changes yet.</p>'}</details>` : ""}
     </div></div>`;
     el.querySelectorAll("[data-f]").forEach((b) => (b.onclick = () => go(b.dataset.f ? "funds:" + b.dataset.f : "funds")));
@@ -531,6 +578,40 @@
       };
       rd.readAsDataURL(f);
     };
+    el.querySelectorAll("[data-upaid]").forEach((b) => (b.onclick = async () => {
+      const u = unclaimed.find((x) => String(x.id) === b.dataset.upaid);
+      const note = prompt(`Paid ${money(u.amount)} back to ${u.name}? Add a note, e.g. "bank transfer 3 Nov".`, "bank transfer");
+      if (note === null) return;
+      try { await q(sb.rpc("settle_unclaimed", { p_id: u.id, p_how: "paid", p_note: note, p_receipt: null })); toast("Recorded as paid back"); refresh(); } catch (e) { fail(e); }
+    }));
+    el.querySelectorAll("[data-ucharity]").forEach((b) => (b.onclick = () => {
+      const u = unclaimed.find((x) => String(x.id) === b.dataset.ucharity);
+      modal(`<button class="close" aria-label="Close">×</button><h2>Give ${esc(u.name)}'s ${money(u.amount)} to charity</h2>
+        ${parseDay(u.claim_by) >= today() ? `<p class="note">Their claim time runs until ${short(parseDay(u.claim_by))} ${u.claim_by.slice(0, 4)}. Only do this early if they've asked you to.</p>` : ""}
+        <label>Which charity</label><input id="uWho" placeholder="e.g. Islamic Relief">
+        <label>Photo or PDF of the receipt</label><input id="uFile" type="file" accept="image/*,application/pdf,.pdf">
+        <div class="form-actions"><button class="btn solid block" id="uGo">Record it</button></div>`, (m) => {
+        $("#uGo", m).onclick = async () => {
+          const f = $("#uFile", m).files[0], who = $("#uWho", m).value.trim();
+          if (!who) return toast("Say which charity");
+          if (!f) return toast("Add the receipt");
+          const isPdf = /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name);
+          if (isPdf && f.size > 5e6) return toast("That PDF is over 5 MB. Try a smaller one");
+          const data = await new Promise((r) => { const rd = new FileReader(); rd.onload = () => r(rd.result); rd.readAsDataURL(f); });
+          const file = isPdf ? String(data).replace(/^data:[^;,]*(;base64)?,/, "data:application/pdf;base64,") : await shrink(data, 1600);
+          try { $("#uGo", m).disabled = true; await q(sb.rpc("settle_unclaimed", { p_id: u.id, p_how: "charity", p_note: who, p_receipt: file })); closeModal(); toast("Recorded, with the receipt"); refresh(); }
+          catch (e) { $("#uGo", m).disabled = false; fail(e); }
+        };
+      });
+    }));
+    el.querySelectorAll("[data-ureceipt]").forEach((b) => (b.onclick = async () => {
+      try {
+        const row = await q(sb.from("unclaimed_credit").select("receipt").eq("id", b.dataset.ureceipt).single());
+        if (!row.receipt) return toast("No receipt saved");
+        if (/^data:image\//.test(row.receipt)) modal(`<button class="close" aria-label="Close">×</button><img src="${esc(row.receipt)}" alt="Receipt" style="width:100%;border-radius:8px;margin-top:30px">`);
+        else window.open(URL.createObjectURL(await (await fetch(row.receipt)).blob()), "_blank");
+      } catch (e) { fail(e); }
+    }));
     if ($("#yGo", el)) $("#yGo", el).onclick = async () => {
       const amt = Math.round(Number($("#yAmt", el).value) * 100) / 100, why = $("#yWhy", el).value.trim(), sign = Number($("#yDir", el).value);
       if (!(amt > 0)) return toast("Enter an amount");
@@ -606,7 +687,7 @@
       <p class="muted">Square holds all the funds. Cash and transfers count as held outside Square until they're moved in.</p>
       <h3>Does Square match the funds?</h3>
       <div class="scroll"><table class="wrap"><tbody>
-        ${row("All funds (kitty, events, credits, Family Events)", x.funds)}
+        ${row(`All funds (kitty, events, credits, Family Events${Number(x.unclaimed) ? ", unclaimed credit" : ""})`, x.funds)}
         ${row("Paid for games and events whose accounts aren't posted yet", x.pending_in, "+")}
         ${row("Square fees on those", x.pending_fees, "−")}
         ${row("Cash in hand", x.held_cash, Number(x.held_cash) < 0 ? "+" : "−")}
@@ -1030,7 +1111,8 @@
             <button class="btn" id="friendLink" style="margin-bottom:10px">${ICON.share} Send your friend a payment link</button>`}
           <button class="btn" data-ticket="${esc(friend.code)}" style="margin-bottom:10px">Show my friend's ticket</button>
           <button class="btn" id="cancelFriend">Remove my friend</button>`
-        : canAdd && bookings.length < ev.capacity ? `<h3>Bring a friend</h3><p class="muted">You can add one friend per game. ${me.family ? `Pay their ${F$} by transfer, or send them a payment link` : `Pay their ${F$} yourself${Number(me.credit) >= F ? ", by card or from your credit," : ""} or send them a payment link`}.</p><button class="btn" id="addFriend">Add a friend</button>` : "";
+        : canAdd && !mine && bookings.length < ev.capacity ? `<h3>Bring a friend</h3><p class="muted">Friends are always welcome, as long as you book them in and come with them. Book your own place first, then you can add one friend to this game.</p>`
+        : canAdd && bookings.length < ev.capacity ? `<h3>Bring a friend</h3><p class="muted">You can add one friend per game, as long as you come with them. ${me.family ? `Pay their ${F$} by transfer, or send them a payment link` : `Pay their ${F$} yourself${Number(me.credit) >= F ? ", by card or from your credit," : ""} or send them a payment link`}.</p><button class="btn" id="addFriend">Add a friend</button>` : "";
       you = `<div class="card fb"><h2>You</h2>${pills}${body}${friendBox}</div>`;
 
       const paidCount = bookings.filter((b) => b.paid).length;
@@ -1094,6 +1176,8 @@
     if (cx) cx.onclick = async () => {
       const mine = bookings.find((b) => b.user_id === me.id);
       if (mine && !mine.paid && mine.square_order_id) payApi({ code: mine.code, confirm: true }).then((r) => { if (r.paid && alive()) { toast("Payment received, thank you!"); refresh(); } }).catch(() => {});
+      const myFriend = bookings.find((b) => b.booked_by === me.id);
+      if (myFriend) return modal(`<button class="close" aria-label="Close">×</button><h2>Remove your friend first</h2><p style="line-height:1.5">Friends can only play when you come with them. Please remove <b>${esc(myFriend.display_name)}</b> first, using "Remove my friend", then remove yourself.</p>`);
       if (cx.dataset.sure !== "1") { cx.dataset.sure = "1"; cx.textContent = "Tap again to remove yourself"; return; }
       try { toast(await q(sb.rpc("cancel_booking", { p_id: mine.id }))); await loadMe(); refresh(); } catch (e) { fail(e); }
     };
@@ -1484,6 +1568,41 @@
 
   // ---------- GROUPS ----------
   let groupCache = [];
+  // Reactions everyone can see (null until add-welcome-and-members.sql is run: then they stay on this phone),
+  // and the chats' most active members: last month's winner wears the 🏅 badge for the whole of this month.
+  let reactCache = null, chatStars = [];
+  const REACTS = ["❤️", "😂", "👏", "🙏", "🔥", "🎉", "😮", "😢"];
+  const lastMonthName = () => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1); return MONTHS_LONG[d.getMonth()]; };
+  const badge = (uid) => { const top = chatStars.find((x) => x.period === "last"); return top && uid && top.user_id === uid ? ` <span class="star-badge" title="Most active in the chats in ${lastMonthName()}">🏅</span>` : ""; };
+  function starsBox() {
+    const last = chatStars.filter((x) => x.period === "last"), now = chatStars.filter((x) => x.period === "this");
+    if (!last.length && !now.length) return "";
+    const MEDAL = ["🥇", "🥈", "🥉"];
+    return `<section class="news stars"><h2>🏅 Most active in the chats</h2>
+      ${last.length ? `<p><b>${lastMonthName()}'s winner: ${esc(last[0].name)}</b>, who wears the 🏅 badge this month.${last.length > 1 ? ` Well done too, ${last.slice(1).map((x) => esc(x.name)).join(" and ")}.` : ""}</p>` : ""}
+      ${now.length ? `<p class="muted" style="margin-bottom:4px">${MONTHS_LONG[new Date().getMonth()]} so far</p>${now.map((x, i) => `<div>${MEDAL[i]} ${esc(x.name)} <span class="muted">· ${x.score} point${x.score === 1 ? "" : "s"}</span></div>`).join("")}` : ""}
+      <p class="muted" style="font-size:14px;margin-top:8px">Posts score 3, comments 2 and reactions 1. The top member at the end of the month gets the 🏅 badge next to their name all next month.</p></section>`;
+  }
+  // A shower of confetti each time someone posts or comments.
+  function confetti() {
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const box = document.createElement("div"); box.className = "confetti"; box.setAttribute("aria-hidden", "true");
+    const COLS = ["#f2c14e", "#2e8b57", "#e4572e", "#4ea5d9", "#ffffff", "#c45ab3"];
+    for (let i = 0; i < 90; i++) {
+      const b = document.createElement("i");
+      b.style.left = Math.random() * 100 + "%"; b.style.background = COLS[i % COLS.length];
+      b.style.animationDelay = Math.random() * 0.6 + "s"; b.style.animationDuration = 1.8 + Math.random() * 1.4 + "s";
+      b.style.setProperty("--x", (Math.random() * 160 - 80) + "px"); b.style.transform = `rotate(${Math.random() * 360}deg)`;
+      box.appendChild(b);
+    }
+    document.body.appendChild(box); setTimeout(() => box.remove(), 3600);
+  }
+  function cheer() {
+    confetti();
+    const day = dayKey(new Date()), first = state.cheerDay !== day;
+    state.cheerDay = day; save();
+    toast(first ? "Thanks for joining in today! 🎉" : "Posted 🎉");
+  }
   const groupName = (id) => (groupCache.find((g) => g.id === id) || {}).name || "Group";
 
   const ANNOUNCE = "announcements";
@@ -1512,7 +1631,9 @@
       q(sb.from("comments").select("*").order("created_at")),
       q(sb.from("poll_votes").select("*")),
       myGroups(),
-    ]).then(([a, b, c, d, g]) => { joined = g; return [a, b, c, d]; });
+      q(sb.from("post_reactions").select("post_id,user_id,emoji")).catch(() => null),
+      q(sb.rpc("chat_stars")).catch(() => []),
+    ]).then(([a, b, c, d, g, r, st]) => { joined = g; reactCache = r; chatStars = st || []; return [a, b, c, d]; });
     if (!alive()) return;
     groupCache = gs;
     const boxed = (g) => g === ANNOUNCE || gs.find((x) => x.id === g)?.members_only;
@@ -1574,7 +1695,7 @@
       <div class="subhead"><h2>Chats</h2><a href="#grouplist">Joined events</a>
         <span style="width:1px;height:28px;background:var(--line)"></span>
         <button id="searchBtn" style="color:var(--green)">${ICON.search}</button></div>
-      ${filter ? "" : newsBox + open}
+      ${filter ? "" : newsBox + starsBox() + open}
       ${filter ? `<div class="pad" style="padding-top:10px">Results for “${esc(filter)}” · <a href="#" id="clear">clear</a></div>` : ""}
       ${pending() ? `<div class="pad">${PENDING_NOTE}</div>` : `<div class="composer">
         <div class="row"><div class="avatar" style="width:46px;height:46px">${esc(initials(me.name))}</div>
@@ -1606,8 +1727,11 @@
     return `<div class="text">${text}</div>${p.image ? pic(p.image) : ""}${imgs.filter((_, i) => !used.has(i)).map(pic).join("")}`;
   }
   function postHtml(p, comments, votes) {
-    const liked = !!state.likes[p.id];
-    const reacts = state.reactions[p.id] || [];
+    const shared = Array.isArray(reactCache), mineR = shared ? reactCache.filter((r) => r.post_id === p.id) : [];
+    const count = (e) => mineR.filter((r) => r.emoji === e).length, isMine = (e) => mineR.some((r) => r.emoji === e && r.user_id === me.id);
+    const liked = shared ? isMine("👍") : !!state.likes[p.id];
+    const reacts = shared ? [] : state.reactions[p.id] || [];
+    const sharedPills = shared ? REACTS.filter((e) => count(e)).map((e) => `<button class="pill ${isMine(e) ? "on" : ""}" data-toggle="${p.id}" data-e="${e}">${e} ${count(e)}</button>`).join("") : "";
     let poll = "";
     if (p.poll) {
       const mine = votes.find((v) => v.user_id === me.id);
@@ -1619,27 +1743,46 @@
     }
     return `<article class="post" data-post="${p.id}">
       <div class="head"><div class="avatar" style="width:46px;height:46px">${esc(initials(p.author_name))}</div>
-        <div class="who"><b>${esc(p.author_name)}</b> posted in the group <b>${esc(groupName(p.group_id))}</b>.${p.pinned ? ' <span class="tag gold">Pinned</span>' : ""}<div class="muted">${ORG_POSTS.includes(p.group_id) ? `Posted ${short(new Date(p.created_at))} ${new Date(p.created_at).getFullYear()}` : ago(p.created_at)}</div></div>
+        <div class="who"><b>${esc(p.author_name)}</b>${badge(p.user_id)} posted in the group <b>${esc(groupName(p.group_id))}</b>.${p.pinned ? ' <span class="tag gold">Pinned</span>' : ""}<div class="muted">${ORG_POSTS.includes(p.group_id) ? `Posted ${short(new Date(p.created_at))} ${new Date(p.created_at).getFullYear()}` : ago(p.created_at)}</div></div>
         <button data-menu="${p.id}" style="font-size:24px;font-weight:900;letter-spacing:1px">•••</button></div>
       ${postBody(p)}
       ${poll}
       <div class="reactions">
-        <button class="pill ${liked ? "on" : ""}" data-like="${p.id}">${ICON.thumb} ${liked ? 1 : 0}</button>
-        ${reacts.map((r) => `<span class="pill">${r}</span>`).join("")}
+        <button class="pill ${liked ? "on" : ""}" data-like="${p.id}">${ICON.thumb} ${shared ? count("👍") : liked ? 1 : 0}</button>
+        ${sharedPills}${reacts.map((r) => `<span class="pill">${r}</span>`).join("")}
         <button class="pill" data-react="${p.id}">☺+</button>
       </div>
       <div class="post-foot"><button data-comment="${p.id}">Comment${comments.length ? ` (${comments.length})` : ""}</button><button data-share="${p.id}">Share</button></div>
-      ${comments.length ? `<div class="comments">${comments.map((c) => `<div class="comment"><b>${esc(c.author_name)}</b> ${esc(c.body)}</div>`).join("")}</div>` : ""}
+      ${comments.length ? `<div class="comments">${comments.map((c) => `<div class="comment"><b>${esc(c.author_name)}</b>${badge(c.user_id)} ${esc(c.body)}</div>`).join("")}</div>` : ""}
     </article>`;
   }
 
   function wirePosts(el, posts) {
     const find = (id) => posts.find((p) => p.id === id);
-    el.querySelectorAll("[data-like]").forEach((b) => (b.onclick = () => { const id = b.dataset.like; state.likes[id] = !state.likes[id]; save(); refresh(); }));
+    // Reactions are shared with everyone once the database has them; until then they stay on this phone.
+    const toggle = async (id, e) => {
+      if (pending()) return toast("You can react once the admin has approved your membership");
+      const on = reactCache.some((r) => r.post_id === id && r.user_id === me.id && r.emoji === e);
+      try {
+        if (on) await q(sb.from("post_reactions").delete().eq("post_id", id).eq("user_id", me.id).eq("emoji", e));
+        else await q(sb.from("post_reactions").insert({ post_id: id, user_id: me.id, emoji: e }));
+        refresh();
+      } catch (err) { fail(err); }
+    };
+    el.querySelectorAll("[data-like]").forEach((b) => (b.onclick = () => {
+      const id = b.dataset.like;
+      if (Array.isArray(reactCache)) return toggle(id, "👍");
+      state.likes[id] = !state.likes[id]; save(); refresh();
+    }));
+    el.querySelectorAll("[data-toggle]").forEach((b) => (b.onclick = () => toggle(b.dataset.toggle, b.dataset.e)));
     el.querySelectorAll("[data-react]").forEach((b) => (b.onclick = () => {
       const id = b.dataset.react;
-      modal(`<h2>Add a reaction</h2><div style="font-size:34px;display:flex;gap:14px;flex-wrap:wrap">${["❤️","😂","👏","🙏","🔥","🎉","😮","😢"].map((e) => `<button data-e="${e}">${e}</button>`).join("")}</div>`, (m) => {
-        m.querySelectorAll("[data-e]").forEach((x) => (x.onclick = () => { (state.reactions[id] ||= []).push(x.dataset.e); save(); closeModal(); refresh(); }));
+      modal(`<h2>Add a reaction</h2><div style="font-size:34px;display:flex;gap:14px;flex-wrap:wrap">${REACTS.map((e) => `<button data-e="${e}">${e}</button>`).join("")}</div>`, (m) => {
+        m.querySelectorAll("[data-e]").forEach((x) => (x.onclick = () => {
+          closeModal();
+          if (Array.isArray(reactCache)) return toggle(id, x.dataset.e);
+          (state.reactions[id] ||= []).push(x.dataset.e); save(); refresh();
+        }));
       });
     }));
     el.querySelectorAll("[data-comment]").forEach((b) => (b.onclick = () => {
@@ -1648,7 +1791,7 @@
         $("#t", m).focus();
         $("#send", m).onclick = async () => {
           const body = $("#t", m).value.trim(); if (!body) return;
-          try { await q(sb.from("comments").insert({ post_id: id, user_id: me.id, author_name: me.name, body })); closeModal(); refresh(); } catch (e) { fail(e); }
+          try { await q(sb.from("comments").insert({ post_id: id, user_id: me.id, author_name: me.name, body })); closeModal(); refresh(); cheer(); } catch (e) { fail(e); }
         };
       });
     }));
@@ -1708,7 +1851,7 @@
           if (post.poll.length < 2) return toast("Add at least 2 options");
         }
         if (!body && !file) return toast("Write something first");
-        try { $("#post", m).disabled = true; await q(sb.from("posts").insert(post)); closeModal(); refresh(); toast("Posted"); } catch (e) { $("#post", m).disabled = false; fail(e); }
+        try { $("#post", m).disabled = true; await q(sb.from("posts").insert(post)); closeModal(); refresh(); if (post.group_id === ANNOUNCE || ORG_POSTS.includes(post.group_id)) toast("Posted"); else cheer(); } catch (e) { $("#post", m).disabled = false; fail(e); }
       };
     });
   }
@@ -1791,6 +1934,7 @@
       <button class="menu-row" data-to="football">${ICON.ball}<span>Friday Football ${ICON.chev}</span></button>
       <button class="menu-row" data-to="funds">${ICON.poll}<span>Funds & accounts ${ICON.chev}</span></button>
       <button class="menu-row" data-to="counselling">${ICON.star}<span>Counselling ${ICON.chev}</span></button>
+      <button class="menu-row" data-to="welcome">${ICON.user}<span>Welcome & our agreement ${ICON.chev}</span></button>
       ${isDoor() ? `<h3 class="menu-head">Organisers · on the night</h3>
       <button class="menu-row" data-to="supervisors">${ICON.ball}<span>Football Supervisors ${ICON.chev}</span></button>
       ${isAdmin() ? "" : `<button class="menu-row" data-to="admin">${ICON.tools}<span>Check in at other events ${ICON.chev}</span></button>`}` : ""}
@@ -1871,6 +2015,7 @@
       ${pending() ? (application ? `<p class="note">Thanks, we've received your application. The admin will approve your membership soon. Until then you can look around, but you can't book or post.</p>`
         : `<p class="note">Please complete your membership application. Accounts without one are removed 24 hours after joining.</p><a class="btn solid block" href="${applyUrl()}" target="_blank" rel="noopener">Complete your application</a>`) : ""}
       ${debts.length ? `<p class="note">You owe ${money(debts.reduce((t, d) => t + Number(d.amount), 0))} from ${debts.map((d) => esc(d.reason)).join(", ")}. Please pay the organiser.</p>` : ""}
+      <p class="muted">${me.agreed_at ? `You agreed to our welcome on ${longDate(new Date(me.agreed_at))}.` : "You haven't agreed to our welcome yet."} <a href="#welcome">Read it</a></p>
       <h2 style="margin-top:24px">My credit</h2>
       <p><b>${money(me.credit || 0)}</b> <span class="muted">held on your account</span></p>
       <p class="muted">Credit comes from paying for football and then not playing, or cancelling. It's used automatically for your next booking.</p>
@@ -1910,7 +2055,9 @@
         <p class="muted" style="font-size:14px">Membership is for people living within ${HOME_MILES} miles of BR3. Only the admin can see your postcode.</p>
         <label>What would you like to join for?</label><div class="radios">
           <label class="check"><input type="radio" name="lvl" value="all" checked> Events and Friday football</label>
-          <label class="check"><input type="radio" name="lvl" value="events"> Events only</label></div></div>
+          <label class="check"><input type="radio" name="lvl" value="events"> Events only</label></div>
+        <label>Our welcome and agreement</label><div class="welcome-scroll">${WELCOME}</div>
+        <label class="check"><input type="checkbox" id="agreeJoin"> I have read the welcome and I agree to it</label></div>
       <label>Email</label><input id="em" type="email" autocomplete="email">
       <label>Password</label><input id="pw" type="password" autocomplete="current-password" minlength="6">
       <div class="form-actions"><button class="btn solid block" id="go">Sign in</button></div>
@@ -1932,12 +2079,13 @@
       if (mode === "up" && !name) return toast("Enter your full name");
       const postcode = $("#pc", el).value.trim().toUpperCase();
       if (mode === "up" && !postcode) return toast("Enter your postcode");
+      if (mode === "up" && !$("#agreeJoin", el).checked) return toast("Please read the welcome and tick I agree");
       try {
         $("#go", el).disabled = true;
         if (mode === "up") {
           const miles = await milesFromHome(postcode);
           if (miles === false) { $("#go", el).disabled = false; return toast("We couldn't find that postcode. Please check it"); }
-          const r = await q(sb.auth.signUp({ email, password, options: { data: { name, postcode, miles: miles == null ? "" : miles.toFixed(1) } } }));
+          const r = await q(sb.auth.signUp({ email, password, options: { data: { name, postcode, miles: miles == null ? "" : miles.toFixed(1), agreed: "yes" } } }));
           if (r.session && el.querySelector('[name="lvl"]:checked')?.value === "events") await q(sb.rpc("set_my_football", { p_on: false })).catch(() => {});
           const far = miles == null || miles > HOME_MILES;
           const uid = r.user?.id || r.session?.user?.id;
@@ -1951,7 +2099,8 @@
         } else {
           await q(sb.auth.signInWithPassword({ email, password }));
         }
-        await loadMe(); toast(`Welcome, ${me?.name || ""}`); go("events");
+        await loadMe(); toast(`Welcome, ${me?.name || ""}`); go("events"); markSeen();
+        if (mode === "in") setTimeout(askAgreement, 600);
       } catch (e) { $("#go", el).disabled = false; fail(e); }
     };
     $("#forgot", el).onclick = async (e) => {
@@ -2074,6 +2223,8 @@
       q(sb.from("profiles").select("*").order("name")),
       q(sb.from("fund_state").select("*").single()),
     ]);
+    // Activity for the member search (empty until add-welcome-and-members.sql is run).
+    const report = Object.fromEntries((await q(sb.rpc("member_report")).catch(() => [])).map((r) => [r.id, r]));
     if (!alive()) return;
     const g = Object.fromEntries(guests.map((x) => [x.booking_id, x]));
     // events from today on, soonest first, for the who's-in list under the scan button
@@ -2133,14 +2284,14 @@
       }).join("")}
       <h2 style="margin-top:28px">Members</h2>
       <p class="muted">Family members pay by transfer and never by card. Tick Kitty for anyone who has already paid £15 for the current kitty. Untick Football for events-only members.${isAdmin() ? " Only you, as admin, can change roles." : ""}</p>
-      ${members.map((m) => `<div class="member-row" data-mid="${m.id}"><b>${esc(m.name)}</b>
-        <div class="row" style="flex-wrap:wrap;gap:8px">
-          <select data-f="role" ${isAdmin() ? "" : "disabled"}>${ROLES.map((r) => `<option ${m.role === r ? "selected" : ""}>${r}</option>`).join("")}</select>
-          <label class="check"><input type="checkbox" data-f="family" ${m.family ? "checked" : ""}> Family</label>
-          <label class="check"><input type="checkbox" data-f="football" ${m.football !== false || m.family ? "checked" : ""}> Football</label>
-          <label class="check"><input type="checkbox" data-f="kitty" ${m.kitty_session === fs.session_no ? "checked" : ""}> Kitty ${fs.session_no}</label>
-          <label class="check">Credit £<input data-f="credit" type="number" step="1" min="0" value="${Number(m.credit)}" style="width:70px"></label>
-          <button class="btn small" data-save="${m.id}">Save</button>${isAdmin() && m.id !== me.id && m.role !== "admin" ? `<button class="btn small danger" data-rm="${m.id}">Remove member</button>` : ""}</div></div>`).join("")}
+      <div class="member-search">
+        <input id="mQ" type="search" placeholder="Search members by name">
+        <div class="chips" id="mWho">${[["all", "All"], ["football", "Football"], ["events", "Events only"], ["member", "Members"], ["organiser", "Organisers"], ["admin", "Admin"], ["family", "Family"], ["strikes", "Strikes"], ["notagreed", "Not agreed"]].map(([k, v], i) => `<button data-who="${k}" class="${i ? "" : "on"}">${v}</button>`).join("")}</div>
+        <div class="grid2"><div><label>Not active for</label><select id="mIdle"><option value="0">Any time</option>${[1, 2, 3, 4, 5, 6, 12].map((n) => `<option value="${n}">${n}+ month${n > 1 ? "s" : ""}</option>`).join("")}</select></div>
+          <div><label>Sort by</label><select id="mSort"><option value="name">Name</option><option value="seen">Last in the app</option><option value="football">Last football</option><option value="active">Most active</option><option value="quiet">Least active</option></select></div></div>
+        <p class="muted" style="font-size:14px">Activity counts everything in the app over the last 90 days: days they opened it, bookings, posts, comments, reactions and poll votes.${Object.keys(report).length ? "" : " <b>Run add-welcome-and-members.sql in Supabase to see activity.</b>"}</p>
+        <p id="mCount" class="muted"></p></div>
+      <div id="mList"></div>
       ${isAdmin() ? `<h2 style="margin-top:28px">Starting funds</h2>
         <p class="muted">Use once to bring the balances over from WhatsApp. Kitty ${fs.session_no}, ${fs.games_played} of 5 games played.</p>
         <div class="grid2"><div><label>Kitty fund £</label><input id="fk" type="number" step="0.01" value="${fs.kitty}"></div><div><label>Events fund £</label><input id="fe" type="number" step="0.01" value="${fs.events}"></div><div><label>Credits £ (from members' accounts)</label><input id="fc" type="number" value="${fs.credits || 0}" readonly></div>
@@ -2207,22 +2358,77 @@
       if (b.dataset.sure !== "1") { b.dataset.sure = "1"; b.textContent = "Tap again to remove it and its bookings"; return; }
       try { await q(sb.from("events").delete().eq("id", b.dataset.del)); toast("Event removed"); refresh(); } catch (e) { fail(e); }
     }));
-    el.querySelectorAll("[data-save]").forEach((b) => (b.onclick = async () => {
-      const row = b.closest("[data-mid]"), f = (k) => $(`[data-f="${k}"]`, row);
-      try {
-        await q(sb.rpc("update_member", { p_id: b.dataset.save, p_role: isAdmin() ? f("role").value : null, p_family: f("family").checked, p_credit: Number(f("credit").value) || 0 }));
-        const m = members.find((x) => x.id === b.dataset.save);
-        if (f("football").checked !== (m.football !== false)) await q(sb.rpc("set_member_football", { p_id: m.id, p_on: f("football").checked }));
-        if (f("kitty").checked !== (m.kitty_session === fs.session_no)) await q(sb.rpc("set_kitty", { p_id: m.id, p_on: f("kitty").checked }));
-        if (b.dataset.save === me.id) await loadMe();
-        toast("Saved");
-      } catch (e) { fail(e); }
-    }));
-    el.querySelectorAll("[data-rm]").forEach((b) => (b.onclick = async () => {
-      const m = members.find((x) => x.id === b.dataset.rm);
-      if (!confirm(`Remove ${m.name} from the app? Their account is deleted and they can't sign in again. Past bookings stay in the history.${Number(m.credit) ? ` Their £${Number(m.credit)} credit is taken off the credits fund.` : ""}`)) return;
-      try { await q(sb.rpc("remove_member", { p_id: m.id })); toast(`${m.name} removed`); refresh(); } catch (e) { fail(e); }
-    }));
+    // ----- member search -----
+    const ACT = (n) => (n >= 40 ? "Very active" : n >= 10 ? "Active" : n > 0 ? "Quiet" : "Inactive");
+    const dayOf = (v) => (v ? parseDay(String(v).slice(0, 10)) : null);
+    const lastActive = (m) => dayOf(report[m.id]?.last_active) || new Date(m.created_at);
+    function memberFacts(m) {
+      const r = report[m.id];
+      if (!r) return m.approved === false ? ' <span class="tag warn">Waiting for approval</span>' : "";
+      const seen = dayOf(r.last_seen), fb = dayOf(r.last_football);
+      return ` ${r.strikes ? `<span class="tag warn">${r.strikes} strike${r.strikes > 1 ? "s" : ""}</span>` : ""}${m.approved === false ? ' <span class="tag warn">Waiting for approval</span>' : ""}
+        <div class="muted member-facts">Last in the app: ${seen ? short(seen) + " " + seen.getFullYear() : "not yet recorded"} · Last football: ${fb ? short(fb) + " " + fb.getFullYear() : "none"} · Joined ${short(new Date(m.created_at))} ${new Date(m.created_at).getFullYear()}<br>
+          Activity: <b>${ACT(r.score)}</b> (${r.score}) · ${r.days_90} day${r.days_90 === 1 ? "" : "s"} in the app, ${r.bookings_90} booking${r.bookings_90 === 1 ? "" : "s"}, ${r.posts_90} post${r.posts_90 === 1 ? "" : "s"}, ${r.comments_90} comment${r.comments_90 === 1 ? "" : "s"}, ${r.reactions_90} reaction${r.reactions_90 === 1 ? "" : "s"} or vote${r.reactions_90 === 1 ? "" : "s"}<br>
+          ${r.agreed_at ? `Agreed to the welcome ${short(new Date(r.agreed_at))}` : "Hasn't agreed to the welcome yet"}${Number(r.credit) ? ` · ${money(r.credit)} credit` : ""}</div>
+        <div class="row strikes" style="gap:8px;margin:6px 0"><span>Strikes (only you see these): <b>${r.strikes}</b></span><button class="btn small" data-strike="${m.id}" data-n="${r.strikes + 1}">+ Strike</button>${r.strikes ? `<button class="btn small" data-strike="${m.id}" data-n="${r.strikes - 1}">− Take one off</button>` : ""}</div>
+        ${r.strike_note ? `<div class="muted" style="font-size:14px;white-space:pre-line">Note: ${esc(r.strike_note)}</div>` : ""}`;
+    }
+    let mWho = "all";
+    function showMembers() {
+      const text = $("#mQ", el).value.trim().toLowerCase(), idle = Number($("#mIdle", el).value), sort = $("#mSort", el).value;
+      const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - idle);
+      const WHO = { all: () => true, football: (m) => m.football !== false || m.family, events: (m) => m.football === false && !m.family, member: (m) => m.role === "member", organiser: (m) => m.role === "organiser", admin: (m) => m.role === "admin",
+        family: (m) => m.family, strikes: (m) => (report[m.id]?.strikes || 0) > 0, notagreed: (m) => !m.agreed_at };
+      const t = (d) => (d ? d.getTime() : 0), sc = (m) => report[m.id]?.score || 0;
+      const list = members.filter((m) => (!text || m.name.toLowerCase().includes(text)) && WHO[mWho](m) && (!idle || lastActive(m) < cutoff))
+        .sort({ name: (a, b) => a.name.localeCompare(b.name), seen: (a, b) => t(dayOf(report[b.id]?.last_seen)) - t(dayOf(report[a.id]?.last_seen)),
+          football: (a, b) => t(dayOf(report[b.id]?.last_football)) - t(dayOf(report[a.id]?.last_football)), active: (a, b) => sc(b) - sc(a), quiet: (a, b) => sc(a) - sc(b) || t(lastActive(a)) - t(lastActive(b)) }[sort]);
+      $("#mCount", el).textContent = `${list.length} of ${members.length} member${members.length === 1 ? "" : "s"}`;
+      const box = $("#mList", el);
+      box.innerHTML = list.map((m) => `<div class="member-row" data-mid="${m.id}"><b>${esc(m.name)}</b>${memberFacts(m)}
+        <div class="row" style="flex-wrap:wrap;gap:8px">
+          <select data-f="role" ${isAdmin() ? "" : "disabled"}>${ROLES.map((r) => `<option ${m.role === r ? "selected" : ""}>${r}</option>`).join("")}</select>
+          <label class="check"><input type="checkbox" data-f="family" ${m.family ? "checked" : ""}> Family</label>
+          <label class="check"><input type="checkbox" data-f="football" ${m.football !== false || m.family ? "checked" : ""}> Football</label>
+          <label class="check"><input type="checkbox" data-f="kitty" ${m.kitty_session === fs.session_no ? "checked" : ""}> Kitty ${fs.session_no}</label>
+          <label class="check">Credit £<input data-f="credit" type="number" step="1" min="0" value="${Number(m.credit)}" style="width:70px"></label>
+          <button class="btn small" data-save="${m.id}">Save</button>${isAdmin() && m.id !== me.id && m.role !== "admin" ? `<button class="btn small danger" data-rm="${m.id}">Remove member</button>` : ""}</div></div>`).join("") || '<p class="muted">No members match.</p>';
+      box.querySelectorAll("[data-save]").forEach((b) => (b.onclick = async () => {
+        const row = b.closest("[data-mid]"), f = (k) => $(`[data-f="${k}"]`, row);
+        try {
+          await q(sb.rpc("update_member", { p_id: b.dataset.save, p_role: isAdmin() ? f("role").value : null, p_family: f("family").checked, p_credit: Number(f("credit").value) || 0 }));
+          const m = members.find((x) => x.id === b.dataset.save);
+          if (f("football").checked !== (m.football !== false)) await q(sb.rpc("set_member_football", { p_id: m.id, p_on: f("football").checked }));
+          if (f("kitty").checked !== (m.kitty_session === fs.session_no)) await q(sb.rpc("set_kitty", { p_id: m.id, p_on: f("kitty").checked }));
+          if (b.dataset.save === me.id) await loadMe();
+          toast("Saved");
+        } catch (e) { fail(e); }
+      }));
+      box.querySelectorAll("[data-rm]").forEach((b) => (b.onclick = async () => {
+        const m = members.find((x) => x.id === b.dataset.rm);
+        if (!confirm(`Remove ${m.name} from the app? Their account is deleted and they can't sign in again. Past bookings stay in the history.${Number(m.credit) ? `\n\nTheir ${money(m.credit)} credit moves to the Unclaimed credit fund on the Funds page. They can claim it for 12 months, then it goes to charity on their behalf.` : ""}`)) return;
+        try { await q(sb.rpc("remove_member", { p_id: m.id })); toast(`${m.name} removed`); refresh(); } catch (e) { fail(e); }
+      }));
+      box.querySelectorAll("[data-strike]").forEach((b) => (b.onclick = async () => {
+        const m = members.find((x) => x.id === b.dataset.strike), n = Number(b.dataset.n), r = report[m.id];
+        let note = r.strike_note;
+        if (n > r.strikes) {
+          const why = prompt(`Strike ${n} for ${m.name}. What happened? (Only you see this.)`, "");
+          if (why === null) return;
+          note = [r.strike_note, `${short(new Date())}: strike ${n}${why.trim() ? ` – ${why.trim()}` : ""}`].filter(Boolean).join("\n");
+          if (n >= 2) toast("That's the second strike: under the two strike rule you can remove them");
+        } else {
+          if (!confirm(`Take a strike off ${m.name}? They'll have ${n}.`)) return;
+          note = [r.strike_note, `${short(new Date())}: strike taken off, now ${n}`].filter(Boolean).join("\n");
+        }
+        try { await q(sb.rpc("set_strikes", { p_id: m.id, p_strikes: n, p_note: note })); r.strikes = n; r.strike_note = note; showMembers(); } catch (e) { fail(e); }
+      }));
+    }
+    $("#mQ", el).oninput = showMembers;
+    $("#mIdle", el).onchange = showMembers;
+    $("#mSort", el).onchange = showMembers;
+    el.querySelectorAll("[data-who]").forEach((b) => (b.onclick = () => { mWho = b.dataset.who; el.querySelectorAll("[data-who]").forEach((x) => x.classList.toggle("on", x === b)); showMembers(); }));
+    showMembers();
     const sf = $("#setF", el);
     if (sf) sf.onclick = async () => {
       try { await q(sb.rpc("set_funds", { p_kitty: Number($("#fk", el).value), p_events: Number($("#fe", el).value), p_credits: Number($("#fc", el).value), p_session: Number($("#fn", el).value), p_games: Number($("#fg", el).value) })); toast("Funds set"); refresh(); } catch (e) { fail(e); }
@@ -2292,6 +2498,8 @@
   loadMe().catch(() => {}).then(confirmReturn).finally(async () => {
     if (RECOVERY || AUTH_ERROR) history.replaceState(null, "", location.pathname + location.search);
     await render();
+    markSeen();
+    if (!AUTH_ERROR && !RECOVERY) askAgreement();
     if (AUTH_ERROR) modal(`<h2>That link didn't work</h2><p class="muted" style="line-height:1.5">${esc(AUTH_ERROR)}. Reset links work once and expire after an hour, so tap "Forgot your password?" on the sign-in page to get a new one.</p>`);
     else if (RECOVERY && (await sb.auth.getSession()).data.session) newPassword();
   });
