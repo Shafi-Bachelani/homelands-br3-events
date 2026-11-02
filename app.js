@@ -356,10 +356,10 @@
   }
   async function events(el, alive, arg) {
     loading(el);
-    await sb.rpc("expire_unpaid"); // so the booked numbers don't count places already released
     const [list, places, mine] = await Promise.all([
       q(sb.from("events").select("*")),
-      q(sb.rpc("event_places")),
+      // Release unpaid places first, so the booked numbers don't count them. The rest loads meanwhile.
+      sb.rpc("expire_unpaid").then(() => q(sb.rpc("event_places"))),
       me ? q(sb.from("bookings").select("id,event_id,status,code").eq("user_id", me.id).neq("status", "cancelled")) : [],
       myGroups(),
       sb.from("fund_state").select("intro_offer").single().then((r) => !!r.data?.intro_offer, () => false),
@@ -376,7 +376,8 @@
       ${offerBanner(list, false)}${introBanner(introOn, false)}
       ${isOrg() ? `<a class="btn block" href="#admin">${ICON.tools} Add or manage events</a>` : ""}
       ${list.map((ev) => eventCard(ev, taken[ev.id] || 0, myBk[ev.id])).join("") || '<div class="empty"><h2>No events yet</h2></div>'}</div>`;
-    if (navigator.canShare) [FOOTIE, QURAN].forEach((src) => picFile(src).catch(() => {}));
+    // A few seconds later, so the posters don't slow down the first load.
+    if (navigator.canShare) setTimeout(() => [FOOTIE, QURAN].forEach((src) => picFile(src).catch(() => {})), 4000);
     el.querySelectorAll("[data-invite]").forEach((b) => (b.onclick = () => {
       shareEvent(list.find((x) => x.id === b.dataset.invite));
     }));
