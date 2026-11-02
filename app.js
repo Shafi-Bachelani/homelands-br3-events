@@ -356,10 +356,10 @@
   }
   async function events(el, alive, arg) {
     loading(el);
-    await sb.rpc("expire_unpaid"); // so the booked numbers don't count places already released
     const [list, places, mine] = await Promise.all([
       q(sb.from("events").select("*")),
-      q(sb.rpc("event_places")),
+      // Release unpaid places first, so the booked numbers don't count them. The rest loads meanwhile.
+      sb.rpc("expire_unpaid").then(() => q(sb.rpc("event_places"))),
       me ? q(sb.from("bookings").select("id,event_id,status,code").eq("user_id", me.id).neq("status", "cancelled")) : [],
       myGroups(),
       sb.from("fund_state").select("intro_offer").single().then((r) => !!r.data?.intro_offer, () => false),
@@ -376,7 +376,8 @@
       ${offerBanner(list, false)}${introBanner(introOn, false)}
       ${isOrg() ? `<a class="btn block" href="#admin">${ICON.tools} Add or manage events</a>` : ""}
       ${list.map((ev) => eventCard(ev, taken[ev.id] || 0, myBk[ev.id])).join("") || '<div class="empty"><h2>No events yet</h2></div>'}</div>`;
-    if (navigator.canShare) [FOOTIE, QURAN].forEach((src) => picFile(src).catch(() => {}));
+    // A few seconds later, so the posters don't slow down the first load.
+    if (navigator.canShare) setTimeout(() => [FOOTIE, QURAN].forEach((src) => picFile(src).catch(() => {})), 4000);
     el.querySelectorAll("[data-invite]").forEach((b) => (b.onclick = () => {
       shareEvent(list.find((x) => x.id === b.dataset.invite));
     }));
@@ -1200,7 +1201,8 @@
     const fund = `<div class="card fb"><p class="muted" style="margin:0">Kitty fund <b>${money(fs.kitty)}</b> · kitty ${fs.session_no}, ${fs.games_played} of 5 games played${fs.games_played < 5 ? `, next is game ${fs.games_played + 1} of 5` : ""}. Past accounts are in the <a href="#chat:football-accounts">Accounts chat</a>.</p>
       ${isDoor() ? `<div class="form-actions"><button class="btn solid block" data-go="supervisors">Football Supervisors</button>${isAdmin() ? '<button class="btn block" data-go="footballadmin">Football Accounts</button>' : ""}</div>` : ""}</div>`;
 
-    el.innerHTML = `<div class="events">${offerBanner(allGames, true)}${introBanner(fs.intro_offer, true)}${top}${ev ? footballInfo(ev, fs) : ""}${you}${players}${fund}</div>`;
+    el.innerHTML = `<div class="events">${offerBanner(allGames, true)}${introBanner(fs.intro_offer, true)}${top}${ev ? footballInfo(ev, fs) : ""}${you}<div id="awards"></div>${players}${fund}</div>`;
+    footballAwards($("#awards", el), alive);
     el.querySelectorAll("[data-ticket]").forEach((b) => (b.onclick = () => showTicket(b.dataset.ticket)));
 
     const riskOk = () => { const r = $("#riskOk", el); if (r && r.checked) return true; toast("Please tick to confirm you play at your own risk"); return false; };
@@ -1257,6 +1259,76 @@
       if (cx.dataset.sure !== "1") { cx.dataset.sure = "1"; cx.textContent = "Tap again to remove yourself"; return; }
       try { toast(await q(sb.rpc("cancel_booking", { p_id: mine.id }))); await loadMe(); refresh(); } catch (e) { fail(e); }
     };
+  }
+  // ---------- Football Awards (supabase/add-football-awards.sql) ----------
+  // Players ticked in on the night vote for the best and next best in each award, for 24 hours from 11pm.
+  // Loads after the rest of the page so it never slows the football tab down.
+  const AWARDS = [["scorer", "⚽ Top goal scorer"], ["attacker", "🔥 Best attacker"], ["playmaker", "🎯 Best playmaker"],
+    ["defender", "🛡️ Best defender"], ["goalie", "🧤 Best goalie"], ["improved", "📈 Most improved"]];
+  const whenText = (iso) => { const d = new Date(iso), h = d.getHours(), m = d.getMinutes();
+    return `${DAYS[d.getDay()]} ${h % 12 || 12}${m ? ":" + String(m).padStart(2, "0") : ""}${h < 12 ? "am" : "pm"}`; };
+  async function footballAwards(box, alive) {
+    if (!box || !me) return;
+    if (!pending()) await sb.rpc("post_due_awards").then(() => {}, () => {}); // posts results that are due; harmless if someone already did
+    const a = await q(sb.rpc("award_ballot")).catch(() => null);
+    if (!alive() || !a || !box.isConnected) return;
+    const day = (() => { const d = parseDay(a.day); return `${DAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]}`; })();
+    const voted = (a.mine || []).length > 0, n = a.voters || 0;
+    const names = (list) => list.map((x) => esc(x.name)).join(" and ");
+    let inner;
+    if (a.state === "soon") inner = `<p>After tonight's game, the players who were ticked in vote for the night's best players. Voting opens at <b>${whenText(a.opens)}</b> and stays open for 24 hours.</p>`;
+    else if (a.state === "open") inner = `<p>Vote for the best players from <b>${day}</b>. Voting closes <b>${whenText(a.closes)}</b>. ${n} player${n === 1 ? " has" : "s have"} voted so far.</p>
+      ${a.can_vote ? `${voted ? '<p class="muted">You\'ve voted ✓ You can change your votes until voting closes.</p>' : ""}<button class="btn solid block" id="awVote">${voted ? "Change my votes" : "Vote now"}</button>`
+        : '<p class="muted">Only players ticked in on the night can vote.</p>'}
+      <p class="muted" style="font-size:13px">Results are hidden until voting closes, then posted in the Friday Football chat.</p>`;
+    else {
+      const won = (a.results || []).filter((r) => r.best.length);
+      inner = !won.length ? `<p class="muted">Nobody voted for the ${day} game.</p>`
+        : `<p class="muted">Results from ${day}, voted by ${n} player${n === 1 ? "" : "s"}.</p><div class="lb">${won.map((r) => `<div class="lb-row" style="display:block">
+            <div class="muted" style="font-size:13px">${esc(r.label)}</div><b>${names(r.best)}</b> <span class="muted">${r.best[0].points} pts</span>
+            ${r.next.length ? `<div class="muted" style="font-size:14px">Next best: ${names(r.next)} (${r.next[0].points})</div>` : ""}</div>`).join("")}</div>`;
+    }
+    box.innerHTML = `<div class="card fb"><div class="row" style="justify-content:space-between;flex-wrap:wrap"><h2>🏆 Football Awards</h2>${a.state === "open" ? '<span class="tag gold">Voting open</span>' : ""}</div>
+      ${inner}<button class="btn block" id="awTable" style="margin-top:10px">Season table</button></div>`;
+    $("#awTable", box).onclick = () => awardTable("season", "");
+    const v = $("#awVote", box);
+    if (v) v.onclick = () => awardVote(a, () => footballAwards(box, alive));
+  }
+  function awardVote(a, done) {
+    const pick = (c, l) => ((a.mine || []).find((x) => x.category === c && x.level === l) || {}).pick || "";
+    const opts = (sel) => `<option value="">Skip</option>${a.players.map((p) => `<option value="${esc(p.id)}" ${p.id === sel ? "selected" : ""}>${esc(p.name)}</option>`).join("")}`;
+    modal(`<h2>🏆 Football Awards</h2>
+      <p class="muted" style="line-height:1.5">Pick the best (2 points) and next best (1 point) for each award. Skip any you're not sure about. You can't vote for yourself.</p>
+      ${AWARDS.map(([c, label]) => `<h3 style="margin:16px 0 6px">${label}</h3>
+        <div class="row" style="gap:8px"><label style="flex:1;margin:0">Best<select data-c="${c}" data-l="1">${opts(pick(c, 1))}</select></label>
+        <label style="flex:1;margin:0">Next best<select data-c="${c}" data-l="2">${opts(pick(c, 2))}</select></label></div>`).join("")}
+      <div class="form-actions"><button class="btn solid block" id="awSave">Save my votes</button></div>`, (m) => {
+      $("#awSave", m).onclick = async () => {
+        const votes = [...m.querySelectorAll("select[data-c]")].map((s) => ({ category: s.dataset.c, level: Number(s.dataset.l), pick: s.value })).filter((x) => x.pick);
+        const twice = AWARDS.find(([c]) => { const p = votes.filter((x) => x.category === c); return p.length === 2 && p[0].pick === p[1].pick; });
+        if (twice) return toast(`${twice[1]}: pick two different players`);
+        if (!votes.length) return toast("Pick at least one player");
+        try { $("#awSave", m).disabled = true; await q(sb.rpc("cast_award_votes", { p_event: a.event_id, p_votes: votes })); closeModal(); toast("Thanks, your votes are in ✓"); done(); }
+        catch (e) { $("#awSave", m).disabled = false; fail(e); }
+      };
+    });
+  }
+  async function awardTable(period, cat) {
+    const rows = await q(sb.rpc("award_table", { p_period: period, p_category: cat || null })).catch(() => null);
+    const MEDAL = ["🥇", "🥈", "🥉"];
+    const top = (rows || []).filter((r, i) => i < 10), mine = (rows || []).find((r) => r.me), inTop = top.some((r) => r.me);
+    const row = (r) => `<div class="lb-row ${r.me ? "me" : ""}"><span class="lb-rank">${r.rank <= 3 ? MEDAL[r.rank - 1] : r.rank}</span>
+      <div style="flex:1;min-width:0"><b>${esc(r.name)}${r.me ? " (you)" : ""}</b><div class="muted" style="font-size:13px">${r.firsts} best vote${r.firsts === 1 ? "" : "s"}</div></div><b class="lb-score">${r.points}</b></div>`;
+    modal(`<h2>🏆 Awards table</h2>
+      <p class="muted" style="line-height:1.5">Points from players' votes: 2 for each best vote, 1 for each next best. The season starts on 1 August. Separate from the community leaderboard.</p>
+      <div class="seg"><button data-p="season" class="${period === "season" ? "on" : ""}">This season</button><button data-p="all" class="${period === "all" ? "on" : ""}">All time</button></div>
+      <div class="chips"><button data-k="" class="${cat ? "" : "on"}">All awards</button>${AWARDS.map(([c, l]) => `<button data-k="${c}" class="${cat === c ? "on" : ""}">${l}</button>`).join("")}</div>
+      ${rows === null ? '<p class="note">The awards are being set up. Check back soon.</p>'
+        : top.length ? `<div class="lb">${top.map(row).join("")}</div>${mine && !inTop ? `<p class="muted" style="margin:14px 0 4px">Your place</p><div class="lb">${row(mine)}</div>` : ""}`
+        : '<p class="muted">No votes counted yet. Results count once each game\'s voting closes.</p>'}`, (m) => {
+      m.querySelectorAll("[data-p]").forEach((b) => (b.onclick = () => awardTable(b.dataset.p, cat)));
+      m.querySelectorAll("[data-k]").forEach((b) => (b.onclick = () => awardTable(period, b.dataset.k)));
+    });
   }
   let useCredit = true; // the member's choice on the booking screen: put their credit towards it, or keep it
   async function bookFootball(ev, choice) {
