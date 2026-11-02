@@ -127,12 +127,17 @@ begin
 end $$;
 
 -- Can this person read this chat? The same rule as can_see_group, for someone other than the signed-in person.
+-- Football-only chats (add-football-chats.sql) are for football and family members, so either file can run first.
+alter table public.groups add column if not exists football_only boolean not null default false;
 create or replace function public.user_sees_group(u uuid, g text) returns boolean
 language sql stable security definer set search_path = public as $$
-  select not coalesce((select members_only from groups where id = g), false)
-    or exists (select 1 from profiles where id = u and role = 'admin')
-    or exists (select 1 from group_members where group_id = g and user_id = u)
-    or (g in ('football-accounts', 'events-accounts', 'family-accounts') and exists (select 1 from profiles where id = u and approved))
+  select case when coalesce((select football_only from groups where id = g), false)
+    then exists (select 1 from profiles where id = u and (role in ('organiser', 'admin') or football or family))
+    else not coalesce((select members_only from groups where id = g), false)
+      or exists (select 1 from profiles where id = u and role = 'admin')
+      or exists (select 1 from group_members where group_id = g and user_id = u)
+      or (g in ('football-accounts', 'events-accounts', 'family-accounts') and exists (select 1 from profiles where id = u and approved))
+  end
 $$;
 
 -- ---------- new posts ----------
