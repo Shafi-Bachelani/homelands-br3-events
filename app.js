@@ -522,6 +522,9 @@
             const r = await q(sb.rpc("guest_book", { p_event: ev.id, p_name: name, p_age: age,
               p_email: $("#ge", m).value.trim(), p_code: $("#gc", m)?.value || "", p_places: places }));
             code = r[0].code; state.guestTickets.push(code); save();
+            // Links the booking to this phone, so the admin sees it with the guest's chat messages.
+            const link = await q(sb.rpc("guest_link_booking", { p_code: code, p_token: guestToken() })).catch(() => "ok");
+            if (link === "blocked") { closeModal(); return toast("Sorry, we can't take a booking from you. Please contact the organiser."); }
           } else {
             code = (await q(sb.rpc("book_event", { p_event: ev.id, p_places: places }))).code;
           }
@@ -1736,7 +1739,7 @@
   let groupCache = [];
   // Reactions everyone can see (null until add-welcome-and-members.sql is run: then they stay on this phone),
   // and the chats' most active members: last month's winner wears the 🏅 badge for the whole of this month.
-  let reactCache = null, chatStars = [];
+  let reactCache = null, chatStars = [], commentCache = [];
   const REACTS = ["❤️", "😂", "👏", "🙏", "🔥", "🎉", "😮", "😢"];
   const lastMonthName = () => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1); return MONTHS_LONG[d.getMonth()]; };
   const badge = (uid) => { const top = chatStars.find((x) => x.period === "last"); return top && uid && top.user_id === uid ? ` <span class="star-badge" title="Most active in the chats in ${lastMonthName()}">🏅</span>` : ""; };
@@ -1851,7 +1854,7 @@
       myGroups(),
       q(sb.from("post_reactions").select("post_id,user_id,emoji")).catch(() => null),
       q(sb.rpc("chat_stars")).catch(() => []),
-    ]).then(([a, b, c, d, g, r, st]) => { joined = g; reactCache = r; chatStars = st || []; return [a, b, c, d]; });
+    ]).then(([a, b, c, d, g, r, st]) => { joined = g; reactCache = r; chatStars = st || []; commentCache = c; return [a, b, c, d]; });
     if (!alive()) return;
     groupCache = gs;
     const boxed = (g) => g === ANNOUNCE || gs.find((x) => x.id === g)?.members_only;
@@ -2017,9 +2020,9 @@
     el.querySelectorAll("[data-vote]").forEach((b) => (b.onclick = async () => {
       try { await q(sb.from("poll_votes").upsert({ post_id: b.dataset.vote, user_id: me.id, choice: Number(b.dataset.i) })); refresh(); } catch (e) { fail(e); }
     }));
-    el.querySelectorAll("[data-delc]").forEach((b) => (b.onclick = async () => {
-      if (!confirm("Delete this comment?")) return;
-      try { await q(sb.from("comments").delete().eq("id", b.dataset.delc)); toast("Comment deleted"); refresh(); } catch (e) { fail(e); }
+    el.querySelectorAll("[data-delc]").forEach((b) => (b.onclick = () => {
+      const c = commentCache.find((x) => x.id === b.dataset.delc);
+      deleteMessage("comments", b.dataset.delc, c);
     }));
     el.querySelectorAll("[data-menu]").forEach((b) => (b.onclick = () => {
       const p = find(b.dataset.menu), mine = p.user_id === me.id;
@@ -2039,11 +2042,35 @@
             };
           });
         };
-        const del = $("#del", m); if (del) del.onclick = async () => { try { await q(sb.from("posts").delete().eq("id", p.id)); closeModal(); refresh(); } catch (e) { fail(e); } };
+        const del = $("#del", m); if (del) del.onclick = () => { closeModal(); deleteMessage("posts", p.id, p); };
       });
     }));
   }
 
+  // Deletes a post or comment. For a guest's message the admin can give the guest a strike at the same time.
+  function deleteMessage(table, id, row) {
+    const what = table === "posts" ? "post" : "comment", guestKey = row?.guest_key && isAdmin() ? row.guest_key : null;
+    const gname = (row?.author_name || "").replace(/ \(guest\)$/, "");
+    const go = async (strike) => {
+      try {
+        await q(sb.from(table).delete().eq("id", id));
+        if (strike) {
+          const why = prompt(`Why the strike for ${gname}? (Only you see this.)`, `Deleted ${what}: ${(row.body || "").slice(0, 80)}`);
+          const rep = (await q(sb.rpc("guest_report")).catch(() => [])).find((x) => x.key === guestKey) || { strikes: 0, note: "" };
+          const n = Math.min(9, rep.strikes + 1);
+          const note = [rep.note, `${short(new Date())} ${new Date().getFullYear()}: strike ${n}${why && why.trim() ? ` – ${why.trim()}` : ""}`].filter(Boolean).join("\n");
+          await q(sb.rpc("set_guest_strikes", { p_key: guestKey, p_strikes: n, p_note: note, p_name: gname }));
+          toast(n >= 2 ? `Deleted. ${gname} now has ${n} strikes: you can block them in Admin → Guests` : `Deleted, and ${gname} has a strike`);
+        } else toast(`${what[0].toUpperCase() + what.slice(1)} deleted`);
+        closeModal(); refresh();
+      } catch (e) { fail(e); }
+    };
+    if (!guestKey) { if (table === "posts" || confirm("Delete this comment?")) go(false); return; }
+    modal(`<h2>Delete this ${what}?</h2><p class="muted">It's from ${esc(gname)}, a guest. You can also give them a strike; at two strikes you can block them in Admin → Guests.</p>
+      <div class="form-actions" style="display:grid;gap:10px"><button class="btn danger block" id="dS">Delete and give a strike</button><button class="btn block" id="dO">Just delete</button></div>`, (m) => {
+      $("#dS", m).onclick = () => go(true); $("#dO", m).onclick = () => go(false);
+    });
+  }
   function compose(kind, fixed) {
     if (kind === "news") { kind = "text"; fixed = ANNOUNCE; }
     const news = !!fixed;
@@ -2453,11 +2480,15 @@
     ]);
     // Activity for the member search (empty until add-welcome-and-members.sql is run).
     const report = Object.fromEntries((await q(sb.rpc("member_report")).catch(() => [])).map((r) => [r.id, r]));
+    // Guests (empty until add-guest-admin.sql is run).
+    const greport = isAdmin() ? await q(sb.rpc("guest_report")).catch(() => null) : null;
     if (!alive()) return;
     const g = Object.fromEntries(guests.map((x) => [x.booking_id, x]));
     // events from today on, soonest first, for the who's-in list under the scan button
     const soon = evs.filter((e) => e.day && e.day >= dayKey(today())).sort((a, b) => eventStart(a) - eventStart(b)).slice(0, 10);
     const ROLES = ["member", "organiser", "admin"];
+    const evById = Object.fromEntries(evs.map((e) => [e.id, e]));
+    const guestRequests = bks.filter((b) => b.status === "pending" && !b.user_id);
     const pending = isAdmin() ? members.filter((m) => m.approved === false) : [];
     const ids = pending.map((m) => m.id);
     const [pcs, apps] = ids.length ? await Promise.all([q(sb.from("member_postcodes").select("*").in("user_id", ids)), q(sb.from("applications").select("*").in("user_id", ids))]) : [[], []];
@@ -2475,6 +2506,7 @@
           ${ap ? `<p style="white-space:pre-line;margin:8px 0">${esc(ap.answers || "Application received.")}</p>` : `<p class="muted">No application yet. Removed ${short(new Date(new Date(m.created_at).getTime() + 864e5))} if none arrives.</p>`}
           <div class="row" style="gap:8px"><button class="btn solid small" data-approve="${m.id}">Approve</button><button class="btn small" data-decline="${m.id}" data-name="${esc(m.name)}">Decline</button></div></div>`;
       }).join("")}` : ""}
+      ${guestRequests.length ? `<p class="note"><b>${guestRequests.length} guest booking request${guestRequests.length > 1 ? "s" : ""} waiting.</b> <a href="#" id="toGuests">See Guests below</a></p>` : ""}
       <h2>Check someone in</h2>
       <button class="btn solid block" id="ciScan" style="margin-bottom:10px">Scan a ticket's QR code</button>
       <div class="row"><input id="ci" placeholder="Or type the code, e.g. AA-7K2QX" style="text-transform:uppercase"><button class="btn small" id="ciGo">Check in</button></div>
@@ -2513,6 +2545,19 @@
             <div class="row" style="margin:12px 0"><button class="btn small" data-upd="${e.id}">Save changes</button><button class="btn small" data-poster="${e.id}">QR code poster</button></div>` : ""}
           <button class="btn small danger" data-del="${e.id}">Remove event</button></details>`;
       }).join("")}
+      ${isAdmin() ? `<h2 style="margin-top:28px" id="guestsHead">Guests</h2>
+      <p class="muted">People who aren't members: they booked an event open to guests, or joined in the Quran chat from its link. Each phone counts as one guest. Only you see this.</p>
+      ${guestRequests.length ? `<h3>Booking requests waiting for approval</h3>${guestRequests.map((b) => { const gu = g[b.id], e = evById[b.event_id];
+        return `<div class="card" style="padding:14px;margin-bottom:10px"><b>${esc(gu?.full_name || b.display_name)}</b> <span class="muted">${gu ? `age ${gu.age}, ${esc(gu.email)}` : ""}</span>
+          <div class="muted">${esc(e?.title || "Event")} · ${e?.day ? short(parseDay(e.day)) : "Date TBC"} · ${b.places} place${b.places > 1 ? "s" : ""}${b.age && b.age < 16 ? ` · under 16, parent permission: ${b.parent_ok ? "yes" : "no"}` : ""}</div>
+          <div class="row" style="gap:8px;margin-top:8px"><button class="btn solid small" data-ok="${b.id}">Approve</button><button class="btn small danger" data-no="${b.id}">Decline</button></div></div>`; }).join("")}` : ""}
+      ${greport ? `<div class="member-search">
+        <input id="gQ" type="search" placeholder="Search guests by name or email">
+        <div class="chips" id="gWho">${[["all", "All"], ["booked", "Booked an event"], ["chat", "In the chat"], ["strikes", "Strikes"], ["blocked", "Blocked"]].map(([k, v], i) => `<button data-gwho="${k}" class="${i ? "" : "on"}">${v}</button>`).join("")}</div>
+        <div><label>Sort by</label><select id="gSort"><option value="active">Most active</option><option value="quiet">Least active</option><option value="recent">Last active</option><option value="name">Name</option></select></div>
+        <p class="muted" style="font-size:14px">Activity over the last 90 days: 3 per booking, 3 per post, 2 per comment. Guests' booking details are deleted 7 days after the event; their names in the chat stay until you delete them.</p>
+        <p id="gCount" class="muted"></p></div>
+      <div id="gList"></div>` : '<p class="muted"><b>Run add-guest-admin.sql in Supabase to see guests here.</b></p>'}` : ""}
       <h2 style="margin-top:28px">Members</h2>
       <p class="muted">Family members pay by transfer and never by card. Tick Kitty for anyone who has already paid £15 for the current kitty. Untick Football for events-only members.${isAdmin() ? " Only you, as admin, can change roles." : ""}</p>
       <div class="member-search">
@@ -2660,6 +2705,55 @@
     $("#mSort", el).onchange = showMembers;
     el.querySelectorAll("[data-who]").forEach((b) => (b.onclick = () => { mWho = b.dataset.who; el.querySelectorAll("[data-who]").forEach((x) => x.classList.toggle("on", x === b)); showMembers(); }));
     showMembers();
+    const tg = $("#toGuests", el); if (tg) tg.onclick = (e) => { e.preventDefault(); $("#guestsHead", el)?.scrollIntoView({ block: "start" }); };
+    // ----- guests -----
+    let gWho = "all";
+    const gStatus = { booked: "booked", waitlist: "waitlist", pending: "waiting for approval", declined: "declined", cancelled: "cancelled" };
+    function showGuests() {
+      const box = $("#gList", el); if (!box || !greport) return;
+      const text = $("#gQ", el).value.trim().toLowerCase(), sort = $("#gSort", el).value;
+      const WHO = { all: () => true, booked: (x) => x.bookings.length > 0, chat: (x) => x.posts_90 + x.comments_90 > 0, strikes: (x) => x.strikes > 0, blocked: (x) => !!x.blocked_at };
+      const t = (v) => (v ? new Date(v).getTime() : 0);
+      const list = greport.filter((x) => (!text || `${x.name} ${x.email || ""}`.toLowerCase().includes(text)) && WHO[gWho](x))
+        .sort({ active: (a, b) => b.score - a.score || t(b.last_active) - t(a.last_active), quiet: (a, b) => a.score - b.score || t(a.last_active) - t(b.last_active),
+          recent: (a, b) => t(b.last_active) - t(a.last_active), name: (a, b) => a.name.localeCompare(b.name) }[sort]);
+      $("#gCount", el).textContent = `${list.length} of ${greport.length} guest${greport.length === 1 ? "" : "s"}`;
+      box.innerHTML = list.map((x, i) => `<div class="member-row" data-gi="${greport.indexOf(x)}"><b>${esc(x.name)}</b> <span class="tag">Guest</span>${x.blocked_at ? ' <span class="tag warn">Blocked</span>' : ""}${x.strikes ? ` <span class="tag warn">${x.strikes} strike${x.strikes > 1 ? "s" : ""}</span>` : ""}
+        <div class="muted member-facts">${x.email ? `${esc(x.email)} · ` : ""}First seen ${x.first_seen ? short(new Date(x.first_seen)) + " " + new Date(x.first_seen).getFullYear() : "–"} · Last active ${x.last_active ? short(new Date(x.last_active)) + " " + new Date(x.last_active).getFullYear() : "–"}<br>
+          Activity: <b>${ACT(x.score)}</b> (${x.score}) · ${x.bookings_90} booking${x.bookings_90 === 1 ? "" : "s"}, ${x.posts_90} post${x.posts_90 === 1 ? "" : "s"}, ${x.comments_90} comment${x.comments_90 === 1 ? "" : "s"}</div>
+        ${x.bookings.length ? `<div class="muted" style="font-size:14px">Booked: ${x.bookings.map((b) => `${esc(b.title)} ${b.day ? short(parseDay(b.day)) : "(TBC)"}, ${b.places} place${b.places > 1 ? "s" : ""}, ${gStatus[b.status] || b.status}${b.checked_in ? ", came" : ""}${Number(b.amount) > 0 ? `, ${b.paid ? "paid" : "unpaid"} ${money(b.amount)}` : ""}`).join("; ")}</div>` : ""}
+        <div class="row strikes" style="gap:8px;margin:6px 0"><span>Strikes: <b>${x.strikes}</b></span><button class="btn small" data-gstrike="${greport.indexOf(x)}" data-n="${x.strikes + 1}">+ Strike</button>${x.strikes ? `<button class="btn small" data-gstrike="${greport.indexOf(x)}" data-n="${x.strikes - 1}">− Take one off</button>` : ""}</div>
+        ${x.note ? `<div class="muted" style="font-size:14px;white-space:pre-line">Note: ${esc(x.note)}</div>` : ""}
+        <div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn small${x.blocked_at ? "" : " danger"}" data-gblock="${greport.indexOf(x)}">${x.blocked_at ? "Unblock" : "Block"}</button><button class="btn small danger" data-gdel="${greport.indexOf(x)}">Delete guest</button></div></div>`).join("") || '<p class="muted">No guests match.</p>';
+      box.querySelectorAll("[data-gstrike]").forEach((b) => (b.onclick = async () => {
+        const x = greport[b.dataset.gstrike], n = Number(b.dataset.n);
+        let note = x.note;
+        if (n > x.strikes) {
+          const why = prompt(`Strike ${n} for ${x.name}. What happened? (Only you see this.)`, ""); if (why === null) return;
+          note = [x.note, `${short(new Date())} ${new Date().getFullYear()}: strike ${n}${why.trim() ? ` – ${why.trim()}` : ""}`].filter(Boolean).join("\n");
+          if (n >= 2) toast("That's the second strike: you can block them");
+        } else {
+          if (!confirm(`Take a strike off ${x.name}? They'll have ${n}.`)) return;
+          note = [x.note, `${short(new Date())} ${new Date().getFullYear()}: strike taken off, now ${n}`].filter(Boolean).join("\n");
+        }
+        try { await q(sb.rpc("set_guest_strikes", { p_key: x.key, p_strikes: n, p_note: note, p_name: x.name })); x.strikes = n; x.note = note; showGuests(); } catch (e) { fail(e); }
+      }));
+      box.querySelectorAll("[data-gblock]").forEach((b) => (b.onclick = async () => {
+        const x = greport[b.dataset.gblock], on = !x.blocked_at;
+        if (!confirm(on ? `Block ${x.name}? They won't be able to post or comment in the chat, or book events from that phone or their email. Any request waiting for approval is declined.` : `Unblock ${x.name}?`)) return;
+        try { await q(sb.rpc("block_guest", { p_key: x.key, p_on: on, p_name: x.name })); toast(on ? `${x.name} blocked` : `${x.name} unblocked`); refresh(); } catch (e) { fail(e); }
+      }));
+      box.querySelectorAll("[data-gdel]").forEach((b) => (b.onclick = async () => {
+        const x = greport[b.dataset.gdel];
+        if (!confirm(`Delete ${x.name}? Their posts and comments in the chat are deleted, along with their details. Bookings for events still to come are cancelled; past ones stay in the head count as "Guest (details removed)".${x.blocked_at ? " They stay blocked." : " To stop them coming back, block them first."}`)) return;
+        try { await q(sb.rpc("delete_guest", { p_key: x.key })); toast(`${x.name} deleted`); refresh(); } catch (e) { fail(e); }
+      }));
+    }
+    if (greport) {
+      $("#gQ", el).oninput = showGuests; $("#gSort", el).onchange = showGuests;
+      el.querySelectorAll("[data-gwho]").forEach((b) => (b.onclick = () => { gWho = b.dataset.gwho; el.querySelectorAll("[data-gwho]").forEach((y) => y.classList.toggle("on", y === b)); showGuests(); }));
+      showGuests();
+    }
     const sf = $("#setF", el);
     if (sf) sf.onclick = async () => {
       try { await q(sb.rpc("set_funds", { p_kitty: Number($("#fk", el).value), p_events: Number($("#fe", el).value), p_credits: Number($("#fc", el).value), p_session: Number($("#fn", el).value), p_games: Number($("#fg", el).value) })); toast("Funds set"); refresh(); } catch (e) { fail(e); }
