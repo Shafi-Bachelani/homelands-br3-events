@@ -386,3 +386,5 @@ label.check.risk { font-weight: 700; margin: 4px 0 10px; }
 .aw-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 10px 0 12px; }
 .aw-tabs button { min-height: 44px; border: 1px solid var(--line); background: var(--field); color: var(--muted); border-radius: 999px; font-weight: 700; font-size: 14px; padding: 4px 10px; }
 .aw-tabs button.on { background: var(--green); color: var(--ink); border-color: var(--green); }
+.comment { position: relative; }
+.c-del { float: right; margin-left: 8px; font-size: 20px; line-height: 1; color: var(--muted); padding: 0 4px; }
