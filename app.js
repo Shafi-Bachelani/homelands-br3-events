@@ -363,7 +363,8 @@
       me ? q(sb.from("bookings").select("id,event_id,status,code").eq("user_id", me.id).neq("status", "cancelled")) : [],
       myGroups(),
       sb.from("fund_state").select("intro_offer").single().then((r) => !!r.data?.intro_offer, () => false),
-    ]).then(([l, p, m, g, io]) => { joined = g; introOn = io; return [l, p, m]; });
+      sb.from("groups").select("id,guests_allowed").then((r) => (r.data || []).filter((x) => x.guests_allowed).map((x) => x.id), () => []),
+    ]).then(([l, p, m, g, io, gg]) => { joined = g; introOn = io; guestGroups = gg; return [l, p, m]; });
     if (!alive()) return;
     list.forEach(nextWeekly);
     const taken = Object.fromEntries(places.map((p) => [p.event_id, Number(p.taken)]));
@@ -401,6 +402,8 @@
   }
   // While the admin has the new member offer switched on, a banner on Events and Football says so.
   let introOn = false;
+  // Chats that non-members can read and join in as a guest (the Quran chat).
+  let guestGroups = [];
   const introBanner = (on, onFootball) => (on ? `<a class="offer${onFootball ? "" : " footie-offer"}" href="#football"><small>New member offer</small><b>New members, not in the kitty, pay just £1 for their first game</b>
       <span>Whilst the offer lasts.${onFootball ? "" : " Tap to book →"}</span></a>` : "");
   // A football game priced below the usual £6 gets a big banner on Events and Football.
@@ -431,12 +434,13 @@
     const d = parseDay(ev.day), past = eventEnd(ev) < new Date(), left = Math.max(0, ev.capacity - taken);
     const fb = ev.kind === "football";
     const pills = `<div class="pills"><span class="tag">${fb ? `${money(ev.price)} or kitty` : Number(ev.price) > 0 ? money(ev.price) : "Free"}</span>
-      <span class="tag">${ACCESS_TAG[ev.access] || "Members only"}</span>
+      <span class="tag">${guestGroups.includes(ev.group_id) ? "Open to everyone" : ACCESS_TAG[ev.access] || "Members only"}</span>
       ${ev.weekly ? `<span class="tag gold">Every ${DAYS[d.getDay()]}</span>` : !past && !ev.link ? `<span class="tag ${left ? "" : "warn"}">${left ? `${left} of ${ev.capacity} places left` : "Full"}</span>` : ""}
       ${!past && !ev.group_id && !ev.link ? `<span class="tag gold">${taken} booked</span>` : ""}</div>`;
     let action;
     if (past) action = '<button class="off" style="color:var(--muted)" disabled>Event has ended</button>';
     else if (ev.link) action = linkButton(ev);
+    else if (ev.group_id && (!me || pending()) && guestGroups.includes(ev.group_id)) action = `<button class="go" data-go="chat:${esc(ev.group_id)}">${ev.group_id === "quran" ? "See the target · Join in" : "Open the chat · Join in"}</button>`;
     else if (ev.group_id && !me) action = '<button class="go" data-go="account">Sign in to sign up</button>';
     else if (pending() && !fb) action = '<button class="off" style="color:var(--muted)" disabled>Bookable once approved</button>';
     else if (ev.group_id) action = joined.includes(ev.group_id) ? '<button class="go" data-go="groups">Signed up ✓ · Open chat</button>' : `<button class="go" data-join="${esc(ev.group_id)}">Sign up · Free</button>`;
@@ -1780,7 +1784,57 @@
   const PENDING_NOTE = '<p class="note">You can join in once the admin has approved your membership.</p>';
   // Chats: open, informal chats anyone can join in. Joined: sign-up chats (like the Quran target).
   // Announcements are pinned at the top of both.
-  function chat(el, alive, id) { return groups(el, alive, "", id); }
+  async function chat(el, alive, id) {
+    if ((!me || pending()) && await guestChat(el, alive, id)) return;
+    return groups(el, alive, "", id);
+  }
+  // A chat opened by someone who isn't an approved member (e.g. from the Quran event's QR code).
+  // They read it, and post or comment under their name marked "(guest)". Returns false if the
+  // chat isn't open to guests, so the usual members-only screen shows instead.
+  const guestToken = () => {
+    if (!state.guestToken) { state.guestToken = (crypto.randomUUID ? crypto.randomUUID() : Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("")); save(); }
+    return state.guestToken;
+  };
+  async function guestChat(el, alive, id) {
+    loading(el);
+    let d;
+    try { d = await q(sb.rpc("guest_chat", { p_group: id })); } catch { return false; }
+    if (!alive()) return true;
+    const name = state.guestName || (me && me.name) || "";
+    const nameBox = `<label>Your name</label><input id="gName" autocomplete="name" value="${esc(name)}" placeholder="First and last name">`;
+    const gpost = (p) => {
+      const cs = d.comments.filter((c) => c.post_id === p.id);
+      return `<article class="post">
+        <div class="head"><div class="avatar" style="width:46px;height:46px">${esc(initials(p.author_name))}</div>
+          <div class="who"><b>${esc(p.author_name)}</b>${p.pinned ? ' <span class="tag gold">Pinned</span>' : ""}<div class="muted">${ago(p.created_at)}</div></div></div>
+        ${postBody(p)}
+        ${Array.isArray(p.poll) ? p.poll.map((o) => `<div class="poll-opt"><span>${esc(o)}</span></div>`).join("") : ""}
+        ${cs.length ? `<div class="comments">${cs.map((c) => `<div class="comment"><b>${esc(c.author_name)}</b> ${esc(c.body)}</div>`).join("")}</div>` : ""}
+        <div class="row" style="gap:8px;margin-top:8px"><input data-gc="${p.id}" placeholder="Write a comment…" style="flex:1;margin:0"><button class="btn small" data-gsend="${p.id}">Send</button></div>
+      </article>`;
+    };
+    el.innerHTML = `<div class="subhead"><h2>${esc(d.group.name)}</h2><a href="#events">Events</a></div>
+      ${groupHero(d.group.id)}
+      ${d.group.about ? `<p class="muted pad" style="padding-top:10px">${esc(d.group.about)}</p>` : ""}
+      <div class="pad"><p class="note">You're joining in as a guest, so your name shows with "(guest)". Everyone in the chat can read what you write. ${me ? "Once the admin approves your membership you'll join in as a member." : `Members, <a href="#account">sign in</a> first.`}</p>
+        ${nameBox}
+        <label>Share something with the group</label><textarea id="gBody" placeholder="How did you get on with this week's target?"></textarea>
+        <div class="form-actions"><button class="btn solid block" id="gPost">Post</button></div></div>
+      <div id="feed">${d.posts.map(gpost).join("") || '<div class="empty"><h2>No posts yet</h2></div>'}</div>`;
+    const say = async (post, body, btn) => {
+      const n = $("#gName", el).value.trim();
+      if (n.length < 2) { $("#gName", el).focus(); return toast("Please add your name first"); }
+      if (!body.trim()) return toast("Please write something first");
+      state.guestName = n; save();
+      btn.disabled = true;
+      try { await q(sb.rpc("guest_say", { p_group: id, p_post: post, p_name: n, p_token: guestToken(), p_body: body })); toast(post ? "Comment added" : "Posted"); refresh(); }
+      catch (e) { btn.disabled = false; fail(e); }
+    };
+    $("#gPost", el).onclick = (e) => say(null, $("#gBody", el).value, e.currentTarget);
+    el.querySelectorAll("[data-gsend]").forEach((b) => (b.onclick = () => say(b.dataset.gsend, el.querySelector(`[data-gc="${b.dataset.gsend}"]`).value, b)));
+    el.querySelectorAll("[data-gc]").forEach((i) => (i.onkeydown = (e) => e.key === "Enter" && el.querySelector(`[data-gsend="${i.dataset.gc}"]`).click()));
+    return true;
+  }
   // Chats with their own look: Friday football's accounts and the Quran Recitation Group.
   const GROUP_LOOK = { quran: "quran-club" };
   const GROUP_PIC = { quran: QURAN_BANNER };
@@ -1917,7 +1971,7 @@
         <button class="pill" data-react="${p.id}">☺+</button>
       </div>
       <div class="post-foot"><button data-comment="${p.id}">Comment${comments.length ? ` (${comments.length})` : ""}</button><button data-share="${p.id}">Share</button></div>
-      ${comments.length ? `<div class="comments">${comments.map((c) => `<div class="comment"><b>${esc(c.author_name)}</b>${badge(c.user_id)} ${esc(c.body)}</div>`).join("")}</div>` : ""}
+      ${comments.length ? `<div class="comments">${comments.map((c) => `<div class="comment"><b>${esc(c.author_name)}</b>${badge(c.user_id)} ${esc(c.body)}${isOrg() || (c.user_id && c.user_id === me.id) ? `<button class="c-del" data-delc="${c.id}" aria-label="Delete comment" title="Delete comment">×</button>` : ""}</div>`).join("")}</div>` : ""}
     </article>`;
   }
 
@@ -1962,6 +2016,10 @@
     el.querySelectorAll("[data-share]").forEach((b) => (b.onclick = () => { const p = find(b.dataset.share); share(C.name, noPhotos(p.body).replace(/\*\*/g, "").slice(0, 120)); }));
     el.querySelectorAll("[data-vote]").forEach((b) => (b.onclick = async () => {
       try { await q(sb.from("poll_votes").upsert({ post_id: b.dataset.vote, user_id: me.id, choice: Number(b.dataset.i) })); refresh(); } catch (e) { fail(e); }
+    }));
+    el.querySelectorAll("[data-delc]").forEach((b) => (b.onclick = async () => {
+      if (!confirm("Delete this comment?")) return;
+      try { await q(sb.from("comments").delete().eq("id", b.dataset.delc)); toast("Comment deleted"); refresh(); } catch (e) { fail(e); }
     }));
     el.querySelectorAll("[data-menu]").forEach((b) => (b.onclick = () => {
       const p = find(b.dataset.menu), mine = p.user_id === me.id;
