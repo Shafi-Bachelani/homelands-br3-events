@@ -2443,7 +2443,9 @@
     if (!isAdmin()) return doorTools(el);
     loading(el);
     const [evs, bks, guests, members, fs] = await Promise.all([
-      q(sb.from("events").select("*").order("day", { ascending: false }).limit(40)),
+      // The newest 40 events, plus weekly ones however long ago they started.
+      Promise.all([q(sb.from("events").select("*").order("day", { ascending: false }).limit(40)), q(sb.from("events").select("*").eq("weekly", true))])
+        .then(([a, w]) => [...a, ...w.filter((x) => !a.some((y) => y.id === x.id))]),
       q(sb.from("bookings").select("*").neq("status", "cancelled")),
       q(sb.from("guests").select("*, profiles(name)")),
       q(sb.from("profiles").select("*").order("name")),
@@ -2490,14 +2492,17 @@
       <div class="form-actions"><button class="btn solid block" id="add">Add event</button></div>
       <h2 style="margin-top:28px">Events and bookings</h2>
       <button class="btn block" id="csv">Download all event bookings (opens in Google Sheets or Excel)</button>
-      ${evs.map((e) => {
+      ${[...evs.filter((e) => e.weekly), ...evs.filter((e) => !e.weekly)].map((e) => {
         const list = bks.filter((b) => b.event_id === e.id);
-        return `<details class="card adm" data-ev="${e.id}" ${list.some((b) => b.status === "pending") || e.id === openId ? "open" : ""}><summary><b>${esc(e.title)}</b> <span class="muted">${e.day ? short(parseDay(e.day)) : "Date TBC"} · ${list.reduce((t, b) => t + (b.status === "booked" ? b.places : 0), 0)}/${e.capacity}</span>${list.some((b) => b.status === "pending") ? ` <span class="tag warn">${list.filter((b) => b.status === "pending").length} to approve</span>` : ""}</summary>
+        // Weekly events (like the Quran target) are saved under their first date: show the next one.
+        const nx = { ...e }; nextWeekly(nx);
+        const when = !e.day ? "Date TBC" : e.weekly ? `Every ${DAYS[parseDay(e.day).getDay()]} · next ${short(parseDay(nx.day))}` : short(parseDay(e.day));
+        return `<details class="card adm" data-ev="${e.id}" ${list.some((b) => b.status === "pending") || e.id === openId ? "open" : ""}><summary><b>${esc(e.title)}</b> <span class="muted">${when} · ${e.group_id ? "chat sign-up" : `${list.reduce((t, b) => t + (b.status === "booked" ? b.places : 0), 0)}/${e.capacity}`}</span>${list.some((b) => b.status === "pending") ? ` <span class="tag warn">${list.filter((b) => b.status === "pending").length} to approve</span>` : ""}</summary>
           <div class="scroll"><table><thead><tr><th>Name</th><th>Who</th><th>Places</th><th>Status</th><th>Code</th></tr></thead><tbody>
           ${list.map((b) => `<tr><td>${esc(b.display_name)}</td><td>${g[b.id] ? `Guest, age ${g[b.id].age}, ${esc(g[b.id].email)}, invited by ${esc(g[b.id].profiles?.name || "?")}` : "Member"}</td><td>${b.places}</td><td>${b.status === "pending" ? `<b>Waiting for approval</b><br><button class="btn small" data-ok="${b.id}">Approve</button> <button class="btn small danger" data-no="${b.id}">Decline</button>` : b.status}${b.checked_in ? ", in" : ""}${b.paid || b.status === "pending" ? "" : ", unpaid"}${b.age < 16 && b.age ? `<br>Under 16, parent permission: ${b.parent_ok ? "yes" : "no"}` : ""}</td><td class="mono">${b.code}</td></tr>`).join("") || '<tr><td colspan="5" class="muted">No bookings yet.</td></tr>'}
           </tbody></table></div>
           ${e.kind === "event" ? `<div class="grid2" data-edit="${e.id}"><div style="grid-column:1/-1"><label>Event name</label><input data-f="title" value="${esc(e.title)}"></div>
-            <div><label>Date</label><input data-f="day" type="date" value="${e.day || ""}"></div><div><label>Start time</label><input data-f="time" type="time" value="${hhmm(e.time)}"></div>
+            <div><label>${e.weekly ? "First date (repeats every week)" : "Date"}</label><input data-f="day" type="date" value="${e.day || ""}"></div><div><label>Start time</label><input data-f="time" type="time" value="${hhmm(e.time)}"></div>
             <div><label>Price (£)</label><input data-f="price" type="number" min="0" step="0.5" value="${Number(e.price)}"></div><div><label>Places</label><input data-f="capacity" type="number" min="1" value="${e.capacity}"></div>
             <div style="grid-column:1/-1"><label>Where</label><input data-f="location" value="${esc(e.location || "")}"></div>
             <div style="grid-column:1/-1"><label>Who can book</label><select data-f="access">${accessOpts(e.access)}</select></div>
