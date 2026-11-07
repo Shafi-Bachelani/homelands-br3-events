@@ -144,8 +144,8 @@
 
   // ---------- router ----------
   const TABS = ["events", "groups", "schedule", "leaderboard", "more"];
-  const ROUTES = { about, home: about, events, groups, grouplist, chat, schedule, more, services, counselling, messages, notifications, account, football, admin, funds, eventaccounts, squarecheck, supervisors, footballadmin, guest, welcome, leaderboard, join: joinGuide };
-  const PARENT = { grouplist: "groups", chat: "groups", services: "more", counselling: "more", football: "events", funds: "more", eventaccounts: "more", squarecheck: "more", supervisors: "more", footballadmin: "more", guest: null, account: null, welcome: "more", join: "more", about: "more", admin: "more", messages: null, notifications: null };
+  const ROUTES = { about, home: about, events, groups, grouplist, accounts, chat, schedule, more, services, counselling, messages, notifications, account, football, admin, funds, eventaccounts, squarecheck, supervisors, footballadmin, guest, welcome, leaderboard, join: joinGuide };
+  const PARENT = { grouplist: "groups", accounts: "groups", chat: "groups", services: "more", counselling: "more", football: "events", funds: "more", eventaccounts: "more", squarecheck: "more", supervisors: "more", footballadmin: "more", guest: null, account: null, welcome: "more", join: "more", about: "more", admin: "more", messages: null, notifications: null };
   let lastTab = "events", seq = 0;
 
   function go(route) { if (location.hash.slice(1) === route) render(); else location.hash = route; }
@@ -156,7 +156,7 @@
     const active = TABS.includes(route) ? route : (PARENT[route] || lastTab);
     document.querySelectorAll("#tabbar button").forEach((b) => b.classList.toggle("active", b.dataset.tab === active));
     // Chat screens keep the logo header; their subhead link already goes back.
-    $("#backBtn").hidden = TABS.includes(route) || ["home", "chat", "grouplist"].includes(route);
+    $("#backBtn").hidden = TABS.includes(route) || ["home", "chat", "grouplist", "accounts"].includes(route);
     $("#brand").hidden = !$("#backBtn").hidden;
     updateBell();
     const token = ++seq, alive = () => token === seq;
@@ -616,12 +616,12 @@
         <div id="sqShow" style="margin-top:8px"><span class="muted">Loading…</span></div>` : "No Square photo uploaded yet."}
         ${isAdmin() ? `<label>${stmt ? "Replace it with this week's" : "Upload this week's"} Square balance photo (a screenshot or PDF)</label><input id="sqFile" type="file" accept="image/*,application/pdf,.pdf">` : ""}</div>
       ${FUND_INFO.replace("<details ", "<details open ")}
-      <p class="note">Posted accounts, and every move between funds, are in the <a href="#chat:football-accounts">Accounts chat</a>.</p>
-      <div class="form-actions"><button class="btn solid block" data-go="chat:football-accounts">Open the Accounts chat</button>${isAdmin() ? '<button class="btn block" data-go="eventaccounts">Events accounts</button>' : ""}${isAdmin() ? '<button class="btn block" data-go="squarecheck">Square check</button>' : ""}</div>
+      <p class="note">Posted accounts, and every move between funds, are on the <a href="#accounts">Accounts tab</a>, one chat for each fund. The Accounts Reconciliation chat checks all the funds together against Square every week.</p>
+      <div class="form-actions"><button class="btn solid block" data-go="accounts">Open the Accounts tab</button>${isAdmin() ? '<button class="btn block" data-go="eventaccounts">Events accounts</button>' : ""}${isAdmin() ? '<button class="btn block" data-go="squarecheck">Square check</button>' : ""}</div>
       ${isAdmin() ? `<h3>Family Events fund</h3>
         <p class="muted">The Individual, Concessionary and Family subscriptions come in from Square by themselves every Saturday morning, covering the last 7 days (or when you tap Sync from Square on Square check), with Square's fee taken off. Use this for the opening balance, other money in, and money spent.</p>
         ${familyWeeks(subs)}
-        <p class="note">Each week's subscriptions, and any money in or spent recorded here, are posted to the <a href="#chat:family-accounts">Family Events Accounts chat</a> on the Joined events tab.</p>
+        <p class="note">Each week's subscriptions, and any money in or spent recorded here, are posted to the <a href="#chat:family-accounts">BR3 Family Events Accounts chat</a> on the Accounts tab.</p>
         <div class="grid2"><div><label>Money</label><select id="yDir"><option value="1">In</option><option value="-1">Spent</option></select></div>
           <div><label>Amount £</label><input id="yAmt" type="number" step="0.01" min="0.01" inputmode="decimal"></div></div>
         <label>Reason (everyone can see this)</label><input id="yWhy" placeholder="e.g. Opening balance, or Family day hall hire">
@@ -632,7 +632,7 @@
           : `${u.status === "paid" ? "Paid back" : "Given to charity"} ${short(new Date(u.settled_at))}${u.settled_note ? ` (${esc(u.settled_note)})` : ""}`}</div></div>
           ${u.status === "held" ? `<div class="row" style="gap:8px;margin-top:8px"><button class="btn small" data-upaid="${u.id}">Paid back</button><button class="btn small" data-ucharity="${u.id}">To charity</button></div>` : u.status === "charity" ? `<button class="btn small" data-ureceipt="${u.id}">Receipt</button>` : ""}</div>`).join("")}` : ""}
       ${isAdmin() ? `<h3>Move money between funds</h3>
-        <p class="muted">For example, the kitty's excess over £100 into the events fund, or the events fund paying for a football game. Every move is posted to the Accounts chat with its reason.</p>
+        <p class="muted">For example, the kitty's excess over £100 into the events fund, or the events fund paying for a football game. Every move is posted, with its reason, to the Friday Football Accounts and Footballing Events Accounts chats.</p>
         <div class="grid2"><div><label>From</label><select id="tFrom"><option value="kitty">Kitty fund (${money(fs.kitty)})</option><option value="events">Events fund (${money(fs.events)})</option></select></div>
           <div><label>To</label><input id="tTo" value="Events fund" readonly></div></div>
         <label>Amount £</label><input id="tAmt" type="number" step="0.01" min="0.01" inputmode="decimal">
@@ -784,6 +784,13 @@
       ${x.pending.length ? `<details class="info"><summary>Games and events not yet in accounts</summary>${x.pending.map((p) => `<p>${esc(p.title)}${p.day ? ` ${short(parseDay(p.day))}` : ""}: ${money(p.paid || 0)} paid, ${money(p.fees || 0)} Square fees</p>`).join("")}</details>` : ""}
       <label>Square balance now, from the Square app £</label><input id="sqBal" type="number" step="0.01" inputmode="decimal" value="${bal == null ? "" : bal.toFixed(2)}">
       <div class="form-actions"><button class="btn solid block" id="sqBalGo">Check against the funds</button></div>
+      ${isAdmin() ? `<h3>Weekly reconciliation</h3>
+        <p class="muted">On Saturday, after the week's accounts are posted, enter the Square balance above and draft this. It's posted, pinned, to the Accounts Reconciliation chat for every member to see, with the Square balance photo from the Funds page.</p>
+        <div class="form-actions"><button class="btn solid block" id="rcDraft">Draft the reconciliation</button></div>
+        <div id="rcBox" hidden><label>Reconciliation (edit freely)</label><textarea id="rcText" rows="20" class="mono"></textarea>
+          <div id="rcDiff" hidden><label>Why there is a difference</label><textarea id="rcWhy" rows="3"></textarea>
+            <label>How and when it will be corrected</label><textarea id="rcFix" rows="3"></textarea></div>
+          <div class="form-actions"><button class="btn solid block" id="rcPost">Post to the Accounts Reconciliation chat</button></div></div>` : ""}
       ${isAdmin() ? `<h3>Money moved</h3>
         <p class="muted">Record cash paid into Square, or money moved from Starling to Square, so the check stays right.</p>
         <div class="grid2"><div><label>From</label><select id="mFrom"><option value="cash">Cash in hand (${money(x.held_cash)})</option><option value="bank">Bank (Starling) (${money(x.held_bank)})</option><option value="square">Square</option><option value="count">Correct to a counted figure</option></select></div>
@@ -827,6 +834,50 @@
         toast(`${r.checked} Square payment${r.checked === 1 ? "" : "s"} checked, ${r.updated} updated${r.family ? `, ${r.family} to Family Events` : ""}`);
         go(`squarecheck:${$("#sqFrom", el).value}~${$("#sqTo", el).value}`);
       } catch (err) { btn.disabled = false; btn.textContent = "Sync from Square"; fail(err); }
+    };
+    if ($("#rcDraft", el)) $("#rcDraft", el).onclick = async () => {
+      const v = $("#sqBal", el).value;
+      if (v === "") return toast("Enter the Square balance from the Square app first");
+      let fs, prev;
+      try {
+        [fs, prev] = await Promise.all([q(sb.from("fund_state").select("*").single()), q(sb.from("reconciliations").select("*").order("id", { ascending: false }).limit(1)).then((r) => r[0] || null)]);
+      } catch (e) { return toast("Run add-accounts-tab.sql in Supabase first"); }
+      const r2 = (n) => Math.round(Number(n || 0) * 100) / 100, br = (n) => (r2(n) < 0 ? `(${money(-n)})` : money(n)), sg = (n) => (r2(n) < 0 ? `(${money(-n)})` : `+${money(n)}`);
+      const S = r2(v), E = r2(x.expected), D = r2(S - E);
+      const held = r2(Number(x.held_cash) + Number(x.held_bank)), adv = r2(Number(x.pending_in) - Number(x.pending_fees));
+      const FUNDS = [["kitty", "Friday Football"], ["events", "Footballing Events"], ["family", "BR3 Family Events"], ["credits", "Credits Held"], ["unclaimed", "Unclaimed credit"]]
+        .filter(([k]) => k !== "unclaimed" || Number(fs.unclaimed || 0) || Number(prev?.unclaimed || 0));
+      const now = new Date(), L = "________";
+      const t = [`Accounts Reconciliation · ${DAYS[now.getDay()]} ${now.getDate()} ${MONTHS_LONG[now.getMonth()]} ${now.getFullYear()}`, "All our funds together, checked against the Square account", L];
+      if (prev) {
+        const prevDiff = r2(Number(prev.square_actual) - Number(prev.square_expected));
+        t.push(`Prior Square balance (last week, according to Square) ${money(prev.square_actual)}`);
+        if (prevDiff) t.push(`Less last week's difference ${br(-prevDiff)}`);
+        t.push(L, "Fund value changes this week");
+        let T = 0;
+        FUNDS.forEach(([k, n]) => { const b = r2(prev[k]), a = r2(fs[k]); T += a - b; t.push(`${n} ${money(b)} → ${money(a)} ${sg(a - b)}`); });
+        t.push(`Total change ${sg(T)}`);
+        if (r2(held) || r2(prev.held)) t.push(`Cash and transfers not yet in Square ${money(prev.held)} → ${money(held)} ${sg(-(held - Number(prev.held)))}`);
+        if (r2(adv) || r2(prev.advance)) t.push(`Paid in advance for the next game ${money(prev.advance)} → ${money(adv)} ${sg(adv - Number(prev.advance))}`);
+      } else {
+        t.push("First reconciliation, so there are no figures from last week yet.", L, "Fund values now");
+        FUNDS.forEach(([k, n]) => t.push(`${n} ${money(fs[k] || 0)}`));
+        t.push(`All funds together ${money(x.funds)}`);
+        if (held) t.push(`Less cash and transfers not yet in Square (${money(held)})`);
+        if (adv) t.push(`Plus paid in advance for the next game ${money(adv)}`);
+      }
+      t.push(L, `Square balance expected ${money(E)}`, `Square balance according to Square ${money(S)}`, D === 0 ? "Difference £0.00 ✓ Balanced" : `Difference ${br(D)} (Square has ${money(Math.abs(D))} ${D > 0 ? "more" : "less"})`);
+      $("#rcText", el).value = t.join("\n");
+      $("#rcDiff", el).hidden = D === 0;
+      $("#rcBox", el).hidden = false; $("#rcText", el).focus();
+      $("#rcPost", el).onclick = async () => {
+        const why = $("#rcWhy", el).value.trim(), fix = $("#rcFix", el).value.trim();
+        if (D !== 0 && (!why || !fix)) return toast("Say why there's a difference, and how and when it will be corrected");
+        const body = $("#rcText", el).value.trim() + (D !== 0 ? `\n${L}\nWhy there is a difference\n${why}\n\nHow and when it will be corrected\n${fix}` : "");
+        if (!confirm("Post the reconciliation to the Accounts Reconciliation chat? It's pinned there for every member.")) return;
+        try { $("#rcPost", el).disabled = true; await q(sb.rpc("post_reconciliation", { p_body: body, p_square: S, p_why: why, p_fix: fix })); toast("Posted to the Accounts Reconciliation chat"); go("chat:accounts-reconciliation"); }
+        catch (e) { $("#rcPost", el).disabled = false; fail(e); }
+      };
     };
     $("#sqBalGo", el).onclick = async () => {
       const v = $("#sqBal", el).value;
@@ -881,7 +932,7 @@
     // Only events still waiting for accounts, for the admin. Posted accounts live in the Accounts chat only.
     const list = isAdmin() ? evs.filter((e) => !postedOf(e)) : [];
     if (!list.length) {
-      el.innerHTML = `<div class="events"><div class="card fb"><h2>Events accounts</h2><p class="muted">${isAdmin() ? "No events are waiting for accounts. " : ""}Posted accounts are in the <a href="#chat:football-accounts">Accounts chat</a>.</p></div></div>`;
+      el.innerHTML = `<div class="events"><div class="card fb"><h2>Events accounts</h2><p class="muted">${isAdmin() ? "No events are waiting for accounts. " : ""}Posted accounts are on the <a href="#accounts">Accounts tab</a>.</p></div></div>`;
       return;
     }
     const pick = list.find((e) => e.id === id) || list.find((e) => !e.accounts_posted && all.some((l) => l.event_id === e.id))
@@ -975,7 +1026,7 @@
         <div class="form-actions"><button class="btn solid block" id="eaDraft" ${lines.length ? "" : "disabled"}>Draft accounts</button></div>
         <div id="eaBox" hidden><label>Accounts (edit freely)</label><textarea id="eaText" rows="18" class="mono"></textarea>
           <p class="muted" style="font-size:14px">{photo 1}, {photo 2} and so on show that receipt's photo at that spot in the chat post.</p>
-          <div class="form-actions" style="display:grid;gap:10px"><button class="btn solid block" id="eaPost">Confirm and post to the ${fam ? "Family Events Accounts" : "Accounts"} chat</button><button class="btn block" id="eaCopy">Copy for WhatsApp</button></div></div>` : ""}
+          <div class="form-actions" style="display:grid;gap:10px"><button class="btn solid block" id="eaPost">Confirm and post to the ${fam ? "BR3 Family Events Accounts" : "Footballing Events Accounts"} chat</button><button class="btn block" id="eaCopy">Copy for WhatsApp</button></div></div>` : ""}
     </div></div>`;
 
     el.querySelectorAll("[data-ev]").forEach((b) => (b.onclick = () => go("eventaccounts:" + b.dataset.ev)));
@@ -1006,7 +1057,7 @@
       try {
         $("#eaPost", el).disabled = true;
         await q(sb.rpc("post_event_accounts", { p_event: pick.id, p_body: $("#eaText", el).value }));
-        toast(`Accounts posted to the ${fam ? "Family Events Accounts" : "Accounts"} chat`); refresh();
+        toast(`Accounts posted to the ${fam ? "BR3 Family Events Accounts" : "Footballing Events Accounts"} chat`); refresh();
       } catch (e) { $("#eaPost", el).disabled = false; fail(e); }
     };
   }
@@ -1209,7 +1260,7 @@
         <p class="note">If we reach 25 booked and confirmed by Thursday night, then we will endeavour to inshaAllah book 2 pitches and have ourselves a mini-tournament.</p></div>`;
     }
 
-    const fund = `<div class="card fb"><p class="muted" style="margin:0">Kitty fund <b>${money(fs.kitty)}</b> · kitty ${fs.session_no}, ${fs.games_played} of 5 games played${fs.games_played < 5 ? `, next is game ${fs.games_played + 1} of 5` : ""}. Past accounts are in the <a href="#chat:football-accounts">Accounts chat</a>.</p>
+    const fund = `<div class="card fb"><p class="muted" style="margin:0">Kitty fund <b>${money(fs.kitty)}</b> · kitty ${fs.session_no}, ${fs.games_played} of 5 games played${fs.games_played < 5 ? `, next is game ${fs.games_played + 1} of 5` : ""}. Past accounts are in the <a href="#chat:football-accounts">Friday Football Accounts chat</a>.</p>
       ${isDoor() ? `<div class="form-actions"><button class="btn solid block" data-go="supervisors">Football Supervisors</button>${isAdmin() ? '<button class="btn block" data-go="footballadmin">Football Accounts</button>' : ""}</div>` : ""}</div>`;
 
     el.innerHTML = `<div class="events">${offerBanner(allGames, true)}${introBanner(fs.intro_offer, true)}${top}${ev ? footballInfo(ev, fs) : ""}${you}${players}${fund}<div id="awards"></div></div>`;
@@ -1722,6 +1773,33 @@
         ...owing.filter((b) => cashPart(b) > 0).map((b) => `${b.display_name} ${money(cashPart(b))} ${short(d)}`)];
       t.push(L, "These OWE", ...(owes.length ? owes : ["All clear"]));
       if (newKitty < 150 || g >= 5) t.push(L, `Kitty restarts: ${newKitty < 150 ? "fund is below £150" : "5 games played"}. Anything over £100 moves to the events fund and the next game starts a new kitty.`);
+      // BR3 Family Events: the week's subscriptions (Saturday to the game's Friday), with the fund before and after.
+      try {
+        const wkStart = new Date(d); wkStart.setDate(wkStart.getDate() - 6);
+        const wkEnd = new Date(d); wkEnd.setDate(wkEnd.getDate() + 1);
+        const [subs, famRows, fsNow] = await Promise.all([
+          q(sb.from("square_payments").select("gross,fee,refunded,label,status").eq("kind", "subscription").eq("status", "COMPLETED").gte("paid_at", wkStart.toISOString()).lt("paid_at", wkEnd.toISOString())),
+          q(sb.from("ledger").select("amount").eq("fund", "family").gte("on_date", isoDay(wkStart))),
+          q(sb.from("fund_state").select("family").single()),
+        ]);
+        const famNow = r2(fsNow.family || 0), famPrior = r2(famNow - famRows.reduce((s2, l) => s2 + Number(l.amount), 0));
+        const plan = (l) => String(l || "Subscription").replace(/\s*\(.*\)\s*$/, "") || "Subscription";
+        const byPlan = new Map();
+        subs.forEach((p) => { const k = plan(p.label), x = byPlan.get(k) || { n: 0, gross: 0, fee: 0, net: 0 };
+          x.n++; x.gross += Number(p.gross); x.fee += Number(p.fee); x.net += Number(p.gross) - Number(p.fee) - Number(p.refunded || 0); byPlan.set(k, x); });
+        const tot = [...byPlan.values()].reduce((s2, x) => ({ n: s2.n + x.n, gross: s2.gross + x.gross, fee: s2.fee + x.fee, net: s2.net + x.net }), { n: 0, gross: 0, fee: 0, net: 0 });
+        const other = r2(famNow - famPrior - tot.net);
+        const dd = (x) => `${DAYS[x.getDay()]} ${x.getDate()} ${MONTHS[x.getMonth()]}`;
+        t.push(L, "BR3 FAMILY EVENTS", `Prior fund ${money(famPrior)}`, "", `Weekly subscriptions for BR3 Family Events (${dd(wkStart)} - ${dd(d)})`,
+          "Type - no. - £/sub - received - less card costs - net received");
+        [...byPlan.entries()].sort((a2, b2) => a2[0].localeCompare(b2[0])).forEach(([k, x]) =>
+          t.push(`${k} - ${x.n} - ${money(x.gross / x.n)} - ${money(x.gross)} - (${money(x.fee)}) - ${money(x.net)}`));
+        if (!byPlan.size) t.push("No subscriptions this week");
+        t.push(`Total - ${tot.n} - - ${money(tot.gross)} - (${money(tot.fee)}) - ${money(tot.net)}`);
+        if (other) t.push(`Other money ${other > 0 ? "in" : "spent"} ${other > 0 ? money(other) : `(${money(-other)})`} (see the BR3 Family Events Accounts chat)`);
+        t.push("", `Updated fund ${money(famNow)}`);
+      } catch { t.push(L, "BR3 FAMILY EVENTS", "Couldn't load this week's subscriptions. Add them by hand."); }
+      t.push(L, "For all the funds together, checked against the Square account, see the Accounts Reconciliation chat.");
       $("#acc", box).value = t.join("\n"); $("#draftBox", box).hidden = false;
       $("#post", box).onclick = async () => {
         const methods = {}; all.forEach((b) => { if (b.charge !== "covered" && b.method !== "credit") methods[b.id] = methodOf(b); });
@@ -1729,7 +1807,7 @@
           $("#post", box).disabled = true;
           await q(sb.rpc("post_accounts", { p_event: target.id, p_body: $("#acc", box).value, p_hire: hire, p_fees: fees, p_methods: methods,
             p_cleared: cleared.map((x) => x.id), p_received: received, p_images: [photos[0], photos[1]].filter(Boolean) }));
-          toast("Accounts posted to the Accounts chat"); refresh();
+          toast("Accounts posted to the Friday Football Accounts chat"); refresh();
         } catch (e) { $("#post", box).disabled = false; fail(e); }
       };
       $("#copy", box).onclick = async () => { try { await navigator.clipboard.writeText($("#acc", box).value); toast("Copied. Paste it into WhatsApp"); } catch { $("#acc", box).select(); toast("Select all and copy"); } };
@@ -1776,9 +1854,11 @@
   const groupName = (id) => (groupCache.find((g) => g.id === id) || {}).name || "Group";
 
   const ANNOUNCE = "announcements";
-  // "football-accounts" is the one Accounts chat: football, events and transfers. Events Accounts was folded into it.
-  const ORG_POSTS = ["football-accounts", "family-accounts"]; // chats only the admin posts in
-  const AUTO_GROUPS = ["football-accounts", "family-accounts"]; // every approved member is in it, no sign-up
+  // The Accounts tab: the reconciliation (all funds against Square, pinned) first, then each fund's own accounts chat.
+  const ACCOUNTS = ["accounts-reconciliation", "football-accounts", "events-accounts", "family-accounts"];
+  const ACCOUNT_ICON = { "accounts-reconciliation": "⚖️", "football-accounts": "⚽", "events-accounts": "🏆", "family-accounts": "👨‍👩‍👧" };
+  const ORG_POSTS = ACCOUNTS; // chats only the admin posts in
+  const AUTO_GROUPS = ACCOUNTS; // every approved member is in it, no sign-up
   // The accounts chats always show the newest post first; pinning doesn't apply there.
   const byGroup = (posts, id) => { const gp = posts.filter((p) => p.group_id === id);
     return ORG_POSTS.includes(id) ? gp.sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0)) : gp; };
@@ -1844,7 +1924,18 @@
   const GROUP_PIC = { quran: QURAN_BANNER };
   const groupHero = (id, link) => (GROUP_PIC[id] ? `<${link ? `a href="#chat:${encodeURIComponent(id)}"` : "div"} class="group-hero ${GROUP_LOOK[id]}"><img src="${GROUP_PIC[id]}" alt=""></${link ? "a" : "div"}>` : "");
   function grouplist(el, alive) { return groups(el, alive, "", null, true); }
-  async function groups(el, alive, filter = "", only = null, joinedTab = false) {
+  function accounts(el, alive) { return groups(el, alive, "", null, false, true); }
+  const chatTabs = (on) => [["groups", "Chats"], ["accounts", "Accounts"], ["grouplist", "Joined events"]].filter(([k]) => k !== on).map(([k, t]) => `<a href="#${k}">${t}</a>`).join("");
+  // The latest Square balance photo (or PDF), shown on the Funds page and in the Accounts Reconciliation chat.
+  async function squarePhoto(box, alive) {
+    const row = (await sb.from("square_statement").select("file,uploaded_at").maybeSingle()).data;
+    if (!box || !alive()) return;
+    if (!row) { box.innerHTML = '<p class="muted">No Square balance photo uploaded yet.</p>'; return; }
+    const when = `<span class="muted">Uploaded ${short(new Date(row.uploaded_at))}.</span>`;
+    if (/^data:image\//.test(row.file)) box.innerHTML = `${when}<img src="${esc(row.file)}" alt="Square balance" data-zoom style="display:block;max-width:100%;max-height:260px;border-radius:8px;margin-top:8px;cursor:zoom-in"><div class="muted" style="font-size:13px">Tap the photo to see it full size.</div>`;
+    else { box.innerHTML = `${when}<a class="btn block" target="_blank" rel="noopener" style="margin-top:8px">Open the Square PDF</a>`; box.querySelector("a").href = URL.createObjectURL(await (await fetch(row.file)).blob()); }
+  }
+  async function groups(el, alive, filter = "", only = null, joinedTab = false, accountsTab = false) {
     if (!me) return needSignIn(el, "see the groups");
     loading(el);
     const [gs, posts, comments, votes] = await Promise.all([
@@ -1870,9 +1961,10 @@
       const canRead = !g.members_only || inGroup(g.id);
       const canPost = canRead && !pending() && (g.id !== ANNOUNCE || isAdmin()) && (!ORG_POSTS.includes(g.id) || isOrg());
       const gp = byGroup(posts, g.id);
-      el.innerHTML = `<div class="subhead"><h2>${esc(g.name)}</h2>${g.members_only ? '<a href="#grouplist">Joined events</a>' : '<a href="#groups">Chats</a>'}</div>
+      el.innerHTML = `<div class="subhead"><h2>${esc(g.name)}</h2>${ACCOUNTS.includes(g.id) ? '<a href="#accounts">Accounts</a>' : g.members_only ? '<a href="#grouplist">Joined events</a>' : '<a href="#groups">Chats</a>'}</div>
         ${groupHero(g.id)}
         ${g.about ? `<p class="muted pad" style="padding-top:10px">${esc(g.about)}</p>` : ""}
+        ${g.id === "accounts-reconciliation" && canRead ? `<div class="pad"><div class="note"><b>Square balance</b><div id="sqShow"><span class="muted">Loading…</span></div></div></div>` : ""}
         ${!canRead ? `<div class="pad">${pending() ? PENDING_NOTE : `<button class="btn solid" data-join="${esc(g.id)}">Sign up · Free</button>`}</div>` : `
         ${pending() && g.id !== ANNOUNCE ? `<div class="pad">${PENDING_NOTE}</div>` : ""}
         ${canPost ? `<div class="composer">
@@ -1886,21 +1978,29 @@
         <div id="feed">${gp.map((p) => postHtml(p, comments.filter((c) => c.post_id === p.id), votes.filter((v) => v.post_id === p.id))).join("") || '<div class="empty"><h2>No posts yet</h2></div>'}</div>`}`;
       el.querySelectorAll("[data-compose]").forEach((b) => (b.onclick = () => compose(b.dataset.compose, b.dataset.group)));
       el.querySelectorAll("[data-join]").forEach((b) => (b.onclick = () => joinGroup(b.dataset.join).then(refresh)));
+      if ($("#sqShow", el)) squarePhoto($("#sqShow", el), alive).catch(() => {});
       wirePosts(el, posts);
       return;
     }
-    const JOINED_ORDER = ["football-accounts", "family-accounts", "quran"];
+    const JOINED_ORDER = accountsTab ? ACCOUNTS : ["quran"];
     const firstIn = (g) => { const i = JOINED_ORDER.indexOf(g.id); return i < 0 ? JOINED_ORDER.length : i; };
-    const clubs = gs.filter((g) => g.members_only).sort((a, b) => firstIn(a) - firstIn(b)).map((g) => {
+    const clubs = gs.filter((g) => g.members_only && ACCOUNTS.includes(g.id) === accountsTab).sort((a, b) => firstIn(a) - firstIn(b)).map((g) => {
       const inIt = inGroup(g.id);
-      const gp = byGroup(posts, g.id).slice(0, 4);
-      const icon = { "football-accounts": "🧾", "family-accounts": "👨‍👩‍👧" }[g.id] || "📖";
+      const gp = byGroup(posts, g.id).slice(0, accountsTab ? 1 : 4);
+      const icon = ACCOUNT_ICON[g.id] || "📖";
       return `<section class="news club${GROUP_LOOK[g.id] ? ` ${GROUP_LOOK[g.id]}` : ""}">${groupHero(g.id, inIt)}<div class="row" style="justify-content:space-between"><h2>${inIt ? `<a href="#chat:${encodeURIComponent(g.id)}" style="color:inherit">${icon} ${esc(g.name)}</a>` : `${icon} ${esc(g.name)}`}</h2><span class="row" style="gap:8px">${inIt && !joined.includes(g.id) && !AUTO_GROUPS.includes(g.id) && !pending() ? `<button class="btn small" data-join="${esc(g.id)}">Sign up</button>` : ""}${inIt && (!ORG_POSTS.includes(g.id) || isOrg()) ? `<button class="btn small" data-compose="text" data-group="${esc(g.id)}">Post</button>` : ""}</span></div>
         ${inIt ? gp.map((p) => postHtml(p, comments.filter((c) => c.post_id === p.id), votes.filter((v) => v.post_id === p.id))).join("") || '<p class="muted">Nothing posted yet.</p>'
           : `<p class="muted">${esc(g.about)}</p>${pending() ? PENDING_NOTE : `<button class="btn solid" data-join="${esc(g.id)}">Sign up · Free</button>`}`}</section>`;
     }).join("");
+    if (accountsTab) {
+      el.innerHTML = `<div class="subhead"><h2>Accounts</h2>${chatTabs("accounts")}</div>
+        <p class="muted pad" style="padding-top:10px">All our accounts, open to every member. Each fund has its own chat, and the Accounts Reconciliation chat checks all the funds together against the Square account every week. Tap a chat's name to see all its posts.</p>
+        ${clubs || '<div class="empty"><h2>No accounts yet</h2></div>'}`;
+      wirePosts(el, posts);
+      return;
+    }
     if (joinedTab) {
-      el.innerHTML = `<div class="subhead"><h2>Joined events</h2><a href="#groups">Chats</a></div>
+      el.innerHTML = `<div class="subhead"><h2>Joined events</h2>${chatTabs("grouplist")}</div>
         <p class="muted pad" style="padding-top:10px">Group chats you sign up for. Sign up to see what's shared and join the conversation.</p>
         ${clubs || '<div class="empty"><h2>No group chats yet</h2></div>'}`;
       el.querySelectorAll("[data-compose]").forEach((b) => (b.onclick = () => compose(b.dataset.compose, b.dataset.group)));
@@ -1914,7 +2014,7 @@
         <div style="flex:1"><b>${esc(g.name)}</b><div class="muted">${esc(g.about || "")}${g.about ? " · " : ""}${n} post${n === 1 ? "" : "s"}</div></div><span class="muted" aria-hidden="true">›</span></a>`;
     }).join("");
     el.innerHTML = `
-      <div class="subhead"><h2>Chats</h2><a href="#grouplist">Joined events</a>
+      <div class="subhead"><h2>Chats</h2>${chatTabs("groups")}
         <span style="width:1px;height:28px;background:var(--line)"></span>
         <button id="searchBtn" style="color:var(--green)">${ICON.search}</button></div>
       ${filter ? "" : newsBox + starsBox() + open}
