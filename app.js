@@ -44,6 +44,14 @@
   });
   const bold = (s) => linkify(esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>"));
   const escLinks = (s) => linkify(esc(s));
+  // YouTube links also show the video's opening picture underneath, like WhatsApp. The picture comes
+  // straight from YouTube using the video's id, so no account or key is needed. Tapping it opens the video.
+  const ytIds = (s) => {
+    const ids = [], re = /(?:youtube\.com\/(?:watch\?(?:[^\s#]*&)?v=|shorts\/|live\/|embed\/)|youtu\.be\/)([\w-]{11})/gi;
+    for (const m of String(s ?? "").matchAll(re)) if (!ids.includes(m[1])) ids.push(m[1]);
+    return ids;
+  };
+  const ytCards = (s) => ytIds(s).map((id) => `<a class="yt-card" href="https://www.youtube.com/watch?v=${id}" target="_blank" rel="noopener noreferrer" aria-label="Watch on YouTube"><img src="https://i.ytimg.com/vi/${id}/hqdefault.jpg" alt="" loading="lazy"><span class="yt-play" aria-hidden="true"></span><span class="yt-label">▶ Watch on YouTube</span></a>`).join("");
   // WhatsApp writes bold as *text*; the app uses **text**.
   const fromWhatsApp = (s) => s.replace(/(^|[^*])\*([^*\n]+?)\*(?!\*)/gm, "$1**$2**");
   const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -394,7 +402,7 @@
     const detail = (ev) => {
       const card = el.querySelector(`[data-event="${ev.id}"]`)?.closest("article");
       const act = card?.querySelector(".event-foot .go");
-      modal(`${picOf(ev) ? `<img class="event-pic modal-pic" src="${esc(ev.image || (ev.kind === "football" ? FOOTIE : picOf(ev)))}" alt="">` : ""}<h2>${esc(ev.title)}</h2><p class="muted">${ev.day ? fmtEvent(ev) : "Date to be confirmed"}<br>${esc(ev.location || "")}</p><p style="line-height:1.5;white-space:pre-wrap">${escLinks(ev.details || "")}</p>
+      modal(`${picOf(ev) ? `<img class="event-pic modal-pic" src="${esc(ev.image || (ev.kind === "football" ? FOOTIE : picOf(ev)))}" alt="">` : ""}<h2>${esc(ev.title)}</h2><p class="muted">${ev.day ? fmtEvent(ev) : "Date to be confirmed"}<br>${esc(ev.location || "")}</p><p style="line-height:1.5;white-space:pre-wrap">${escLinks(ev.details || "")}</p>${ytCards(ev.details)}
         <div class="form-actions">${act ? `<button class="btn solid block" id="dGo">${act.textContent}</button>` : ""}${isOrg() ? '<button class="btn block" id="dQr">QR code poster</button>' : ""}${isAdmin() && ev.kind === "event" ? '<button class="btn block" id="dEdit">Edit this event</button>' : ""}</div>`, (m) => {
         if (act) $("#dGo", m).onclick = () => { closeModal(); if (act.href) window.open(act.href, "_blank", "noopener"); else act.click(); };
         if (isOrg()) $("#dQr", m).onclick = () => posterModal(ev);
@@ -746,14 +754,15 @@
     const from = /^\d{4}-\d{2}-\d{2}$/.test(a || "") ? a : (() => { const d = parseDay(to); d.setDate(d.getDate() - 7); return isoDay(d); })();
     const start = parseDay(from).toISOString(), endD = parseDay(to); endD.setDate(endD.getDate() + 1);
     const end = endD.toISOString();
-    let x, pays, cards, moves, unpaid;
+    let x, pays, cards, moves, unpaid, stx;
     try {
-      [x, pays, cards, moves, unpaid] = await Promise.all([
+      [x, pays, cards, moves, unpaid, stx] = await Promise.all([
         q(sb.rpc("square_expected")),
         q(sb.from("square_payments").select("*").gte("paid_at", start).lt("paid_at", end).order("paid_at", { ascending: false })),
         q(sb.from("bookings").select("id,display_name,amount,credit_used,card_fee,created_at,square_order_id,events(title,day)").eq("method", "card").eq("paid", true).gte("created_at", start).lt("created_at", end)),
         q(sb.from("money_moves").select("*").order("id", { ascending: false }).limit(20)),
         isAdmin() ? q(sb.from("bookings").select("id,display_name,amount,created_at,events(title,day)").eq("paid", false).eq("status", "booked").gte("created_at", new Date(parseDay(from).getTime() - 7 * 864e5).toISOString()).lt("created_at", end).order("created_at", { ascending: false })) : [],
+        isAdmin() ? q(sb.from("starling_txns").select("*").gte("at", start).lt("at", end).order("at", { ascending: false })).catch(() => []) : [],
       ]);
     } catch (e) {
       el.innerHTML = `<div class="empty"><h2>Square check isn't ready</h2><p class="muted">Run supabase/add-square-check.sql in Supabase first. (${esc(e.message)})</p></div>`;
@@ -781,7 +790,7 @@
         ${row("Paid for games and events whose accounts aren't posted yet", x.pending_in, "+")}
         ${row("Square fees on those", x.pending_fees, "−")}
         ${row("Cash in hand", x.held_cash, Number(x.held_cash) < 0 ? "+" : "−")}
-        ${row("In the bank (Starling)", x.held_bank, Number(x.held_bank) < 0 ? "+" : "−")}
+        ${row(x.starling_at ? `In Starling${x.starling_name ? `, ${esc(x.starling_name)}` : ""} (read ${short(new Date(x.starling_at))})` : "In the bank (Starling)", x.held_bank, Number(x.held_bank) < 0 ? "+" : "−")}
         <tr><td><b>Square should hold</b></td><td class="amt"><b>${money(x.expected)}</b></td></tr>
         <tr><td>Square balance${x.square_balance_at ? ` (entered ${short(new Date(x.square_balance_at))})` : ""}</td><td class="amt">${bal == null ? "—" : money(bal)}</td></tr>
       </tbody></table></div>
@@ -790,6 +799,10 @@
       ${x.pending.length ? `<details class="info"><summary>Games and events not yet in accounts</summary>${x.pending.map((p) => `<p>${esc(p.title)}${p.day ? ` ${short(parseDay(p.day))}` : ""}: ${money(p.paid || 0)} paid, ${money(p.fees || 0)} Square fees</p>`).join("")}</details>` : ""}
       <label>Square balance now, from the Square app £</label><input id="sqBal" type="number" step="0.01" inputmode="decimal" value="${bal == null ? "" : bal.toFixed(2)}">
       <div class="form-actions"><button class="btn solid block" id="sqBalGo">Check against the funds</button></div>
+      ${isAdmin() ? `<h3>Starling</h3>
+        <p class="muted">${x.starling_at ? `Starling is read by itself every Saturday morning, with the week's transactions. Last read ${short(new Date(x.starling_at))}: ${money(x.starling)}.` : "Once STARLING_TOKEN is added in Netlify, the app reads Starling's balance and transactions (read-only) every Saturday morning, and the bank figure above becomes Starling's real balance."}</p>
+        <div class="form-actions"><button class="btn block" id="stPull">Pull from Starling now</button></div>
+        ${stx.length ? `<details class="info"><summary>Starling transactions, these dates (${stx.length})</summary><div class="scroll"><table class="wrap"><tbody>${stx.map((t) => `<tr><td>${esc(t.counterparty || t.source || "Starling")}${t.reference ? ` · ${esc(t.reference)}` : ""}<div class="muted" style="font-size:13px">${short(new Date(t.at))}${t.status && t.status !== "SETTLED" ? ` · ${esc(t.status.toLowerCase())}` : ""}</div></td><td class="amt ${Number(t.amount) < 0 ? "neg" : ""}">${Number(t.amount) < 0 ? `(${money(-t.amount)})` : money(t.amount)}</td></tr>`).join("")}</tbody></table></div></details>` : ""}` : ""}
       ${isAdmin() ? `<h3>Weekly reconciliation</h3>
         <p class="muted">On Saturday, after the week's accounts are posted, enter the Square balance above and draft this. It's posted, pinned, to the Accounts Reconciliation chat for every member to see, with the Square balance photo from the Funds page.</p>
         <div class="form-actions"><button class="btn solid block" id="rcDraft">Draft the reconciliation</button></div>
@@ -829,6 +842,17 @@
       try { btn.disabled = true; await q(sb.rpc("link_square_payment", { p_payment: btn.dataset.mgo, p_booking: sel.value })); toast("Matched ✓"); refresh(); }
       catch (e) { btn.disabled = false; fail(e); }
     }));
+    if ($("#stPull", el)) $("#stPull", el).onclick = async (e) => {
+      const btn = e.currentTarget; btn.disabled = true; btn.textContent = "Reading Starling…";
+      try {
+        const { data: { session } } = await sb.auth.getSession();
+        const res = await fetch("/.netlify/functions/starling-sync", { method: "POST", headers: { Authorization: `Bearer ${session?.access_token || ""}` } });
+        const r = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(r.error || "Couldn't reach Starling.");
+        toast(`Starling ${r.name}: ${money(r.balance)}, ${r.transactions} transaction${r.transactions === 1 ? "" : "s"} read`);
+        refresh();
+      } catch (err) { btn.disabled = false; btn.textContent = "Pull from Starling now"; fail(err); }
+    };
     $("#sqShow", el).onclick = () => go(`squarecheck:${$("#sqFrom", el).value}~${$("#sqTo", el).value}`);
     $("#sqSync", el).onclick = async (e) => {
       const btn = e.currentTarget; btn.disabled = true; btn.textContent = "Checking Square…";
@@ -856,14 +880,17 @@
       const now = new Date(), L = "________";
       const t = [`Accounts Reconciliation · ${DAYS[now.getDay()]} ${now.getDate()} ${MONTHS_LONG[now.getMonth()]} ${now.getFullYear()}`, "All our funds together, checked against the Square account", L];
       // Total to total first: what Square holds against what all the funds say it should hold.
-      t.push(`Square bank balance as of Saturday morning ${money(S)}`, "",
-        "Expected Square holding",
+      const B = x.starling_at ? r2(x.starling) : null;
+      if (B != null) t.push(`Square bank balance as of Saturday morning ${money(S)}`, `Starling${x.starling_name ? ` (${x.starling_name})` : ""} balance ${money(B)}`, `Square and Starling together ${money(S + B)}`, "", "Expected holding");
+      else t.push(`Square bank balance as of Saturday morning ${money(S)}`, "", "Expected Square holding");
+      t.push(
         ...[["kitty", "Friday Football (kitty) fund"], ["credits", "Credits held"], ["events", "Footballing Events fund"], ["family", "BR3 Family Events fund (with the weekly subscriptions)"], ["unclaimed", "Unclaimed credit"]]
           .filter(([k]) => k !== "unclaimed" || r2(fs.unclaimed)).map(([k, n]) => `${n} ${money(fs[k] || 0)}`),
         `All funds together ${money(x.funds)}`);
-      if (held) t.push(`Less cash and transfers not yet in Square (${money(held)})`);
+      const cashOnly = r2(x.held_cash), notIn = B != null ? cashOnly : held;
+      if (notIn) t.push(`Less ${B != null ? "cash not yet banked" : "cash and transfers not yet in Square"} (${money(notIn)})`);
       if (adv) t.push(`Plus paid in advance for the next game ${money(adv)}`);
-      t.push(`Expected Square holding ${money(E)}`, D === 0 ? "Difference £0.00 ✓ Balanced" : `Difference ${br(D)} (Square has ${money(Math.abs(D))} ${D > 0 ? "more" : "less"})`, L);
+      t.push(B != null ? `Expected holding ${money(E + B)}` : `Expected Square holding ${money(E)}`, D === 0 ? "Difference £0.00 ✓ Balanced" : `Difference ${br(D)} (Square has ${money(Math.abs(D))} ${D > 0 ? "more" : "less"})`, L);
       if (prev) {
         t.push("How it changed since last week");
         const prevDiff = r2(Number(prev.square_actual) - Number(prev.square_expected));
@@ -873,7 +900,7 @@
         let T = 0;
         FUNDS.forEach(([k, n]) => { const b = r2(prev[k]), a = r2(fs[k]); T += a - b; t.push(`${n} ${money(b)} → ${money(a)} ${sg(a - b)}`); });
         t.push(`Total change ${sg(T)}`);
-        if (r2(held) || r2(prev.held)) t.push(`Cash and transfers not yet in Square ${money(prev.held)} → ${money(held)} ${sg(-(held - Number(prev.held)))}`);
+        if (r2(held) || r2(prev.held)) t.push(`${B != null ? "Cash in hand and Starling" : "Cash and transfers not yet in Square"} ${money(prev.held)} → ${money(held)} ${sg(-(held - Number(prev.held)))}`);
         if (r2(adv) || r2(prev.advance)) t.push(`Paid in advance for the next game ${money(prev.advance)} → ${money(adv)} ${sg(adv - Number(prev.advance))}`);
         t.push(L, `Square balance expected ${money(E)}`, `Square bank balance according to Square ${money(S)}`, D === 0 ? "Difference £0.00 ✓ Balanced" : `Difference ${br(D)}`);
       } else {
@@ -1907,7 +1934,7 @@
           <div class="who"><b>${esc(p.author_name)}</b>${p.pinned ? ' <span class="tag gold">Pinned</span>' : ""}<div class="muted">${ago(p.created_at)}</div></div></div>
         ${postBody(p)}
         ${Array.isArray(p.poll) ? p.poll.map((o) => `<div class="poll-opt"><span>${esc(o)}</span></div>`).join("") : ""}
-        ${cs.length ? `<div class="comments">${cs.map((c) => `<div class="comment"><b>${esc(c.author_name)}</b> ${escLinks(c.body)}</div>`).join("")}</div>` : ""}
+        ${cs.length ? `<div class="comments">${cs.map((c) => `<div class="comment"><b>${esc(c.author_name)}</b> ${escLinks(c.body)}${ytCards(c.body)}</div>`).join("")}</div>` : ""}
         <div class="row" style="gap:8px;margin-top:8px"><input data-gc="${p.id}" placeholder="Write a comment…" style="flex:1;margin:0"><button class="btn small" data-gsend="${p.id}">Send</button></div>
       </article>`;
     };
@@ -2060,7 +2087,7 @@
     const imgs = Array.isArray(p.images) ? p.images : [], used = new Set();
     const pic = (src) => `<img src="${esc(src)}" alt="" data-zoom>`;
     const text = bold(p.body).replace(/\{photo (\d+)\}/g, (m, n) => { const src = imgs[n - 1]; if (!src) return ""; used.add(n - 1); return `</div>${pic(src)}<div class="text">`; });
-    return `<div class="text">${text}</div>${p.image ? pic(p.image) : ""}${imgs.filter((_, i) => !used.has(i)).map(pic).join("")}`;
+    return `<div class="text">${text}</div>${ytCards(p.body)}${p.image ? pic(p.image) : ""}${imgs.filter((_, i) => !used.has(i)).map(pic).join("")}`;
   }
   function postHtml(p, comments, votes) {
     const shared = Array.isArray(reactCache), mineR = shared ? reactCache.filter((r) => r.post_id === p.id) : [];
@@ -2089,7 +2116,7 @@
         <button class="pill" data-react="${p.id}">☺+</button>
       </div>
       <div class="post-foot"><button data-comment="${p.id}">Comment${comments.length ? ` (${comments.length})` : ""}</button><button data-share="${p.id}">Share</button></div>
-      ${comments.length ? `<div class="comments">${comments.map((c) => `<div class="comment"><b>${esc(c.author_name)}</b>${badge(c.user_id)} ${escLinks(c.body)}${isOrg() || (c.user_id && c.user_id === me.id) ? `<button class="c-del" data-delc="${c.id}" aria-label="Delete comment" title="Delete comment">×</button>` : ""}</div>`).join("")}</div>` : ""}
+      ${comments.length ? `<div class="comments">${comments.map((c) => `<div class="comment"><b>${esc(c.author_name)}</b>${badge(c.user_id)} ${escLinks(c.body)}${ytCards(c.body)}${isOrg() || (c.user_id && c.user_id === me.id) ? `<button class="c-del" data-delc="${c.id}" aria-label="Delete comment" title="Delete comment">×</button>` : ""}</div>`).join("")}</div>` : ""}
     </article>`;
   }
 
