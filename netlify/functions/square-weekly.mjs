@@ -2,6 +2,7 @@
 // Sync from Square. Football payments are matched to their bookings, and the Family Events subscriptions
 // (Individual, Concessionary and Family) go into the Family Events fund, with Square's fee taken off.
 import { missingSettings, syncPayments, db } from "../lib/square.mjs";
+import { syncStarling } from "../lib/starling.mjs";
 // Then posts the week's subscriptions (Saturday to Friday) to the Family Events Accounts chat, once per week.
 
 export default async () => {
@@ -11,6 +12,8 @@ export default async () => {
   try {
     const r = await syncPayments(iso(from), iso(to));
     const ukToday = new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" }); // YYYY-MM-DD
+    // Then Starling's balance and the week's transactions (read-only), for the reconciliation.
+    r.starling = await syncStarling(8).catch((e) => `not read: ${e.message}`);
     r.posted = await db("rpc/post_family_week", { method: "POST", body: JSON.stringify({ p_end: ukToday }) }).catch((e) => `not posted: ${e.message}`);
     console.log("Weekly Square pull", r);
     return new Response(JSON.stringify(r), { headers: { "content-type": "application/json" } });
