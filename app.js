@@ -1325,7 +1325,7 @@
   // ---------- Football Awards (supabase/add-football-awards.sql, then update-football-awards.sql) ----------
   // Players ticked in on the night pick one player per award (a different player each time, never themselves),
   // for 24 hours from 11pm. Loads after the rest of the page so it never slows the football tab down.
-  const AWARDS = [["goal", "⚽ Best Goal"], ["assist", "🎯 Best Assist"], ["overall", "⭐ Best Overall Player"], ["motivator", "📣 Best Team Motivator"]];
+  const AWARDS = [["goal", "⚽ Best Goal"], ["assist", "🎯 Best Assist"], ["overall", "🏅 Man of the Match"], ["motivator", "📣 Best Team Motivator"]];
   const whenText = (iso) => { const d = new Date(iso), h = d.getHours(), m = d.getMinutes();
     return `${DAYS[d.getDay()]} ${h % 12 || 12}${m ? ":" + String(m).padStart(2, "0") : ""}${h < 12 ? "am" : "pm"}`; };
   const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
@@ -1340,7 +1340,7 @@
     const voted = (a.mine || []).length > 0, n = a.voters || 0;
     const names = (list) => list.map((x) => esc(x.name)).join(" and ");
     let inner;
-    if (a.state === "soon") inner = `<p>After tonight's game, the players who were ticked in vote for Best Goal, Best Assist, Best Overall Player and Best Team Motivator. Voting opens at <b>${whenText(a.opens)}</b> and stays open for 24 hours.</p>`;
+    if (a.state === "soon") inner = `<p>After tonight's game, the players who were ticked in vote for Best Goal, Best Assist, Best Team Motivator and Man of the Match. Voting opens at <b>${whenText(a.opens)}</b> and stays open for 24 hours.</p>`;
     else if (a.state === "open") inner = `<p>Vote for the best from <b>${day}</b>. Voting closes <b>${whenText(a.closes)}</b>. ${plural(n, "player")} ${n === 1 ? "has" : "have"} voted so far.</p>
       ${a.can_vote ? `${voted ? '<p class="muted">You\'ve voted ✓ You can change your votes until voting closes.</p>' : ""}<button class="btn solid block" id="awVote">${voted ? "Change my votes" : "Vote now"}</button>`
         : '<p class="muted">Only players ticked in on the night can vote.</p>'}
@@ -1361,12 +1361,13 @@
   function awardVote(a, done) {
     const pick = (c) => ((a.mine || []).find((x) => x.category === c) || {}).pick || "";
     modal(`<h2>🏆 Football Awards</h2>
-      <p class="muted" style="line-height:1.5">One player per award, a different player each time. You can't pick yourself. Skip any you're not sure about.</p>
+      <p class="muted" style="line-height:1.5">One player per award. Best Goal, Best Assist and Best Team Motivator go to a different player each; Man of the Match can be anyone who played. You can't pick yourself. Skip any you're not sure about.</p>
       ${AWARDS.map(([c, label]) => `<label style="margin-top:14px">${label}</label><select data-c="${c}"></select>`).join("")}
       <div class="form-actions"><button class="btn solid block" id="awSave">Save my votes</button></div>`, (m) => {
       const sels = [...m.querySelectorAll("select[data-c]")];
       const fill = () => {
-        const taken = (s) => sels.filter((o) => o !== s && o.value).map((o) => o.value);
+        // Man of the Match can go to anyone who played; the other awards need a different player each.
+        const taken = (s) => s.dataset.c === "overall" ? [] : sels.filter((o) => o !== s && o.value && o.dataset.c !== "overall").map((o) => o.value);
         sels.forEach((s) => {
           const cur = s.value || s.dataset.v || "", t = taken(s);
           s.innerHTML = `<option value="">Choose a player</option>${a.players.map((p) => `<option value="${esc(p.id)}" ${t.includes(p.id) ? "disabled" : ""} ${p.id === cur ? "selected" : ""}>${esc(p.name)}${t.includes(p.id) ? " (already picked)" : ""}</option>`).join("")}`;
@@ -1378,7 +1379,8 @@
       $("#awSave", m).onclick = async () => {
         const votes = sels.map((s) => ({ category: s.dataset.c, pick: s.value })).filter((x) => x.pick);
         if (!votes.length) return toast("Pick at least one player");
-        if (new Set(votes.map((x) => x.pick)).size < votes.length) return toast("Pick a different player for each award");
+        const others = votes.filter((x) => x.category !== "overall");
+        if (new Set(others.map((x) => x.pick)).size < others.length) return toast("Pick a different player for Best Goal, Best Assist and Best Team Motivator");
         try { $("#awSave", m).disabled = true; await q(sb.rpc("cast_award_votes", { p_event: a.event_id, p_votes: votes })); closeModal(); toast("Thanks, your votes are in ✓"); done(); }
         catch (e) { $("#awSave", m).disabled = false; fail(e); }
       };
