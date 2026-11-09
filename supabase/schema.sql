@@ -4855,3 +4855,164 @@ begin
 end $$;
 revoke execute on function public.post_reconciliation(text, numeric, text, text) from public, anon;
 grant execute on function public.post_reconciliation(text, numeric, text, text) to authenticated;
+
+-- ===== fill-events-accounts-chat.sql =====
+-- =====================================================================
+--  Footballing Events Accounts chat: fill it with its own history.
+--   * Makes sure the chat is there (on the Accounts tab).
+--   * Events accounts that were moved into the one Accounts chat (now
+--     Friday Football Accounts) move back to Footballing Events Accounts.
+--   * Every transfer between the kitty and events funds shows in BOTH
+--     chats, with the same date, so the two sets of accounts marry up.
+--   * Each football game that paid money into (or took it out of) the
+--     events fund gets its one-line note in Footballing Events Accounts.
+--   * Nobody gets a phone notification for these older posts.
+--  Paste this whole file into Supabase → SQL Editor → New query → Run.
+--  Safe to run more than once.
+-- =====================================================================
+
+insert into public.groups (id, name, about, sort, members_only) values
+  ('events-accounts', 'Footballing Events Accounts',
+   'Accounts for events paid from the events fund, with the receipts, and money moved between the kitty and events funds. Every approved member can read them; only the admin posts.', 3, true)
+on conflict (id) do update set members_only = true;
+
+-- Old posts shouldn't buzz everyone's phone.
+do $$ begin
+  if exists (select 1 from pg_trigger where tgname = 'zz_notify_new_post') then
+    execute 'alter table public.posts disable trigger zz_notify_new_post';
+  end if;
+end $$;
+
+-- 1. Events accounts (not football, not family) back to their own chat.
+update public.posts p set group_id = 'events-accounts'
+ where p.group_id = 'football-accounts'
+   and exists (select 1 from public.accounts_posts a join public.events e on e.id = a.event_id
+                where a.body = p.body and e.kind <> 'football');
+
+-- 2. Transfers between funds: a copy in Footballing Events Accounts for each one in Friday Football Accounts.
+insert into public.posts (group_id, user_id, author_name, body, created_at)
+select 'events-accounts', p.user_id, p.author_name, p.body, p.created_at
+  from public.posts p
+ where p.group_id = 'football-accounts' and p.body like '**Transfer between funds**%'
+   and not exists (select 1 from public.posts x where x.group_id = 'events-accounts' and x.body = p.body);
+-- ...and the other way round.
+insert into public.posts (group_id, user_id, author_name, body, created_at)
+select 'football-accounts', p.user_id, p.author_name, p.body, p.created_at
+  from public.posts p
+ where p.group_id = 'events-accounts' and p.body like '**Transfer between funds**%'
+   and not exists (select 1 from public.posts x where x.group_id = 'football-accounts' and x.body = p.body);
+
+-- 3. Football games that moved money into or out of the events fund (owed money, kitty reset excess).
+create or replace function public.football_to_events_body(p_amt numeric, p_bal numeric, p_day date) returns text
+language sql immutable as $$
+  select case when p_amt > 0 then 'Received £' || to_char(p_amt, 'FM999990.00') || ' from the football kitty account'
+              else 'Paid £' || to_char(-p_amt, 'FM999990.00') || ' to the football kitty account' end
+      || ' (Football ' || to_char(p_day, 'FMDD Mon') || ').' || chr(10)
+      || 'Events fund now £' || to_char(p_bal, 'FM999990.00') || chr(10)
+      || 'See the Friday Football Accounts chat for details.'
+$$;
+
+insert into public.posts (group_id, user_id, author_name, body, created_at)
+select 'events-accounts', a.created_by, coalesce(nullif(pr.name, ''), 'Admin'),
+       football_to_events_body(m.amt, m.bal, e.day), a.created_at
+  from public.accounts_posts a
+  join public.events e on e.id = a.event_id and e.kind = 'football'
+  left join public.profiles pr on pr.id = a.created_by
+  cross join lateral (
+    select sum(l.amount) as amt,
+           (select l2.balance from public.ledger l2 where l2.fund = 'events' and l2.created_at = a.created_at
+             and l2.what not like 'Transfer %' order by l2.id desc limit 1) as bal
+      from public.ledger l
+     where l.fund = 'events' and l.created_at = a.created_at and l.what not like 'Transfer %') m
+ where coalesce(m.amt, 0) <> 0
+   and not exists (select 1 from public.posts x where x.group_id = 'events-accounts' and x.created_at = a.created_at
+                     and x.body like '% the football kitty account (Football %');
+
+-- From now on: the same note, naming the renamed chat.
+create or replace function public.post_football_to_events() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare e events; amt numeric; bal numeric; v_name text;
+begin
+  select * into e from events where id = new.event_id;
+  if not found or e.kind <> 'football' then return new; end if;
+  -- post_accounts writes its ledger rows earlier in the same transaction, so they share this timestamp.
+  select coalesce(sum(amount), 0) into amt from ledger
+   where fund = 'events' and created_at = now() and what not like 'Transfer %';
+  if amt = 0 then return new; end if;
+  select events into bal from fund_state where id = 1;
+  select name into v_name from profiles where id = new.created_by;
+  insert into posts (group_id, user_id, author_name, body)
+    values ('events-accounts', new.created_by, coalesce(v_name, 'Admin'), football_to_events_body(amt, bal, e.day));
+  return new;
+end $$;
+revoke execute on function public.post_football_to_events() from public, anon, authenticated;
+drop trigger if exists accounts_posts_football_to_events on public.accounts_posts;
+create trigger accounts_posts_football_to_events after insert on public.accounts_posts
+  for each row execute function public.post_football_to_events();
+
+do $$ begin
+  if exists (select 1 from pg_trigger where tgname = 'zz_notify_new_post') then
+    execute 'alter table public.posts enable trigger zz_notify_new_post';
+  end if;
+end $$;
+
+-- ===== update-family-week-post.sql =====
+-- =====================================================================
+--  BR3 Family Events Accounts: the weekly subscriptions post now shows
+--  the fund before, Individual / Concessionary / Family (always all three,
+--  with no. of subs, £/sub, received, card costs, net received), the
+--  total, any other money in or spent, and the fund after.
+--  Paste this whole file into Supabase → SQL Editor → New query → Run.
+--  Safe to run more than once.
+-- =====================================================================
+
+create or replace function public.post_family_week(p_end date) returns text
+language plpgsql security definer set search_path = public as $$
+declare
+  v_start date := p_end - 7; body text; r record; n int := 0; tg numeric := 0; tf numeric := 0; tn numeric := 0;
+  v_post uuid; fam numeric; prior numeric; other numeric;
+begin
+  if coalesce(auth.role(), '') <> 'service_role' and not is_admin() then raise exception 'Only the admin can post this.'; end if;
+  if exists (select 1 from family_week_posts where week_end = p_end) then return null; end if;
+  select coalesce(family, 0) into fam from fund_state where id = 1;
+  -- The fund before: today's value less everything that went in or out of it since the week began.
+  select fam - coalesce(sum(amount), 0) into prior from ledger where fund = 'family' and on_date >= v_start;
+  body := 'BR3 FAMILY EVENTS · ' || to_char(v_start, 'FMDy FMDD Mon') || ' to ' || to_char(p_end - 1, 'FMDy FMDD Mon YYYY') || chr(10)
+       || 'Prior fund £' || to_char(prior, 'FM999990.00') || chr(10) || chr(10)
+       || 'Weekly subscriptions for BR3 Family Events' || chr(10)
+       || 'Type - no. - £/sub - received - less card costs - net received';
+  for r in
+    with t(plan, ord) as (values ('Individual', 1), ('Concessionary', 2), ('Family', 3)),
+    s as (
+      select case when lower(coalesce(label, '')) like '%famil%' then 'Family'
+                  when lower(coalesce(label, '')) like '%conces%' then 'Concessionary'
+                  else 'Individual' end as plan,
+             gross, fee, coalesce(refunded, 0) as refunded
+        from square_payments
+       where kind = 'subscription' and status = 'COMPLETED'
+         and (paid_at at time zone 'Europe/London')::date >= v_start and (paid_at at time zone 'Europe/London')::date < p_end)
+    select t.plan, count(s.plan) as cnt, coalesce(sum(s.gross), 0) as g, coalesce(sum(s.fee), 0) as f,
+           coalesce(sum(s.gross - s.fee - s.refunded), 0) as net
+      from t left join s on s.plan = t.plan group by t.plan, t.ord order by t.ord
+  loop
+    body := body || chr(10) || r.plan || ' - ' || r.cnt || ' - '
+         || case when r.cnt > 0 then '£' || to_char(r.g / r.cnt, 'FM999990.00') else '-' end
+         || ' - £' || to_char(r.g, 'FM999990.00') || ' - (£' || to_char(r.f, 'FM999990.00') || ') - £' || to_char(r.net, 'FM999990.00');
+    n := n + r.cnt; tg := tg + r.g; tf := tf + r.f; tn := tn + r.net;
+  end loop;
+  body := body || chr(10) || 'Total - ' || n || ' - - £' || to_char(tg, 'FM999990.00') || ' - (£' || to_char(tf, 'FM999990.00')
+       || ') - £' || to_char(tn, 'FM999990.00');
+  other := round(fam - prior - tn, 2);
+  if other <> 0 then
+    body := body || chr(10) || 'Other money ' || case when other > 0 then 'in £' || to_char(other, 'FM999990.00')
+                                                      else 'spent (£' || to_char(-other, 'FM999990.00') || ')' end;
+  end if;
+  body := body || chr(10) || chr(10) || 'Updated fund £' || to_char(fam, 'FM999990.00');
+  select id, name into r from profiles where role = 'admin' order by created_at limit 1;
+  insert into posts (group_id, user_id, author_name, body) values ('family-accounts', r.id, coalesce(r.name, 'Admin'), body)
+  returning id into v_post;
+  insert into family_week_posts (week_end, post_id) values (p_end, v_post);
+  return body;
+end $$;
+revoke execute on function public.post_family_week(date) from public, anon;
+grant execute on function public.post_family_week(date) to authenticated, service_role;

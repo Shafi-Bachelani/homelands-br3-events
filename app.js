@@ -855,7 +855,17 @@
         .filter(([k]) => k !== "unclaimed" || Number(fs.unclaimed || 0) || Number(prev?.unclaimed || 0));
       const now = new Date(), L = "________";
       const t = [`Accounts Reconciliation · ${DAYS[now.getDay()]} ${now.getDate()} ${MONTHS_LONG[now.getMonth()]} ${now.getFullYear()}`, "All our funds together, checked against the Square account", L];
+      // Total to total first: what Square holds against what all the funds say it should hold.
+      t.push(`Square bank balance as of Saturday morning ${money(S)}`, "",
+        "Expected Square holding",
+        ...[["kitty", "Friday Football (kitty) fund"], ["credits", "Credits held"], ["events", "Footballing Events fund"], ["family", "BR3 Family Events fund (with the weekly subscriptions)"], ["unclaimed", "Unclaimed credit"]]
+          .filter(([k]) => k !== "unclaimed" || r2(fs.unclaimed)).map(([k, n]) => `${n} ${money(fs[k] || 0)}`),
+        `All funds together ${money(x.funds)}`);
+      if (held) t.push(`Less cash and transfers not yet in Square (${money(held)})`);
+      if (adv) t.push(`Plus paid in advance for the next game ${money(adv)}`);
+      t.push(`Expected Square holding ${money(E)}`, D === 0 ? "Difference £0.00 ✓ Balanced" : `Difference ${br(D)} (Square has ${money(Math.abs(D))} ${D > 0 ? "more" : "less"})`, L);
       if (prev) {
+        t.push("How it changed since last week");
         const prevDiff = r2(Number(prev.square_actual) - Number(prev.square_expected));
         t.push(`Prior Square balance (last week, according to Square) ${money(prev.square_actual)}`);
         if (prevDiff) t.push(`Less last week's difference ${br(-prevDiff)}`);
@@ -865,14 +875,10 @@
         t.push(`Total change ${sg(T)}`);
         if (r2(held) || r2(prev.held)) t.push(`Cash and transfers not yet in Square ${money(prev.held)} → ${money(held)} ${sg(-(held - Number(prev.held)))}`);
         if (r2(adv) || r2(prev.advance)) t.push(`Paid in advance for the next game ${money(prev.advance)} → ${money(adv)} ${sg(adv - Number(prev.advance))}`);
+        t.push(L, `Square balance expected ${money(E)}`, `Square bank balance according to Square ${money(S)}`, D === 0 ? "Difference £0.00 ✓ Balanced" : `Difference ${br(D)}`);
       } else {
-        t.push("First reconciliation, so there are no figures from last week yet.", L, "Fund values now");
-        FUNDS.forEach(([k, n]) => t.push(`${n} ${money(fs[k] || 0)}`));
-        t.push(`All funds together ${money(x.funds)}`);
-        if (held) t.push(`Less cash and transfers not yet in Square (${money(held)})`);
-        if (adv) t.push(`Plus paid in advance for the next game ${money(adv)}`);
+        t.push("First reconciliation, so there's no change from last week to show yet.");
       }
-      t.push(L, `Square balance expected ${money(E)}`, `Square balance according to Square ${money(S)}`, D === 0 ? "Difference £0.00 ✓ Balanced" : `Difference ${br(D)} (Square has ${money(Math.abs(D))} ${D > 0 ? "more" : "less"})`);
       $("#rcText", el).value = t.join("\n");
       $("#rcDiff", el).hidden = D === 0;
       $("#rcBox", el).hidden = false; $("#rcText", el).focus();
@@ -1791,8 +1797,9 @@
           q(sb.from("fund_state").select("family").single()),
         ]);
         const famNow = r2(fsNow.family || 0), famPrior = r2(famNow - famRows.reduce((s2, l) => s2 + Number(l.amount), 0));
-        const plan = (l) => String(l || "Subscription").replace(/\s*\(.*\)\s*$/, "") || "Subscription";
-        const byPlan = new Map();
+        // Individual, Concessionary and Family are always listed, even with none that week.
+        const plan = (l) => { const n = String(l || "").toLowerCase(); return n.includes("famil") ? "Family" : n.includes("conces") ? "Concessionary" : "Individual"; };
+        const byPlan = new Map(["Individual", "Concessionary", "Family"].map((k) => [k, { n: 0, gross: 0, fee: 0, net: 0 }]));
         subs.forEach((p) => { const k = plan(p.label), x = byPlan.get(k) || { n: 0, gross: 0, fee: 0, net: 0 };
           x.n++; x.gross += Number(p.gross); x.fee += Number(p.fee); x.net += Number(p.gross) - Number(p.fee) - Number(p.refunded || 0); byPlan.set(k, x); });
         const tot = [...byPlan.values()].reduce((s2, x) => ({ n: s2.n + x.n, gross: s2.gross + x.gross, fee: s2.fee + x.fee, net: s2.net + x.net }), { n: 0, gross: 0, fee: 0, net: 0 });
@@ -1800,9 +1807,8 @@
         const dd = (x) => `${DAYS[x.getDay()]} ${x.getDate()} ${MONTHS[x.getMonth()]}`;
         t.push(L, "BR3 FAMILY EVENTS", `Prior fund ${money(famPrior)}`, "", `Weekly subscriptions for BR3 Family Events (${dd(wkStart)} - ${dd(d)})`,
           "Type - no. - £/sub - received - less card costs - net received");
-        [...byPlan.entries()].sort((a2, b2) => a2[0].localeCompare(b2[0])).forEach(([k, x]) =>
-          t.push(`${k} - ${x.n} - ${money(x.gross / x.n)} - ${money(x.gross)} - (${money(x.fee)}) - ${money(x.net)}`));
-        if (!byPlan.size) t.push("No subscriptions this week");
+        [...byPlan.entries()].forEach(([k, x]) =>
+          t.push(`${k} - ${x.n} - ${x.n ? money(x.gross / x.n) : "-"} - ${money(x.gross)} - (${money(x.fee)}) - ${money(x.net)}`));
         t.push(`Total - ${tot.n} - - ${money(tot.gross)} - (${money(tot.fee)}) - ${money(tot.net)}`);
         if (other) t.push(`Other money ${other > 0 ? "in" : "spent"} ${other > 0 ? money(other) : `(${money(-other)})`} (see the BR3 Family Events Accounts chat)`);
         t.push("", `Updated fund ${money(famNow)}`);
