@@ -388,4 +388,10 @@ label.check.risk { font-weight: 700; margin: 4px 0 10px; }
 .aw-tabs button.on { background: var(--green); color: var(--ink); border-color: var(--green); }
 .comment { position: relative; }
 .c-del { float: right; margin-left: 8px; font-size: 20px; line-height: 1; color: var(--muted); padding: 0 4px; }
+.yt-card { position: relative; display: block; margin: 0 0 12px; border-radius: 8px; overflow: hidden; background: #000; color: #fff; text-decoration: none; }
+.yt-card img, .post .yt-card img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; margin: 0; border-radius: 0; }
+.yt-play { position: absolute; left: 50%; top: calc(50% - 16px); width: 68px; height: 48px; margin: -24px 0 0 -34px; border-radius: 14px; background: #f00; }
+.yt-play::after { content: ""; position: absolute; left: 27px; top: 14px; border-style: solid; border-width: 10px 0 10px 17px; border-color: transparent transparent transparent #fff; }
+.yt-label { display: block; padding: 8px 12px; font-weight: 700; font-size: 15px; background: #1c1c1c; }
+.comment .yt-card { max-width: 320px; margin-top: 8px; }
 .post .text a, .comment a { color: inherit; text-decoration: underline; word-break: break-all; }
