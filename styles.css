@@ -388,3 +388,4 @@ label.check.risk { font-weight: 700; margin: 4px 0 10px; }
 .aw-tabs button.on { background: var(--green); color: var(--ink); border-color: var(--green); }
 .comment { position: relative; }
 .c-del { float: right; margin-left: 8px; font-size: 20px; line-height: 1; color: var(--muted); padding: 0 4px; }
+.post .text a, .comment a { color: inherit; text-decoration: underline; word-break: break-all; }
