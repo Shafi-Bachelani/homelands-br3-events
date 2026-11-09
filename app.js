@@ -37,7 +37,13 @@
 
   // ---------- helpers ----------
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-  const bold = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
+  // Turn web addresses in already-escaped text into links that open in a new tab (like WhatsApp).
+  const linkify = (h) => h.replace(/\b(?:https?:\/\/|www\.)(?:[^\s<&]|&amp;)+/gi, (m) => {
+    const tail = (m.match(/[.,!?;:)\]]+$/) || [""])[0], url = tail ? m.slice(0, -tail.length) : m;
+    return `<a href="${/^www\./i.test(url) ? "https://" + url : url}" target="_blank" rel="noopener noreferrer">${url}</a>${tail}`;
+  });
+  const bold = (s) => linkify(esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>"));
+  const escLinks = (s) => linkify(esc(s));
   // WhatsApp writes bold as *text*; the app uses **text**.
   const fromWhatsApp = (s) => s.replace(/(^|[^*])\*([^*\n]+?)\*(?!\*)/gm, "$1**$2**");
   const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -388,7 +394,7 @@
     const detail = (ev) => {
       const card = el.querySelector(`[data-event="${ev.id}"]`)?.closest("article");
       const act = card?.querySelector(".event-foot .go");
-      modal(`${picOf(ev) ? `<img class="event-pic modal-pic" src="${esc(ev.image || (ev.kind === "football" ? FOOTIE : picOf(ev)))}" alt="">` : ""}<h2>${esc(ev.title)}</h2><p class="muted">${ev.day ? fmtEvent(ev) : "Date to be confirmed"}<br>${esc(ev.location || "")}</p><p style="line-height:1.5;white-space:pre-wrap">${esc(ev.details || "")}</p>
+      modal(`${picOf(ev) ? `<img class="event-pic modal-pic" src="${esc(ev.image || (ev.kind === "football" ? FOOTIE : picOf(ev)))}" alt="">` : ""}<h2>${esc(ev.title)}</h2><p class="muted">${ev.day ? fmtEvent(ev) : "Date to be confirmed"}<br>${esc(ev.location || "")}</p><p style="line-height:1.5;white-space:pre-wrap">${escLinks(ev.details || "")}</p>
         <div class="form-actions">${act ? `<button class="btn solid block" id="dGo">${act.textContent}</button>` : ""}${isOrg() ? '<button class="btn block" id="dQr">QR code poster</button>' : ""}${isAdmin() && ev.kind === "event" ? '<button class="btn block" id="dEdit">Edit this event</button>' : ""}</div>`, (m) => {
         if (act) $("#dGo", m).onclick = () => { closeModal(); if (act.href) window.open(act.href, "_blank", "noopener"); else act.click(); };
         if (isOrg()) $("#dQr", m).onclick = () => posterModal(ev);
@@ -1895,7 +1901,7 @@
           <div class="who"><b>${esc(p.author_name)}</b>${p.pinned ? ' <span class="tag gold">Pinned</span>' : ""}<div class="muted">${ago(p.created_at)}</div></div></div>
         ${postBody(p)}
         ${Array.isArray(p.poll) ? p.poll.map((o) => `<div class="poll-opt"><span>${esc(o)}</span></div>`).join("") : ""}
-        ${cs.length ? `<div class="comments">${cs.map((c) => `<div class="comment"><b>${esc(c.author_name)}</b> ${esc(c.body)}</div>`).join("")}</div>` : ""}
+        ${cs.length ? `<div class="comments">${cs.map((c) => `<div class="comment"><b>${esc(c.author_name)}</b> ${escLinks(c.body)}</div>`).join("")}</div>` : ""}
         <div class="row" style="gap:8px;margin-top:8px"><input data-gc="${p.id}" placeholder="Write a comment…" style="flex:1;margin:0"><button class="btn small" data-gsend="${p.id}">Send</button></div>
       </article>`;
     };
@@ -2077,7 +2083,7 @@
         <button class="pill" data-react="${p.id}">☺+</button>
       </div>
       <div class="post-foot"><button data-comment="${p.id}">Comment${comments.length ? ` (${comments.length})` : ""}</button><button data-share="${p.id}">Share</button></div>
-      ${comments.length ? `<div class="comments">${comments.map((c) => `<div class="comment"><b>${esc(c.author_name)}</b>${badge(c.user_id)} ${esc(c.body)}${isOrg() || (c.user_id && c.user_id === me.id) ? `<button class="c-del" data-delc="${c.id}" aria-label="Delete comment" title="Delete comment">×</button>` : ""}</div>`).join("")}</div>` : ""}
+      ${comments.length ? `<div class="comments">${comments.map((c) => `<div class="comment"><b>${esc(c.author_name)}</b>${badge(c.user_id)} ${escLinks(c.body)}${isOrg() || (c.user_id && c.user_id === me.id) ? `<button class="c-del" data-delc="${c.id}" aria-label="Delete comment" title="Delete comment">×</button>` : ""}</div>`).join("")}</div>` : ""}
     </article>`;
   }
 
