@@ -44,6 +44,14 @@
   });
   const bold = (s) => linkify(esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>"));
   const escLinks = (s) => linkify(esc(s));
+  // YouTube links also show the video's opening picture underneath, like WhatsApp. The picture comes
+  // straight from YouTube using the video's id, so no account or key is needed. Tapping it opens the video.
+  const ytIds = (s) => {
+    const ids = [], re = /(?:youtube\.com\/(?:watch\?(?:[^\s#]*&)?v=|shorts\/|live\/|embed\/)|youtu\.be\/)([\w-]{11})/gi;
+    for (const m of String(s ?? "").matchAll(re)) if (!ids.includes(m[1])) ids.push(m[1]);
+    return ids;
+  };
+  const ytCards = (s) => ytIds(s).map((id) => `<a class="yt-card" href="https://www.youtube.com/watch?v=${id}" target="_blank" rel="noopener noreferrer" aria-label="Watch on YouTube"><img src="https://i.ytimg.com/vi/${id}/hqdefault.jpg" alt="" loading="lazy"><span class="yt-play" aria-hidden="true"></span><span class="yt-label">▶ Watch on YouTube</span></a>`).join("");
   // WhatsApp writes bold as *text*; the app uses **text**.
   const fromWhatsApp = (s) => s.replace(/(^|[^*])\*([^*\n]+?)\*(?!\*)/gm, "$1**$2**");
   const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -394,7 +402,7 @@
     const detail = (ev) => {
       const card = el.querySelector(`[data-event="${ev.id}"]`)?.closest("article");
       const act = card?.querySelector(".event-foot .go");
-      modal(`${picOf(ev) ? `<img class="event-pic modal-pic" src="${esc(ev.image || (ev.kind === "football" ? FOOTIE : picOf(ev)))}" alt="">` : ""}<h2>${esc(ev.title)}</h2><p class="muted">${ev.day ? fmtEvent(ev) : "Date to be confirmed"}<br>${esc(ev.location || "")}</p><p style="line-height:1.5;white-space:pre-wrap">${escLinks(ev.details || "")}</p>
+      modal(`${picOf(ev) ? `<img class="event-pic modal-pic" src="${esc(ev.image || (ev.kind === "football" ? FOOTIE : picOf(ev)))}" alt="">` : ""}<h2>${esc(ev.title)}</h2><p class="muted">${ev.day ? fmtEvent(ev) : "Date to be confirmed"}<br>${esc(ev.location || "")}</p><p style="line-height:1.5;white-space:pre-wrap">${escLinks(ev.details || "")}</p>${ytCards(ev.details)}
         <div class="form-actions">${act ? `<button class="btn solid block" id="dGo">${act.textContent}</button>` : ""}${isOrg() ? '<button class="btn block" id="dQr">QR code poster</button>' : ""}${isAdmin() && ev.kind === "event" ? '<button class="btn block" id="dEdit">Edit this event</button>' : ""}</div>`, (m) => {
         if (act) $("#dGo", m).onclick = () => { closeModal(); if (act.href) window.open(act.href, "_blank", "noopener"); else act.click(); };
         if (isOrg()) $("#dQr", m).onclick = () => posterModal(ev);
@@ -1907,7 +1915,7 @@
           <div class="who"><b>${esc(p.author_name)}</b>${p.pinned ? ' <span class="tag gold">Pinned</span>' : ""}<div class="muted">${ago(p.created_at)}</div></div></div>
         ${postBody(p)}
         ${Array.isArray(p.poll) ? p.poll.map((o) => `<div class="poll-opt"><span>${esc(o)}</span></div>`).join("") : ""}
-        ${cs.length ? `<div class="comments">${cs.map((c) => `<div class="comment"><b>${esc(c.author_name)}</b> ${escLinks(c.body)}</div>`).join("")}</div>` : ""}
+        ${cs.length ? `<div class="comments">${cs.map((c) => `<div class="comment"><b>${esc(c.author_name)}</b> ${escLinks(c.body)}${ytCards(c.body)}</div>`).join("")}</div>` : ""}
         <div class="row" style="gap:8px;margin-top:8px"><input data-gc="${p.id}" placeholder="Write a comment…" style="flex:1;margin:0"><button class="btn small" data-gsend="${p.id}">Send</button></div>
       </article>`;
     };
@@ -2060,7 +2068,7 @@
     const imgs = Array.isArray(p.images) ? p.images : [], used = new Set();
     const pic = (src) => `<img src="${esc(src)}" alt="" data-zoom>`;
     const text = bold(p.body).replace(/\{photo (\d+)\}/g, (m, n) => { const src = imgs[n - 1]; if (!src) return ""; used.add(n - 1); return `</div>${pic(src)}<div class="text">`; });
-    return `<div class="text">${text}</div>${p.image ? pic(p.image) : ""}${imgs.filter((_, i) => !used.has(i)).map(pic).join("")}`;
+    return `<div class="text">${text}</div>${ytCards(p.body)}${p.image ? pic(p.image) : ""}${imgs.filter((_, i) => !used.has(i)).map(pic).join("")}`;
   }
   function postHtml(p, comments, votes) {
     const shared = Array.isArray(reactCache), mineR = shared ? reactCache.filter((r) => r.post_id === p.id) : [];
@@ -2089,7 +2097,7 @@
         <button class="pill" data-react="${p.id}">☺+</button>
       </div>
       <div class="post-foot"><button data-comment="${p.id}">Comment${comments.length ? ` (${comments.length})` : ""}</button><button data-share="${p.id}">Share</button></div>
-      ${comments.length ? `<div class="comments">${comments.map((c) => `<div class="comment"><b>${esc(c.author_name)}</b>${badge(c.user_id)} ${escLinks(c.body)}${isOrg() || (c.user_id && c.user_id === me.id) ? `<button class="c-del" data-delc="${c.id}" aria-label="Delete comment" title="Delete comment">×</button>` : ""}</div>`).join("")}</div>` : ""}
+      ${comments.length ? `<div class="comments">${comments.map((c) => `<div class="comment"><b>${esc(c.author_name)}</b>${badge(c.user_id)} ${escLinks(c.body)}${ytCards(c.body)}${isOrg() || (c.user_id && c.user_id === me.id) ? `<button class="c-del" data-delc="${c.id}" aria-label="Delete comment" title="Delete comment">×</button>` : ""}</div>`).join("")}</div>` : ""}
     </article>`;
   }
 
