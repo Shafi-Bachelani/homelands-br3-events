@@ -617,7 +617,7 @@
     const [fs, rows, accts, subs] = await Promise.all([q(sb.from("fund_state").select("*").single()), isAdmin() ? q(lq) : [], isOrg() ? q(sb.from("profiles").select("credit")) : [],
       isAdmin() ? q(sb.from("square_payments").select("paid_at,status,gross,fee,refunded,label").eq("kind", "subscription").order("paid_at", { ascending: false }).limit(300)).catch(() => []) : []]);
     // The latest Square balance PDF (just its date here; the file loads after the page shows).
-    const stmt = (await sb.from("square_statement").select("file_name,uploaded_at").maybeSingle()).data;
+    const stmts = (await sb.from("square_statement").select("id,file_name,uploaded_at")).data || [];
     const onAccounts = Math.round(accts.reduce((t, r) => t + Number(r.credit || 0), 0) * 100) / 100;
     if (!alive()) return;
     el.innerHTML = `<div class="events"><div class="card fb"><h2>Funds & accounts</h2>
@@ -626,9 +626,11 @@
       <p class="muted">All funds together: <b>${money(Number(fs.kitty) + Number(fs.events) + Number(fs.credits || 0) + Number(fs.family || 0) + Number(fs.unclaimed || 0))}</b></p>
       ${isOrg() ? (onAccounts === Math.round(Number(fs.credits || 0) * 100) / 100 ? `<p class="note">Credits tally ✓ The credits fund matches the ${money(onAccounts)} of credit on members' accounts.</p>`
         : `<p class="note">Credits don't tally: members' accounts hold ${money(onAccounts)} but the credits fund shows ${money(fs.credits || 0)}.</p>`) : ""}
-      <div class="note"><b>Square balance</b><br>${stmt ? `Open the Square photo to see that it matches the All funds together figure. <span class="muted">Uploaded ${short(new Date(stmt.uploaded_at))}.</span>
-        <div id="sqShow" style="margin-top:8px"><span class="muted">Loading…</span></div>` : "No Square photo uploaded yet."}
-        ${isAdmin() ? `<label>${stmt ? "Replace it with this week's" : "Upload this week's"} Square balance photo (a screenshot or PDF)</label><input id="sqFile" type="file" accept="image/*,application/pdf,.pdf">` : ""}</div>
+      ${[[1, "Square"], [2, "Starling BR3 Funds Space"]].map(([id, name]) => { const st = stmts.find((x) => x.id === id);
+        return `<div class="note"><b>${name} balance</b><br>${st ? `Open the ${name} photo to check it against the funds. <span class="muted">Uploaded ${short(new Date(st.uploaded_at))}.</span>
+        <div data-stshow="${id}" style="margin-top:8px"><span class="muted">Loading…</span></div>` : `No ${name} photo uploaded yet.`}
+        ${isAdmin() ? `<label>${st ? "Replace it with this week's" : "Upload this week's"} ${name} balance photo (a screenshot or PDF)</label><input data-stfile="${id}" type="file" accept="image/*,application/pdf,.pdf">` : ""}</div>`; }).join("")}
+      <p class="muted">Square and Starling together should hold all the funds, less any cash not yet banked. The Accounts Reconciliation chat checks this every Saturday.</p>
       ${FUND_INFO.replace("<details ", "<details open ")}
       <p class="note">Posted accounts, and every move between funds, are on the <a href="#accounts">Accounts tab</a>, one chat for each fund. The Accounts Reconciliation chat checks all the funds together against Square every week.</p>
       <div class="form-actions"><button class="btn solid block" data-go="accounts">Open the Accounts tab</button>${isAdmin() ? '<button class="btn block" data-go="eventaccounts">Events accounts</button>' : ""}${isAdmin() ? '<button class="btn block" data-go="squarecheck">Square check</button>' : ""}</div>
@@ -658,24 +660,20 @@
       ${rows.length ? ledgerTable(rows) : '<p class="muted">No changes yet.</p>'}</details>` : ""}
     </div></div>`;
     el.querySelectorAll("[data-f]").forEach((b) => (b.onclick = () => go(b.dataset.f ? "funds:" + b.dataset.f : "funds")));
-    if (stmt) q(sb.from("square_statement").select("file").single()).then(async (row) => {
-      const box = $("#sqShow", el); if (!box || !alive()) return;
-      if (/^data:image\//.test(row.file)) box.innerHTML = `<img src="${esc(row.file)}" alt="Square balance" data-zoom style="max-width:100%;max-height:260px;border-radius:8px;cursor:zoom-in"><div class="muted" style="font-size:13px">Tap the photo to see it full size.</div>`;
-      else { box.innerHTML = '<a class="btn block" target="_blank" rel="noopener">Open the Square PDF</a>'; box.firstChild.href = URL.createObjectURL(await (await fetch(row.file)).blob()); }
-    }).catch(() => { const box = $("#sqShow", el); if (box) box.textContent = "Couldn't load it, try again later"; });
-    if ($("#sqFile", el)) $("#sqFile", el).onchange = () => {
-      const f = $("#sqFile", el).files[0]; if (!f) return;
+    el.querySelectorAll("[data-stshow]").forEach((box) => showStatement(box, Number(box.dataset.stshow), alive, false));
+    el.querySelectorAll("[data-stfile]").forEach((inp) => (inp.onchange = () => {
+      const f = inp.files[0]; if (!f) return;
       const isPdf = /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name);
       if (!isPdf && !/^image\//.test(f.type)) return toast("Choose a photo, screenshot or PDF");
       if (isPdf && f.size > 5e6) return toast("That PDF is over 5 MB. Try a smaller one");
       const rd = new FileReader();
       rd.onload = async () => {
         const file = isPdf ? String(rd.result).replace(/^data:[^;,]*(;base64)?,/, "data:application/pdf;base64,") : await shrink(rd.result, 2000);
-        try { await q(sb.from("square_statement").upsert({ id: 1, file, file_name: f.name, uploaded_at: new Date().toISOString(), uploaded_by: me.id }));
-          toast("Square balance uploaded"); refresh(); } catch (e) { fail(e); }
+        try { await q(sb.from("square_statement").upsert({ id: Number(inp.dataset.stfile), file, file_name: f.name, uploaded_at: new Date().toISOString(), uploaded_by: me.id }));
+          toast("Balance photo uploaded"); refresh(); } catch (e) { fail(e); }
       };
       rd.readAsDataURL(f);
-    };
+    }));
     el.querySelectorAll("[data-upaid]").forEach((b) => (b.onclick = async () => {
       const u = unclaimed.find((x) => String(x.id) === b.dataset.upaid);
       const note = prompt(`Paid ${money(u.amount)} back to ${u.name}? Add a note, e.g. "bank transfer 3 Nov".`, "bank transfer");
@@ -804,7 +802,7 @@
         <div class="form-actions"><button class="btn block" id="stPull">Pull from Starling now</button></div>
         ${stx.length ? `<details class="info"><summary>Starling transactions, these dates (${stx.length})</summary><div class="scroll"><table class="wrap"><tbody>${stx.map((t) => `<tr><td>${esc(t.counterparty || t.source || "Starling")}${t.reference ? ` · ${esc(t.reference)}` : ""}<div class="muted" style="font-size:13px">${short(new Date(t.at))}${t.status && t.status !== "SETTLED" ? ` · ${esc(t.status.toLowerCase())}` : ""}</div></td><td class="amt ${Number(t.amount) < 0 ? "neg" : ""}">${Number(t.amount) < 0 ? `(${money(-t.amount)})` : money(t.amount)}</td></tr>`).join("")}</tbody></table></div></details>` : ""}` : ""}
       ${isAdmin() ? `<h3>Weekly reconciliation</h3>
-        <p class="muted">On Saturday, after the week's accounts are posted, enter the Square balance above and draft this. It's posted, pinned, to the Accounts Reconciliation chat for every member to see, with the Square balance photo from the Funds page.</p>
+        <p class="muted">On Saturday, after the week's accounts are posted, enter the Square balance above and draft this. It's posted, pinned, to the Accounts Reconciliation chat for every member to see, with the Square and Starling balance photos from the Funds page.</p>
         <div class="form-actions"><button class="btn solid block" id="rcDraft">Draft the reconciliation</button></div>
         <div id="rcBox" hidden><label>Reconciliation (edit freely)</label><textarea id="rcText" rows="20" class="mono"></textarea>
           <div id="rcDiff" hidden><label>Why there is a difference</label><textarea id="rcWhy" rows="3"></textarea>
@@ -1967,14 +1965,22 @@
   function grouplist(el, alive) { return groups(el, alive, "", null, true); }
   function accounts(el, alive) { return groups(el, alive, "", null, false, true); }
   const chatTabs = (on) => [["groups", "Chats"], ["accounts", "Accounts"], ["grouplist", "Joined events"]].filter(([k]) => k !== on).map(([k, t]) => `<a href="#${k}">${t}</a>`).join("");
-  // The latest Square balance photo (or PDF), shown on the Funds page and in the Accounts Reconciliation chat.
+  // The latest balance photos (or PDFs): 1 = Square, 2 = Starling BR3 Funds Space. Shown on the Funds page
+  // and in the Accounts Reconciliation chat.
+  const STMT_NAME = { 1: "Square", 2: "Starling" };
+  async function showStatement(box, id, alive, withDate = true) {
+    try {
+      const row = (await sb.from("square_statement").select("file,uploaded_at").eq("id", id).maybeSingle()).data;
+      if (!box || !alive()) return;
+      if (!row) { box.innerHTML = `<p class="muted">No ${STMT_NAME[id]} balance photo uploaded yet.</p>`; return; }
+      const when = withDate ? `<span class="muted">${STMT_NAME[id]}, uploaded ${short(new Date(row.uploaded_at))}.</span>` : "";
+      if (/^data:image\//.test(row.file)) box.innerHTML = `${when}<img src="${esc(row.file)}" alt="${STMT_NAME[id]} balance" data-zoom style="display:block;max-width:100%;max-height:260px;border-radius:8px;margin-top:8px;cursor:zoom-in"><div class="muted" style="font-size:13px">Tap the photo to see it full size.</div>`;
+      else { box.innerHTML = `${when}<a class="btn block" target="_blank" rel="noopener" style="margin-top:8px">Open the ${STMT_NAME[id]} PDF</a>`; box.querySelector("a").href = URL.createObjectURL(await (await fetch(row.file)).blob()); }
+    } catch { if (box) box.textContent = "Couldn't load it, try again later"; }
+  }
   async function squarePhoto(box, alive) {
-    const row = (await sb.from("square_statement").select("file,uploaded_at").maybeSingle()).data;
-    if (!box || !alive()) return;
-    if (!row) { box.innerHTML = '<p class="muted">No Square balance photo uploaded yet.</p>'; return; }
-    const when = `<span class="muted">Uploaded ${short(new Date(row.uploaded_at))}.</span>`;
-    if (/^data:image\//.test(row.file)) box.innerHTML = `${when}<img src="${esc(row.file)}" alt="Square balance" data-zoom style="display:block;max-width:100%;max-height:260px;border-radius:8px;margin-top:8px;cursor:zoom-in"><div class="muted" style="font-size:13px">Tap the photo to see it full size.</div>`;
-    else { box.innerHTML = `${when}<a class="btn block" target="_blank" rel="noopener" style="margin-top:8px">Open the Square PDF</a>`; box.querySelector("a").href = URL.createObjectURL(await (await fetch(row.file)).blob()); }
+    box.innerHTML = '<div data-sq="1"></div><div data-sq="2" style="margin-top:10px"></div>';
+    await Promise.all([1, 2].map((id) => showStatement(box.querySelector(`[data-sq="${id}"]`), id, alive)));
   }
   async function groups(el, alive, filter = "", only = null, joinedTab = false, accountsTab = false) {
     if (!me) return needSignIn(el, "see the groups");
@@ -2005,7 +2011,7 @@
       el.innerHTML = `<div class="subhead"><h2>${esc(g.name)}</h2>${ACCOUNTS.includes(g.id) ? '<a href="#accounts">Accounts</a>' : g.members_only ? '<a href="#grouplist">Joined events</a>' : '<a href="#groups">Chats</a>'}</div>
         ${groupHero(g.id)}
         ${g.about ? `<p class="muted pad" style="padding-top:10px">${esc(g.about)}</p>` : ""}
-        ${g.id === "accounts-reconciliation" && canRead ? `<div class="pad"><div class="note"><b>Square balance</b><div id="sqShow"><span class="muted">Loading…</span></div></div></div>` : ""}
+        ${g.id === "accounts-reconciliation" && canRead ? `<div class="pad"><div class="note"><b>Square and Starling balances</b><div id="sqShow"><span class="muted">Loading…</span></div></div></div>` : ""}
         ${!canRead ? `<div class="pad">${pending() ? PENDING_NOTE : `<button class="btn solid" data-join="${esc(g.id)}">Sign up · Free</button>`}</div>` : `
         ${pending() && g.id !== ANNOUNCE ? `<div class="pad">${PENDING_NOTE}</div>` : ""}
         ${canPost ? `<div class="composer">
