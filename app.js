@@ -1778,43 +1778,11 @@
       const owingAmt = r2(sumCash(owing));
       const expFootball = r2(expGross + clearedAmt - owingAmt);
       const crHeld = r2(toCredits - rCr); // put into credit less credit used, from this game
-      const football = r2(received - crHeld);
-      const result = r2(football - clearedAmt - hire - fees);
-      const t = [`Turnout ${turnout} - ${ordDay(d.getDate())} ${MONTHS_LONG[d.getMonth()]} - ${ORD[g - 1] || g + "th"} kitty game of up to 5 consecutive games`];
-      if ($("#fmt", box).value.trim()) t.push("", $("#fmt", box).value.trim());
-      t.push("", "Kitty restarts when either fund drops below £150 or we have had a maximum of 5 consecutive games", L,
-        "Prior funds", `Kitty fund ${money(fs.kitty)}`, `Events fund ${money(fs.events)}`, `Credits held ${money(oldCr)}`);
-      if (moved.length) t.push(...moved.map((x) => `(includes ${transferLine(x)})`));
-      t.push(L, `These ${kittyHere.length}${kittyMembers != null ? ` out of ${kittyMembers}` : ""} kitty contributors came`, ...kittyHere.map((b) => b.display_name));
-      if (kp.length) t.push("", `${kp.length} joined the kitty this game: ${kp.length} × £15 = ${money(kp.length * 15)}`,
-        ...kp.map((b) => b.display_name + (Number(b.topup) > 0 ? ` (topped up ${money(b.topup)} from pay and play)` : "")));
-      t.push(L, "Pay and Play", `Expected pay as you go is ${payers}${sameFriends ? ` × ${money(TP)}` : ""} = ${money(paygFull)}${sameFriends ? "" : ` (includes ${friendsHere.length} friend${friendsHere.length === 1 ? "" : "s"} ${money(fAmt)})`}`);
-      if (kp.length) t.push(`Plus kitty joiners ${money(kp.length * 15)}`);
-      if (cleared.length) t.push(`Plus owed money cleared ${money(clearedAmt)}: ${names(cleared, (x) => x.profiles?.name || "Member")}`);
-      if (owing.length) t.push(`Less not paid yet ${money(owingAmt)}: ${names(owing)}`);
-      if (introHere.length) t.push(`${introHere.length === 1 ? "One person" : `${introHere.length} people`} joined and took the ${money(introAmt / introHere.length)} new member deal (${names(introHere)})`,
-        `So revised total expected for football ${money(expFootball)}`);
-      else t.push(`Total expected for football ${money(expFootball)}`);
-      t.push(L, "Paid as", `Card ${money(rSq)}`, `Cash ${money(rCa)}`);
-      if (rTr) t.push(`Transfers ${money(rTr)}`);
-      t.push(`Total received ${money(received)}`);
-      if (crHeld) t.push(crHeld > 0 ? `${money(crHeld)} held in credit (${money(toCredits)} deposited, ${money(rCr)} used)` : `${money(-crHeld)} paid from credit (${money(rCr)} used, ${money(toCredits)} deposited)`);
-      if (toCredits) t.push(`  deposited: ${[...noShowCash.map((b) => `${b.display_name} ${money(cashPart(b))} didn't come`), ...cancelled.filter((b) => cashPart(b) > 0).map((b) => `${b.display_name} ${money(cashPart(b))} cancelled`)].join(", ")}`);
-      if (rCr) t.push(`  used: ${names(viaCredit, (b) => `${b.display_name} ${money(creditPart(b))}`)}`);
-      t.push(`${money(football)} for football`, diff === 0 ? "Balanced ✓" : `Not balanced: ${money(Math.abs(diff))} ${diff > 0 ? "more" : "less"} than expected`,
-        L, "Less cost", `${money(hire)} Goals pitch hire`, `${money(fees)} card payment charge`, "—————————");
-      if (clearedAmt) t.push(`${money(clearedAmt)} owed money cleared goes to the events fund`);
-      t.push(result < 0 ? `Costs over receipts (${money(-result)})` : `Receipts over costs ${money(result)}`);
-      if (introCover) t.push("", `${money(introCover)} moved from events fund into kitty fund, to cover the ${money(introAmt / introHere.length)} new member deal`);
-      t.push("—————————", "Updated funds", `Kitty fund ${money(newKitty)}`, `Events fund ${money(newEv)}`, `Credits held ${money(newCr)}`);
-      if (newCr !== onAccounts) t.push(`Check before posting: members' accounts hold ${money(onAccounts)} in credit, ${money(Math.abs(newCr - onAccounts))} ${onAccounts > newCr ? "more" : "less"} than this.`);
-      const owes = [...debts.filter((x) => !cleared.includes(x)).map((x) => `${x.profiles?.name || "Member"} ${money(x.amount)} ${esc(x.reason)}`),
-        ...owing.filter((b) => cashPart(b) > 0).map((b) => `${b.display_name} ${money(cashPart(b))} ${short(d)}`)];
-      t.push(L, "These OWE", ...(owes.length ? owes : ["All clear"]));
-      if (newKitty < 150 || g >= 5) t.push(L, `Kitty restarts: ${newKitty < 150 ? "fund is below £150" : "5 games played"}. Anything over £100 moves to the events fund and the next game starts a new kitty.`);
       // BR3 Family Events: the week's subscriptions (Saturday to the game's Friday), with the fund before and after.
+      // Loaded first, so the family fund can sit in the prior and updated funds too.
+      let fam = null;
+      const wkStart = new Date(d); wkStart.setDate(wkStart.getDate() - 6);
       try {
-        const wkStart = new Date(d); wkStart.setDate(wkStart.getDate() - 6);
         const wkEnd = new Date(d); wkEnd.setDate(wkEnd.getDate() + 1);
         const [subs, famRows, fsNow] = await Promise.all([
           q(sb.from("square_payments").select("gross,fee,refunded,label,status").eq("kind", "subscription").eq("status", "COMPLETED").gte("paid_at", wkStart.toISOString()).lt("paid_at", wkEnd.toISOString())),
@@ -1828,16 +1796,62 @@
         subs.forEach((p) => { const k = plan(p.label), x = byPlan.get(k) || { n: 0, gross: 0, fee: 0, net: 0 };
           x.n++; x.gross += Number(p.gross); x.fee += Number(p.fee); x.net += Number(p.gross) - Number(p.fee) - Number(p.refunded || 0); byPlan.set(k, x); });
         const tot = [...byPlan.values()].reduce((s2, x) => ({ n: s2.n + x.n, gross: s2.gross + x.gross, fee: s2.fee + x.fee, net: s2.net + x.net }), { n: 0, gross: 0, fee: 0, net: 0 });
-        const other = r2(famNow - famPrior - tot.net);
+        fam = { famNow, famPrior, byPlan, tot, other: r2(famNow - famPrior - tot.net) };
+      } catch { fam = null; }
+      // Where the money sits: Square + Starling, last week (from the last reconciliation) and now.
+      const prevRec = await q(sb.from("reconciliations").select("square_actual,starling").order("id", { ascending: false }).limit(1)).then((r) => r[0] || null).catch(() => null);
+      const famP = fam ? fam.famPrior : null, famA = fam ? fam.famNow : null;
+      const allPrior = r2(Number(fs.kitty) + Number(fs.events) + oldCr + (famP || 0));
+      const allAfter = r2(newKitty + newEv + newCr + (famA || 0));
+      const where = (sq, st) => (sq == null ? "" : st == null ? `(Square ${money(sq)})` : `(Square + Starling = ${money(sq)} + ${money(st)})`);
+      const t = [`Turnout ${turnout} - ${ordDay(d.getDate())} ${MONTHS_LONG[d.getMonth()]} - ${g >= 5 ? `${ORD[g - 1] || g + "th"} and last game of this kitty session` : `${ORD[g - 1] || g + "th"} kitty game of up to 5 consecutive games`}`];
+      if ($("#fmt", box).value.trim()) t.push("", $("#fmt", box).value.trim());
+      t.push("", "Kitty restarts when either fund drops below £150 or we have had a maximum of 5 consecutive games", L,
+        "Prior funds", `Kitty fund ${money(fs.kitty)}`, `Events fund ${money(fs.events)}`, `Credits held ${money(oldCr)}`);
+      if (famP != null) t.push(`Family Events ${money(famP)}`);
+      t.push("", `TOTAL ALL FUNDS ${money(allPrior)}`);
+      if (prevRec) t.push(where(prevRec.square_actual, prevRec.starling));
+      if (moved.length) t.push(...moved.map((x) => `(includes ${transferLine(x)})`));
+      t.push(L, `These ${kittyHere.length}${kittyMembers != null ? ` out of ${kittyMembers}` : ""} kitty contributors came`, ...kittyHere.map((b) => b.display_name));
+      if (kp.length) t.push("", `${kp.length} joined the kitty this game: ${kp.length} × £15 = ${money(kp.length * 15)}`,
+        ...kp.map((b) => b.display_name + (Number(b.topup) > 0 ? ` (topped up ${money(b.topup)} from pay and play)` : "")));
+      // Expected stays at the full price for everyone who played; the events fund's share of the
+      // new member deal is shown as money received instead.
+      const expAll = r2(expFootball + introCover);
+      t.push(L, "Pay and Play", `Expected pay as you go is ${payers}${sameFriends ? ` × ${money(TP)}` : ""} = ${money(paygFull)}${sameFriends ? "" : ` (includes ${friendsHere.length} friend${friendsHere.length === 1 ? "" : "s"} ${money(fAmt)})`}`);
+      if (kp.length) t.push(`Plus kitty joiners ${money(kp.length * 15)}`);
+      if (cleared.length) t.push(`Plus owed money cleared ${money(clearedAmt)}: ${names(cleared, (x) => x.profiles?.name || "Member")}`);
+      if (owing.length) t.push(`Less not paid yet ${money(owingAmt)}: ${names(owing)}`);
+      t.push("", `Total expected ${money(expAll)}`);
+      const gotAll = r2(received - crHeld + introCover);
+      t.push(L, "Paid as", `Card ${money(rSq)}`, `Cash ${money(rCa)}`);
+      if (rTr) t.push(`Transfers ${money(rTr)}`);
+      if (crHeld) t.push(crHeld < 0 ? `Credits ${money(-crHeld)} (${money(rCr)} used - ${money(toCredits)} paid in)` : `Credits (${money(crHeld)}) (${money(toCredits)} paid in - ${money(rCr)} used)`);
+      if (introCover) t.push(`From events fund ${money(introCover)} (${introHere.length} took the ${money(introAmt / introHere.length)} new member deal: ${names(introHere)})`);
+      t.push("", `Total received ${money(gotAll)}`, diff === 0 ? "Balanced for football ✓" : `Not balanced: ${money(Math.abs(diff))} ${diff > 0 ? "more" : "less"} than expected`);
+      const res = r2(gotAll - clearedAmt - hire - fees);
+      t.push(L, "Costs", `Rental ${money(hire)}`, `Card ${money(fees)}`, "");
+      if (clearedAmt) t.push(`${money(clearedAmt)} owed money cleared goes to the events fund`);
+      t.push(res < 0 ? `Costs over receipts -(${money(-res)})` : `Receipts over costs ${money(res)}`);
+      t.push("—————————", "Updated funds", `Kitty fund ${money(newKitty)}`, `Events fund ${money(newEv)}`, `Credits held ${money(newCr)}`);
+      if (famA != null) t.push(`Family Events ${money(famA)}`);
+      t.push("", `TOTAL ALL FUNDS ${money(allAfter)}`);
+      if (fs.square_balance != null) t.push(where(Number(fs.square_balance), fs.starling_balance_at ? Number(fs.starling_balance) : null).replace("=", "are"));
+      if (newCr !== onAccounts) t.push(`Check before posting: members' accounts hold ${money(onAccounts)} in credit, ${money(Math.abs(newCr - onAccounts))} ${onAccounts > newCr ? "more" : "less"} than this.`);
+      const owes = [...debts.filter((x) => !cleared.includes(x)).map((x) => `${x.profiles?.name || "Member"} ${money(x.amount)} ${esc(x.reason)}`),
+        ...owing.filter((b) => cashPart(b) > 0).map((b) => `${b.display_name} ${money(cashPart(b))} ${short(d)}`)];
+      t.push(L, "These OWE", ...(owes.length ? owes : ["All clear"]));
+      if (newKitty < 150 || g >= 5) t.push(L, `Kitty restarts: ${newKitty < 150 ? "fund is below £150" : "5 games played"}. Anything over £100 moves to the events fund and the next game starts a new kitty.`);
+      if (fam) {
         const dd = (x) => `${DAYS[x.getDay()]} ${x.getDate()} ${MONTHS[x.getMonth()]}`;
-        t.push(L, "BR3 FAMILY EVENTS", `Prior fund ${money(famPrior)}`, "", `Weekly subscriptions for BR3 Family Events (${dd(wkStart)} - ${dd(d)})`,
+        t.push(L, "BR3 FAMILY EVENTS", `Prior fund ${money(fam.famPrior)}`, "", `Weekly subscriptions for BR3 Family Events (${dd(wkStart)} - ${dd(d)})`,
           "Type - no. - £/sub - received - less card costs - net received");
-        [...byPlan.entries()].forEach(([k, x]) =>
+        [...fam.byPlan.entries()].forEach(([k, x]) =>
           t.push(`${k} - ${x.n} - ${x.n ? money(x.gross / x.n) : "-"} - ${money(x.gross)} - (${money(x.fee)}) - ${money(x.net)}`));
-        t.push(`Total - ${tot.n} - - ${money(tot.gross)} - (${money(tot.fee)}) - ${money(tot.net)}`);
-        if (other) t.push(`Other money ${other > 0 ? "in" : "spent"} ${other > 0 ? money(other) : `(${money(-other)})`} (see the BR3 Family Events Accounts chat)`);
-        t.push("", `Updated fund ${money(famNow)}`);
-      } catch { t.push(L, "BR3 FAMILY EVENTS", "Couldn't load this week's subscriptions. Add them by hand."); }
+        t.push(`Total - ${fam.tot.n} - - ${money(fam.tot.gross)} - (${money(fam.tot.fee)}) - ${money(fam.tot.net)}`);
+        if (fam.other) t.push(`Other money ${fam.other > 0 ? "in" : "spent"} ${fam.other > 0 ? money(fam.other) : `(${money(-fam.other)})`} (see the BR3 Family Events Accounts chat)`);
+        t.push("", `Updated fund ${money(fam.famNow)}`);
+      } else t.push(L, "BR3 FAMILY EVENTS", "Couldn't load this week's subscriptions. Add them by hand.");
       t.push(L, "For all the funds together, checked against the Square account, see the Accounts Reconciliation chat.");
       $("#acc", box).value = t.join("\n"); $("#draftBox", box).hidden = false;
       $("#post", box).onclick = async () => {
