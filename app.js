@@ -1486,61 +1486,71 @@
     const who = (b) => `${esc(b.display_name)}<div class="muted" style="font-size:12px">${b.charge === "kitty" ? "Kitty £15" : `Pay & play ${money(b.amount)}`}${b.removed ? "" : b.checked_in ? "" : b.charge === "payg" && b.paid && b.method !== "owes" ? "" : " · not here"}</div>${b.removed || (!b.checked_in && b.charge === "payg" && b.paid && b.method !== "owes") ? `<span class="tag warn">No show${b.removed ? ", removed" : ""}</span>` : ""}
       ${b.removed ? "" : full && b.method !== "credit" ? `<select data-meth="${b.id}" ${target.accounts_posted ? "disabled" : ""} style="padding:4px;margin-top:4px;font-size:13px"><option value="">Not paid</option>${Object.entries(METHODS).map(([k, v]) => `<option value="${k}" ${b.method === k ? "selected" : ""}>${v}</option>`).join("")}</select>`
         : !b.paid && b.method !== "credit" ? '<span class="tag warn">Unpaid</span>' : ""}`;
+    // Expected and actual, line by line: what the players who came should have paid, then what came in.
+    const payg = here.filter((b) => b.charge === "payg");
+    const full6 = (b) => Number(b.amount) + Number(b.intro_cover || 0); // the price before any new member offer
+    const paygSum = r2(payg.reduce((t, b) => t + full6(b), 0));
+    const same = payg.length && payg.every((b) => full6(b) === full6(payg[0]));
+    const joiners = bookings.filter((b) => b.charge === "kitty");
+    const kittyBooked = bookings.filter((b) => b.charge === "covered").length;
+    const offer = r2(payg.reduce((t, b) => t + Number(b.intro_cover || 0), 0));
+    const exp = r2(joiners.length * 15 + paygSum);
+    const netCredit = r2(used - added);
+    const fromPlayers = r2(T.card + netCredit + T.cash + T.transfer);
+    const got = r2(fromPlayers + offer);
+    const sign = (v) => (v < 0 ? `(${money(-v)})` : money(v));
+    const line = (a, b, cls = "") => `<tr${cls ? ` class="${cls}"` : ""}><td>${a}</td><td class="amt">${b}</td></tr>`;
+    const hire = Number(pitchDefault) || 0;
+    const res = r2(got - hire - T.fee);
+    const kitBefore = r2(Number(fs.kitty || 0)), evBefore = r2(Number(fs.events || 0));
+    const crPrior = r2(Number(fs.credits_posted ?? fs.credits ?? 0)), crAfter = r2(crPrior - used + added), crNow = r2(Number(fs.credits ?? crAfter));
+    const summary = `<h4>Expected and actual for this game</h4>
+      <div class="scroll"><table class="wrap"><tbody>
+        ${line("Turnout", here.length)}
+        ${line("Kitty players who came", `${kittyHere} out of ${kittyMembers ?? kittyBooked}`)}
+        ${line(`Joined the kitty: ${joiners.length} × £15`, money(joiners.length * 15))}
+        ${line(`Paid and played: ${payg.length}${same ? ` × ${money(full6(payg[0]))}` : ""}`, money(paygSum))}
+        ${line("<b>Total expected</b>", `<b>${money(exp)}</b>`)}
+      </tbody></table></div>
+      <h4>Received</h4>
+      <div class="scroll"><table class="wrap"><tbody>
+        ${line("Card via Square", money(T.card))}
+        ${line(`Credits (used ${money(used)} − kept as credit ${money(added)})`, sign(netCredit))}
+        ${line('Cash<div class="muted" style="font-size:12px">to be paid into Square</div>', money(T.cash))}
+        ${line('Transfers<div class="muted" style="font-size:12px">from the organiser for family</div>', money(T.transfer))}
+        ${line("From the events fund (new member offer)", money(offer))}
+        ${line("<b>Total received</b>", `<b>${money(got)}</b>`)}
+      </tbody></table></div>
+      <p class="note">${got === exp ? "Balanced ✓" : `Not balanced: ${money(Math.abs(got - exp))} ${got > exp ? "more" : "less"} than expected.`}</p>`;
+    // Mohamed's write-down under the payments: received, less costs, the result, then each fund before and after.
+    const head = (x) => `<tr><td colspan="2" style="padding-top:14px"><b>${x}</b></td></tr>`;
+    const writeDown = `<div class="scroll"><table class="wrap"><tbody>
+        ${line(`Received as per above ${money(fromPlayers)}${offer ? ` + ${money(offer)} from the events fund` : ""}`, `<b>${money(got)}</b>`)}
+        ${line(`LESS costs: Rental <span id="pbRent">${money(hire)}</span>, Card charges ${money(T.fee)}`, `<span id="pbCosts">(${money(hire + T.fee)})</span>`)}
+        ${line('<b>Receipts over costs</b><div class="muted" style="font-size:12px">−ve means a loss</div>', `<b id="pbRes">${sign(res)}</b>`)}
+      </tbody>${target.accounts_posted ? "" : `<tbody>
+        ${head("UPDATED KITTY FUND")}
+        ${line("Before", money(kitBefore))}
+        ${line("After", `<b id="pbKit" data-before="${kitBefore}" data-got="${got}" data-fee="${T.fee}">${money(r2(kitBefore + res))}</b>`)}
+        ${head("UPDATED EVENTS FUND")}
+        ${line("Before", money(evBefore))}
+        ${line("After", `<b>${money(r2(evBefore - offer))}</b>`)}
+        ${head("UPDATED CREDITS HELD")}
+        ${line("Before", money(crPrior))}
+        ${line("After", `<b>${money(crAfter)}</b>`)}
+        ${head("UPDATED BR3 FAMILY EVENTS FUND")}
+      </tbody><tbody id="pbFam" data-day="${esc(target.day)}"><tr><td colspan="2" class="muted">Loading…</td></tr></tbody>`}</table></div>
+      ${target.accounts_posted ? '<p class="muted">These accounts are posted: the funds before and after are in the Friday Football Accounts chat.</p>'
+        : crNow !== crAfter ? `<p class="muted">Members' accounts hold ${money(crNow)} in credit now, ${money(Math.abs(crNow - crAfter))} ${crNow > crAfter ? "more" : "less"} than Credits held after. No-shows' credit is added when the accounts are posted; the accounts draft lists any other change.</p>` : ""}`;
     return `<h3>Payments · ${esc(target.title)} ${short(parseDay(target.day))}</h3>
+      ${summary}
       ${full ? '<p class="muted">Card payments fill in by themselves from Square, with the fee. Set how anyone else paid.</p>' : '<p class="muted">Card payments fill in by themselves from Square, with the fee.</p>'}
       <div class="scroll"><table class="wrap pay"><thead><tr><th>Player</th><th class="amt">Card £</th><th class="amt">Fee</th><th class="amt">Credit</th><th class="amt">Cash</th><th class="amt">Trans&shy;fer</th></tr></thead><tbody>
         ${rows.map((x) => `<tr><td>${who(x.b)}</td>${c(x.card)}${c(-x.fee)}${c(x.credit)}${c(x.cash)}${c(x.transfer)}</tr>`).join("") || '<tr><td colspan="6" class="muted">No one to pay yet.</td></tr>'}
         <tr><td><b>Total</b></td>${["card", "fee", "credit", "cash", "transfer"].map((k) => `<b>${c(k === "fee" ? -T[k] : T[k]).replace(/<\/?td[^>]*>/g, "")}</b>`).map((v) => `<td class="amt">${v}</td>`).join("")}</tr>
       </tbody></table></div>
       <p class="muted">Figures in brackets are taken off. Card fees are what Square kept. If someone paid but didn't come (No show), whether they removed themselves, were removed, or just weren't ticked as here, what they paid goes on their account as credit and shows in the Credit column in brackets. Credit used to pay for a game shows without brackets.</p>
-      ${(() => {
-        // Expected and actual, line by line: what the players who came should have paid, then what came in.
-        const payg = here.filter((b) => b.charge === "payg");
-        const full6 = (b) => Number(b.amount) + Number(b.intro_cover || 0); // the price before any new member offer
-        const paygSum = r2(payg.reduce((t, b) => t + full6(b), 0));
-        const same = payg.length && payg.every((b) => full6(b) === full6(payg[0]));
-        const joiners = bookings.filter((b) => b.charge === "kitty");
-        const kittyBooked = bookings.filter((b) => b.charge === "covered").length;
-        const offer = r2(payg.reduce((t, b) => t + Number(b.intro_cover || 0), 0));
-        const exp = r2(joiners.length * 15 + paygSum);
-        const netCredit = r2(used - added);
-        const got = r2(T.card + netCredit + T.cash + T.transfer + offer);
-        const sign = (v) => (v < 0 ? `(${money(-v)})` : money(v));
-        const line = (a, b, cls = "") => `<tr${cls ? ` class="${cls}"` : ""}><td>${a}</td><td class="amt">${b}</td></tr>`;
-        return `<h4>Expected and actual for this game</h4>
-        <div class="scroll"><table class="wrap"><tbody>
-          ${line("Turnout", here.length)}
-          ${line("Kitty players who came", `${kittyHere} out of ${kittyMembers ?? kittyBooked}`)}
-          ${line(`Joined the kitty: ${joiners.length} × £15`, money(joiners.length * 15))}
-          ${line(`Paid and played: ${payg.length}${same ? ` × ${money(full6(payg[0]))}` : ""}`, money(paygSum))}
-          ${line("<b>Total expected</b>", `<b>${money(exp)}</b>`)}
-        </tbody></table></div>
-        <h4>Received</h4>
-        <div class="scroll"><table class="wrap"><tbody>
-          ${line("Card via Square", money(T.card))}
-          ${line(`Credits (used ${money(used)} − kept as credit ${money(added)})`, sign(netCredit))}
-          ${line('Cash<div class="muted" style="font-size:12px">to be paid into Square</div>', money(T.cash))}
-          ${line('Transfers<div class="muted" style="font-size:12px">from the organiser for family</div>', money(T.transfer))}
-          ${line("From the events fund (new member offer)", money(offer))}
-          ${line("<b>Total received</b>", `<b>${money(got)}</b>`)}
-        </tbody></table></div>
-        <p class="note">${got === exp ? "Balanced ✓" : `Not balanced: ${money(Math.abs(got - exp))} ${got > exp ? "more" : "less"} than expected.`}</p>
-        ${offer ? `<div class="scroll"><table class="wrap"><tbody>
-          ${line("Events fund before", money(fs.events))}
-          ${line("New member offer", `(${money(offer)})`)}
-          ${line("<b>Events fund after</b>", `<b>${money(Number(fs.events) - offer)}</b>`)}
-        </tbody></table></div>` : ""}
-        ${target.accounts_posted ? "" : (() => {
-          // Credits held: at the last posted accounts, then this game's credit used and kept, then after.
-          const prior = Number(fs.credits_posted ?? fs.credits ?? 0), upd = r2(prior - used + added), now = r2(Number(fs.credits ?? upd));
-          return `<div class="scroll"><table class="wrap"><tbody>
-          ${line("Credits held before", money(prior))}
-          ${line("Movements out: credit used", `(${money(used)})`)}
-          ${line("Movements in: kept as credit", money(added))}
-          ${line("<b>Credits held after</b>", `<b>${money(upd)}</b>`)}
-        </tbody></table></div>${now !== upd ? `<p class="muted">Members' accounts hold ${money(now)} in credit now. The ${money(Math.abs(now - upd))} difference is either credit for no-shows, which is added when the accounts are posted, or credit changed outside this game. The Credits check in the accounts draft lists each one.</p>` : ""}`;
-        })()}`;
-      })()}`;
+      ${writeDown}`;
   }
   // Football Supervisors: only the night's jobs (scan in, head count, who's not in, add someone with a QR to pay).
   // Football Accounts: payments, accounts and settings, for the admin only.
@@ -1646,6 +1656,37 @@
       ${adminBits}
     </div>`;
 
+    // Write-down: the pitch hire typed in below updates the costs, the result and the kitty after.
+    const hireIn = $("#hire", box), kit = $("#pbKit", box);
+    if (hireIn && $("#pbRes", box)) hireIn.addEventListener("input", () => {
+      const r2 = (n) => Math.round(n * 100) / 100, h = Number(hireIn.value) || 0;
+      const got = Number(kit?.dataset.got ?? 0), fee = Number(kit?.dataset.fee ?? 0), res = r2(got - h - fee);
+      if (!kit) return;
+      $("#pbRent", box).textContent = money(h); $("#pbCosts", box).textContent = `(${money(h + fee)})`;
+      $("#pbRes", box).textContent = res < 0 ? `(${money(-res)})` : money(res);
+      kit.textContent = money(r2(Number(kit.dataset.before) + res));
+    });
+    // BR3 Family Events for the game's week (Saturday to Friday): before, subscriptions received, after.
+    const famBox = $("#pbFam", box);
+    if (famBox) (async () => {
+      try {
+        const d = parseDay(famBox.dataset.day), from = new Date(d), to = new Date(d);
+        from.setDate(from.getDate() - 6); to.setDate(to.getDate() + 1);
+        const [subs, famRows, fsNow] = await Promise.all([
+          q(sb.from("square_payments").select("gross,fee,refunded").eq("kind", "subscription").eq("status", "COMPLETED").gte("paid_at", from.toISOString()).lt("paid_at", to.toISOString())),
+          q(sb.from("ledger").select("amount").eq("fund", "family").gte("on_date", isoDay(from))),
+          q(sb.from("fund_state").select("family").single()),
+        ]);
+        const r2 = (n) => Math.round(n * 100) / 100;
+        const after = r2(Number(fsNow.family || 0)), before = r2(after - famRows.reduce((t, l) => t + Number(l.amount), 0));
+        const net = r2(subs.reduce((t, x) => t + Number(x.gross) - Number(x.fee) - Number(x.refunded || 0), 0)), other = r2(after - before - net);
+        const row = (a, b) => `<tr><td>${a}</td><td class="amt">${b}</td></tr>`;
+        famBox.innerHTML = `${row("Before", money(before))}
+          ${row("Subscriptions received", money(net))}
+          ${other ? row(`Other money ${other > 0 ? "in" : "spent"}`, other > 0 ? money(other) : `(${money(-other)})`) : ""}
+          ${row("After", `<b>${money(after)}</b>`)}`;
+      } catch { famBox.innerHTML = '<tr><td colspan="2" class="muted">Couldn\'t load this week\'s subscriptions.</td></tr>'; }
+    })();
     if ($("#fbScan", box)) {
       $("#fbScan", box).onclick = () => scanTicket(checkIn);
       whosIn($("#fbIn", box), current.id, (t) => { const c = box.querySelector(`[data-here="${t.id}"]`); if (c && t.status === "booked") refresh(); });
