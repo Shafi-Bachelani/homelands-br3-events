@@ -1493,13 +1493,6 @@
         <tr><td><b>Total</b></td>${["card", "fee", "credit", "cash", "transfer"].map((k) => `<b>${c(k === "fee" ? -T[k] : T[k]).replace(/<\/?td[^>]*>/g, "")}</b>`).map((v) => `<td class="amt">${v}</td>`).join("")}</tr>
       </tbody></table></div>
       <p class="muted">Figures in brackets are taken off. Card fees are what Square kept. If someone paid but didn't come (No show), whether they removed themselves, were removed, or just weren't ticked as here, what they paid goes on their account as credit and shows in the Credit column in brackets. Credit used to pay for a game shows without brackets.</p>
-      <div class="scroll"><table class="wrap"><tbody>
-        <tr><td>Card ${money(T.card)} + cash ${money(T.cash)} + transfer ${money(T.transfer)}</td><td class="amt"><b>${money(grand)}</b></td></tr>
-        <tr><td>Less card fees</td><td class="amt neg">−${money(T.fee)}</td></tr>
-        <tr><td>Less (credits added ${money(added)} − credits used ${money(used)})</td><td class="amt ${added - used > 0 ? "neg" : ""}">${added - used > 0 ? "−" : "+"}${money(Math.abs(added - used))}</td></tr>
-        <tr><td>Less Goals pitch hire <input id="pbHire" type="number" step="0.01" value="${pitchDefault}" data-before="${before}" style="width:90px;padding:6px;display:inline-block"></td><td class="amt neg" id="pbHireAmt">−${money(pitchDefault)}</td></tr>
-        <tr><td><b>Left for the kitty</b></td><td class="amt"><b id="pbNet">${money(before - Number(pitchDefault))}</b></td></tr>
-      </tbody></table></div>
       ${(() => {
         // Expected and actual, line by line: what the players who came should have paid, then what came in.
         const payg = here.filter((b) => b.charge === "payg");
@@ -1652,8 +1645,6 @@
         : !target.accounts_posted ? '<p class="muted">After the game, the accounts tools appear here.</p>' : ""}` : ""}
       ${adminBits}
     </div>`;
-    const ph = $("#pbHire", box);
-    if (ph) ph.oninput = () => { const v = Number(ph.value) || 0; $("#pbNet", box).textContent = money(Number(ph.dataset.before) - v); $("#pbHireAmt", box).textContent = "−" + money(v); if ($("#hire", box)) $("#hire", box).value = v.toFixed(2); };
 
     if ($("#fbScan", box)) {
       $("#fbScan", box).onclick = () => scanTicket(checkIn);
