@@ -33,7 +33,19 @@
     if (!session) { me = null; return; }
     const { data } = await sb.from("profiles").select("*").eq("id", session.user.id).maybeSingle();
     me = data ? { ...data, email: session.user.email } : null;
+    // Events this person supervises, while their access lasts (empty until add-event-supervisors.sql is run).
+    if (me) me.sup = await sb.from("event_supervisors").select("event_id,role,events(*)").eq("user_id", me.id)
+      .then((r) => (r.data || []).filter((x) => x.events?.day && supUntil(x.events) > new Date()), () => []);
   }
+  // ---------- event supervisors ----------
+  // Shafi's call for supervisors, shown on each event advert that has applications open.
+  const SUP_BLURB = "Want to make this happen, we are looking for 3 2-man teams, 6 members to take this forwards. Our events are open to the public, so long as they book through our portal. One team will man the door, A second team will be concerned with crowd management and ensuring the attendees needs are seen to. The third team will run the event. You should apply singly with your preferences within the app about what you help with. We will form the team and encourage for you to float between roles. You will need to attend pre and post event meetings, the post-event meetings for a debrief.";
+  const SUP_ROLES = { door: "On the door", crowd: "Crowd management and attendees' needs", run: "Running the event" };
+  // A supervisor's scanning access ends at 4am the morning after the event (the database checks this too).
+  const supUntil = (ev) => at(ev.day, "04:00", 1);
+  // Applications are open until the end of the deadline day, and never after the event.
+  const supOpen = (ev) => !!ev.supervisors_open && ev.kind === "event" && (!ev.supervisor_deadline || parseDay(ev.supervisor_deadline) >= today()) && (!ev.day || parseDay(ev.day) >= today());
+  const supDeadline = (ev) => (ev.supervisor_deadline ? (() => { const d = parseDay(ev.supervisor_deadline); return `${DAYS[d.getDay()]} ${d.getDate()} ${MONTHS_LONG[d.getMonth()]}`; })() : "");
 
   // ---------- helpers ----------
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -158,8 +170,8 @@
 
   // ---------- router ----------
   const TABS = ["events", "groups", "schedule", "leaderboard", "more"];
-  const ROUTES = { about, home: about, events, groups, grouplist, accounts, chat, schedule, more, services, counselling, messages, notifications, account, football, admin, funds, eventaccounts, squarecheck, supervisors, footballadmin, guest, welcome, leaderboard, join: joinGuide };
-  const PARENT = { grouplist: "groups", accounts: "groups", chat: "groups", services: "more", counselling: "more", football: "events", funds: "more", eventaccounts: "more", squarecheck: "more", supervisors: "more", footballadmin: "more", guest: null, account: null, welcome: "more", join: "more", about: "more", admin: "more", messages: null, notifications: null };
+  const ROUTES = { about, home: about, events, groups, grouplist, accounts, chat, schedule, more, services, counselling, messages, notifications, account, football, admin, funds, eventaccounts, squarecheck, supervisors, supervising, footballadmin, guest, welcome, leaderboard, join: joinGuide };
+  const PARENT = { grouplist: "groups", accounts: "groups", chat: "groups", services: "more", counselling: "more", football: "events", funds: "more", eventaccounts: "more", squarecheck: "more", supervisors: "more", supervising: "more", footballadmin: "more", guest: null, account: null, welcome: "more", join: "more", about: "more", admin: "more", messages: null, notifications: null };
   let lastTab = "events", seq = 0;
 
   function go(route) { if (location.hash.slice(1) === route) render(); else location.hash = route; }
@@ -378,7 +390,8 @@
       myGroups(),
       sb.from("fund_state").select("intro_offer").single().then((r) => !!r.data?.intro_offer, () => false),
       sb.from("groups").select("id,guests_allowed").then((r) => (r.data || []).filter((x) => x.guests_allowed).map((x) => x.id), () => []),
-    ]).then(([l, p, m, g, io, gg]) => { joined = g; introOn = io; guestGroups = gg; return [l, p, m]; });
+      me ? sb.from("supervisor_applications").select("*").eq("user_id", me.id).then((r) => r.data || [], () => []) : [],
+    ]).then(([l, p, m, g, io, gg, sa]) => { joined = g; introOn = io; guestGroups = gg; myApps = sa; return [l, p, m]; });
     if (!alive()) return;
     list.forEach(nextWeekly);
     const taken = Object.fromEntries(places.map((p) => [p.event_id, Number(p.taken)]));
@@ -403,10 +416,14 @@
       const card = el.querySelector(`[data-event="${ev.id}"]`)?.closest("article");
       const act = card?.querySelector(".event-foot .go");
       modal(`${picOf(ev) ? `<img class="event-pic modal-pic" src="${esc(ev.image || (ev.kind === "football" ? FOOTIE : picOf(ev)))}" alt="">` : ""}<h2>${esc(ev.title)}</h2><p class="muted">${ev.day ? fmtEvent(ev) : "Date to be confirmed"}<br>${esc(ev.location || "")}</p><p style="line-height:1.5;white-space:pre-wrap">${escLinks(ev.details || "")}</p>${ytCards(ev.details)}
+        ${supBox(ev)}
         <div class="form-actions">${act ? `<button class="btn solid block" id="dGo">${act.textContent}</button>` : ""}${isOrg() ? '<button class="btn block" id="dQr">QR code poster</button>' : ""}${isAdmin() && ev.kind === "event" ? '<button class="btn block" id="dEdit">Edit this event</button>' : ""}</div>`, (m) => {
         if (act) $("#dGo", m).onclick = () => { closeModal(); if (act.href) window.open(act.href, "_blank", "noopener"); else act.click(); };
         if (isOrg()) $("#dQr", m).onclick = () => posterModal(ev);
         if ($("#dEdit", m)) $("#dEdit", m).onclick = () => { closeModal(); go("admin:" + ev.id); };
+        if ($("#supApply", m)) $("#supApply", m).onclick = () => supApply(ev, () => detail(ev));
+        if ($("#supMine", m)) $("#supMine", m).onclick = () => { closeModal(); go("supervising"); };
+        m.querySelectorAll("[data-close]").forEach((a) => (a.onclick = closeModal));
       });
     };
     el.querySelectorAll("[data-event]").forEach((b) => (b.onclick = () => detail(list.find((x) => x.id === b.dataset.event))));
@@ -418,6 +435,46 @@
   let introOn = false;
   // Chats that non-members can read and join in as a guest (the Quran chat).
   let guestGroups = [];
+  // This person's supervisor applications, keyed by event.
+  let myApps = [];
+  // The supervisor call inside an event's advert: the blurb, the deadline and Apply (or what they've applied for).
+  function supBox(ev) {
+    const team = me?.sup?.find((x) => x.event_id === ev.id);
+    if (team) return `<div class="sup-box"><b>🙋 You're a supervisor for this event</b><p>Your team: <b>${SUP_ROLES[team.role]}</b>. Please come to the pre-event and post-event meetings.</p><button class="btn block sup-btn" id="supMine">Open supervisor tools</button></div>`;
+    if (!supOpen(ev)) return "";
+    const app = myApps.find((a) => a.event_id === ev.id);
+    return `<div class="sup-box"><b>🙋 Supervisor applications open</b>
+      <p>${esc(SUP_BLURB)}</p>
+      ${ev.supervisor_deadline ? `<p><b>Application deadline: ${supDeadline(ev)}</b></p>` : ""}
+      ${app ? `<p class="note">You've applied ✓ You'd like to help with: ${app.prefs.map((k) => SUP_ROLES[k]).join(", ")}.</p>` : ""}
+      ${!me ? '<button class="btn block" data-go="account" data-close>Sign in to apply</button>' : pending() ? '<p class="muted">You can apply once your membership is approved.</p>'
+        : `<button class="btn block sup-btn" id="supApply">${app ? "Change or withdraw my application" : "Apply to be a supervisor"}</button>`}</div>`;
+  }
+  function supApply(ev, back) {
+    const app = myApps.find((a) => a.event_id === ev.id);
+    const has = (k) => (app ? app.prefs.includes(k) : false);
+    modal(`<button class="close" aria-label="Close">×</button><h2>Supervise ${esc(ev.title)}</h2>
+      <p class="muted">${ev.day ? fmtEvent(ev) : "Date to be confirmed"}${ev.supervisor_deadline ? ` · apply by ${supDeadline(ev)}` : ""}</p>
+      <p>Apply on your own. Tick everything you'd be happy to help with. We'll form the teams, and you're welcome to float between roles on the night.</p>
+      <div class="attend">${Object.entries(SUP_ROLES).map(([k, v]) => `<label class="check"><input type="checkbox" data-pref="${k}" ${has(k) ? "checked" : ""}> ${v}</label>`).join("")}</div>
+      <label>Anything we should know? (optional)</label><textarea id="supNote" rows="3" maxlength="500">${esc(app?.note || "")}</textarea>
+      <label class="check"><input type="checkbox" id="supMeet" ${app ? "checked" : ""}> I can come to the pre-event meeting and the post-event debrief</label>
+      <div class="form-actions"><button class="btn solid block" id="supSend">${app ? "Save my application" : "Send my application"}</button>${app ? '<button class="btn block danger" id="supDrop">Withdraw my application</button>' : ""}</div>`, (m) => {
+      $("#supSend", m).onclick = async () => {
+        const prefs = [...m.querySelectorAll("[data-pref]:checked")].map((c) => c.dataset.pref);
+        if (!prefs.length) return toast("Tick at least one thing you'd like to help with");
+        if (!$("#supMeet", m).checked) return toast("Supervisors need to come to the meetings before and after the event");
+        try {
+          await q(sb.rpc("apply_supervisor", { p_event: ev.id, p_prefs: prefs, p_note: $("#supNote", m).value }));
+          myApps = [...myApps.filter((a) => a.event_id !== ev.id), { event_id: ev.id, prefs, note: $("#supNote", m).value }];
+          toast(app ? "Application saved" : "Thanks, your application is in"); back();
+        } catch (e) { fail(e); }
+      };
+      if ($("#supDrop", m)) $("#supDrop", m).onclick = async () => {
+        try { await q(sb.from("supervisor_applications").delete().eq("event_id", ev.id).eq("user_id", me.id)); myApps = myApps.filter((a) => a.event_id !== ev.id); toast("Application withdrawn"); back(); } catch (e) { fail(e); }
+      };
+    });
+  }
   const introBanner = (on, onFootball) => (on ? `<a class="offer${onFootball ? "" : " footie-offer"}" href="#football"><small>New member offer</small><b>New members, not in the kitty, pay just £1 for their first game</b>
       <span>Whilst the offer lasts.${onFootball ? "" : " Tap to book →"}</span></a>` : "");
   // A football game priced below the usual £6 gets a big banner on Events and Football.
@@ -436,12 +493,14 @@
   const FOOTIE = "images/footie.jpg", FOOTIE_BANNER = "images/footie-banner.jpg", QURAN = "images/quran.jpg", QURAN_BANNER = "images/quran-banner.jpg";
   const picOf = (ev) => ev.image || (ev.kind === "football" ? FOOTIE_BANNER : ev.group_id === "quran" ? QURAN_BANNER : "");
   const eventPic = (ev) => (picOf(ev) ? `<img class="event-pic" src="${esc(picOf(ev))}" alt="" data-event="${ev.id}">` : "");
+  // "Supervisor applications open" on the advert, with the deadline.
+  const supTag = (ev) => (supOpen(ev) ? `<span class="tag sup">🙋 Supervisor applications open${ev.supervisor_deadline ? ` · apply by ${supDeadline(ev)}` : ""}</span>` : "");
   function eventCard(ev, taken, mine) {
     if (!ev.day) return `<article class="card">${eventPic(ev)}
       <div class="event-body" data-event="${ev.id}" style="cursor:pointer">
         <div class="event-date tbc"><div class="d">TBC</div><div class="m">Date</div></div>
         <div><h2>${esc(ev.title)}</h2><p>Date to be confirmed</p>${ev.location ? `<p>${esc(ev.location)}</p>` : ""}
-          <div class="pills"><span class="tag">${Number(ev.price) > 0 ? money(ev.price) : "Free"}</span><span class="tag">${ACCESS_TAG[ev.access] || "Members only"}</span></div></div>
+          <div class="pills"><span class="tag">${Number(ev.price) > 0 ? money(ev.price) : "Free"}</span><span class="tag">${ACCESS_TAG[ev.access] || "Members only"}</span>${supTag(ev)}</div></div>
       </div>
       <div class="event-foot"><button data-invite="${ev.id}">${ICON.share.replace("viewBox", 'style="width:20px;height:20px" viewBox')} Share</button>${ev.link ? linkButton(ev) : '<button class="off" disabled>Booking opens soon</button>'}</div>
     </article>`;
@@ -450,7 +509,7 @@
     const pills = `<div class="pills"><span class="tag">${fb ? `${money(ev.price)} or kitty` : Number(ev.price) > 0 ? money(ev.price) : "Free"}</span>
       <span class="tag">${guestGroups.includes(ev.group_id) ? "Open to everyone" : ACCESS_TAG[ev.access] || "Members only"}</span>
       ${ev.weekly ? `<span class="tag gold">Every ${DAYS[d.getDay()]}</span>` : !past && !ev.link ? `<span class="tag ${left ? "" : "warn"}">${left ? `${left} of ${ev.capacity} places left` : "Full"}</span>` : ""}
-      ${!past && !ev.group_id && !ev.link ? `<span class="tag gold">${taken} booked</span>` : ""}</div>`;
+      ${!past && !ev.group_id && !ev.link ? `<span class="tag gold">${taken} booked</span>` : ""}${past ? "" : supTag(ev)}</div>`;
     let action;
     if (past) action = '<button class="off" style="color:var(--muted)" disabled>Event has ended</button>';
     else if (ev.link) action = linkButton(ev);
@@ -2385,6 +2444,8 @@
       ${isDoor() ? `<h3 class="menu-head">Organisers · on the night</h3>
       <button class="menu-row" data-to="supervisors">${ICON.ball}<span>Football Supervisors ${ICON.chev}</span></button>
       ${isAdmin() ? "" : `<button class="menu-row" data-to="admin">${ICON.tools}<span>Check in at other events ${ICON.chev}</span></button>`}` : ""}
+      ${me?.sup?.length ? `<h3 class="menu-head">Event supervisor</h3>
+      <button class="menu-row" data-to="supervising">${ICON.tools}<span>Supervisor tools: scan tickets ${ICON.chev}</span></button>` : ""}
       ${isAdmin() ? `<h3 class="menu-head">Admin</h3>
       <button class="menu-row" data-to="footballadmin">${ICON.ball}<span>Football Accounts ${ICON.chev}</span></button>
       <button class="menu-row" data-to="eventaccounts">${ICON.cal}<span>Events accounts to post ${ICON.chev}</span></button>
@@ -2645,6 +2706,37 @@
     tick();
   }
 
+  // ---------- SUPERVISOR TOOLS ----------
+  // Members chosen to supervise an event: their team, the other supervisors, and scanning at that event only.
+  // It disappears at 4am the morning after the event.
+  async function supervising(el, alive) {
+    loading(el);
+    await loadMe();
+    if (!alive()) return;
+    const mine = (me?.sup || []).sort((a, b) => eventStart(a.events) - eventStart(b.events));
+    if (!mine.length) { el.innerHTML = `<div class="empty"><h2>Supervisor tools</h2><p class="muted">You're not supervising an event at the moment. When the admin puts you in a team, the event shows here, and your access ends the morning after it.</p></div>`; return; }
+    const ids = mine.map((x) => x.event_id);
+    const all = await q(sb.from("event_supervisors").select("event_id,user_id,role,profiles(name)").in("event_id", ids)).catch(() => []);
+    if (!alive()) return;
+    el.innerHTML = `<div class="pad" style="padding-top:24px"><h1>Supervisor tools</h1>
+      <p class="muted">Thank you for helping run our events. Scan tickets at the door, and see who's here and who's still to come.</p>
+      ${mine.map((x) => { const ev = x.events, team = all.filter((s) => s.event_id === ev.id);
+        return `<div class="card" style="padding:14px;margin:12px 0"><h2 style="margin:0 0 4px">${esc(ev.title)}</h2>
+          <p class="muted" style="margin:0 0 8px">${fmtEvent(ev)}${ev.location ? ` · ${esc(ev.location)}` : ""}</p>
+          <p>Your team: <b>${SUP_ROLES[x.role]}</b></p>
+          <div class="sup-teams">${Object.entries(SUP_ROLES).map(([k, v]) => `<div><small>${v}</small>${team.filter((s) => s.role === k).map((s) => `<b>${esc(s.profiles?.name || "?")}${s.user_id === me.id ? " (you)" : ""}</b>`).join("") || '<span class="muted">No one yet</span>'}</div>`).join("")}</div>
+          <p class="muted" style="font-size:14px">Please come to the pre-event meeting and the post-event debrief. Your scanning access ends at 4am the morning after the event.</p>
+          <button class="btn solid block" data-scan style="margin-bottom:10px">Scan a ticket's QR code</button>
+          <div class="row"><input data-code placeholder="Or type the code, e.g. AA-7K2QX" style="text-transform:uppercase"><button class="btn small" data-type>Check in</button></div>
+          <div data-list="${ev.id}"></div></div>`; }).join("")}</div>`;
+    el.querySelectorAll("[data-scan]").forEach((b) => (b.onclick = () => scanTicket(checkIn)));
+    el.querySelectorAll("[data-type]").forEach((b) => (b.onclick = () => { const i = b.parentElement.querySelector("[data-code]"), c = i.value.trim(); if (!c) return toast("Type the ticket code"); i.value = ""; checkIn(c); }));
+    // One who's-in list at a time keeps the live updates simple: the soonest event's list.
+    whosIn(el.querySelector(`[data-list="${mine[0].event_id}"]`), mine[0].event_id);
+    mine.slice(1).forEach((x) => { const box = el.querySelector(`[data-list="${x.event_id}"]`); box.innerHTML = `<button class="btn small block" data-show="${x.event_id}">Show who's in</button>`; });
+    el.querySelectorAll("[data-show]").forEach((b) => (b.onclick = () => whosIn(b.parentElement, b.dataset.show)));
+  }
+
   // ---------- ORGANISER TOOLS ----------
   // What organisers see in Organiser tools: scanning and who's in.
   async function doorTools(el) {
@@ -2677,6 +2769,8 @@
     const report = Object.fromEntries((await q(sb.rpc("member_report")).catch(() => [])).map((r) => [r.id, r]));
     // Guests (empty until add-guest-admin.sql is run).
     const greport = isAdmin() ? await q(sb.rpc("guest_report")).catch(() => null) : null;
+    // Supervisor applications and teams (null until add-event-supervisors.sql is run).
+    const [supApps, supRows] = await Promise.all([q(sb.from("supervisor_applications").select("*").order("created_at")).catch(() => null), q(sb.from("event_supervisors").select("*")).catch(() => null)]);
     if (!alive()) return;
     const g = Object.fromEntries(guests.map((x) => [x.booking_id, x]));
     // events from today on, soonest first, for the who's-in list under the scan button
@@ -2686,6 +2780,25 @@
     const guestRequests = bks.filter((b) => b.status === "pending" && !b.user_id);
     const pending = isAdmin() ? members.filter((m) => m.approved === false) : [];
     const ids = pending.map((m) => m.id);
+    const nameOf = Object.fromEntries(members.map((m) => [m.id, m.name]));
+    // Supervisors for one event: the 3 teams of 2, then everyone who applied, with a team to put them in.
+    function supAdmin(e) {
+      if (!supApps) return '<p class="muted"><b>Run add-event-supervisors.sql in Supabase to choose supervisors here.</b></p>';
+      const team = supRows.filter((x) => x.event_id === e.id), apps = supApps.filter((x) => x.event_id === e.id);
+      const inTeam = Object.fromEntries(team.map((x) => [x.user_id, x.role]));
+      const teamPick = (dflt) => `<select data-team>${Object.entries(SUP_ROLES).map(([k, v]) => `<option value="${k}" ${k === dflt ? "selected" : ""}>${v}</option>`).join("")}</select>`;
+      return `<div class="sup-admin"><h3>Supervisors (${team.length} of 6)</h3>
+        <p class="muted" style="font-size:14px">${e.supervisors_open ? `Applications are open${e.supervisor_deadline ? ` until ${supDeadline(e)}` : ""}.` : "Applications are closed. Tick the box above and save to open them."} Supervisors can scan tickets at this event until 4am the morning after it.</p>
+        <div class="sup-teams">${Object.entries(SUP_ROLES).map(([k, v]) => `<div><small>${v} (${team.filter((x) => x.role === k).length}/2)</small>${team.filter((x) => x.role === k).map((x) => `<span class="sup-name">${esc(nameOf[x.user_id] || "?")} <button class="btn small" data-sup-rm="${e.id}|${x.user_id}">Remove</button></span>`).join("") || '<span class="muted">No one yet</span>'}</div>`).join("")}</div>
+        <h3>Applied (${apps.length})</h3>
+        ${apps.map((a) => `<div class="sup-app" data-who="${a.user_id}"><b>${esc(nameOf[a.user_id] || "Member")}</b> <span class="muted" style="font-size:13px">applied ${short(new Date(a.created_at))}</span>
+          <div>Would like: ${a.prefs.map((k) => SUP_ROLES[k]).join(", ")}</div>${a.note ? `<div class="muted" style="white-space:pre-line">${esc(a.note)}</div>` : ""}
+          <div class="row" style="gap:8px;margin-top:6px">${teamPick(inTeam[a.user_id] || a.prefs[0])}<button class="btn small solid" data-sup-add="${e.id}">${inTeam[a.user_id] ? "Move team" : "Add to team"}</button></div>
+          ${a.user_id in inTeam ? `<span class="tag">In team: ${SUP_ROLES[inTeam[a.user_id]]}</span>` : ""}</div>`).join("") || '<p class="muted">No applications yet.</p>'}
+        <details><summary class="muted">Add a member who didn't apply</summary>
+          <div class="sup-app"><select data-member>${members.filter((m) => m.approved !== false && !(m.id in inTeam)).map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join("")}</select>
+          <div class="row" style="gap:8px;margin-top:6px">${teamPick("door")}<button class="btn small" data-sup-add="${e.id}">Add to team</button></div></div></details></div>`;
+    }
     const [pcs, apps] = ids.length ? await Promise.all([q(sb.from("member_postcodes").select("*").in("user_id", ids)), q(sb.from("applications").select("*").in("user_id", ids))]) : [[], []];
     if (!alive()) return;
     el.innerHTML = `<div class="pad" style="padding-top:24px">
@@ -2716,6 +2829,8 @@
       <label>Details</label><textarea id="det"></textarea>
       <label>Picture (optional)</label><input id="pic" type="file" accept="image/*">
       <label>Link instead of booking here (optional, e.g. the debate's page in Let's Debate)</label><input id="lnk" type="url" placeholder="https://debate.ourhomelands.co.uk/debates/…">
+      <label class="check"><input type="checkbox" id="supOn"> Supervisor applications open (shows the call for supervisors on the advert, and tells members)</label>
+      <label>Supervisor application deadline</label><input id="supDl" type="date">
       <div class="form-actions"><button class="btn solid block" id="add">Add event</button></div>
       <h2 style="margin-top:28px">Events and bookings</h2>
       <button class="btn block" id="csv">Download all event bookings (opens in Google Sheets or Excel)</button>
@@ -2736,8 +2851,11 @@
             <div style="grid-column:1/-1"><label>Linked fund (gets the profit, or pays the loss)</label><select data-f="fund" ${e.accounts_posted ? "disabled" : ""}>${fundOpts(e.fund || "events")}</select></div>
             <div style="grid-column:1/-1"><label>Details</label><textarea data-f="details" rows="6">${esc(e.details || "")}</textarea></div>
             <div style="grid-column:1/-1"><label>Link instead of booking here (optional)</label><input data-f="link" type="url" value="${esc(e.link || "")}" placeholder="https://debate.ourhomelands.co.uk/debates/…"></div>
-            <div style="grid-column:1/-1"><label>Picture</label>${e.image ? `<img class="event-pic" src="${esc(e.image)}" alt="">` : ""}<input data-pic="${e.id}" type="file" accept="image/*">${e.image ? `<button class="btn small" data-nopic="${e.id}" style="margin-top:8px">Remove picture</button>` : ""}</div></div>
-            <div class="row" style="margin:12px 0"><button class="btn small" data-upd="${e.id}">Save changes</button><button class="btn small" data-poster="${e.id}">QR code poster</button></div>` : ""}
+            <div style="grid-column:1/-1"><label>Picture</label>${e.image ? `<img class="event-pic" src="${esc(e.image)}" alt="">` : ""}<input data-pic="${e.id}" type="file" accept="image/*">${e.image ? `<button class="btn small" data-nopic="${e.id}" style="margin-top:8px">Remove picture</button>` : ""}</div>
+            <div style="grid-column:1/-1"><label class="check"><input type="checkbox" data-f="supervisors_open" ${e.supervisors_open ? "checked" : ""}> Supervisor applications open (shows on the advert)</label></div>
+            <div style="grid-column:1/-1"><label>Supervisor application deadline</label><input data-f="supervisor_deadline" type="date" value="${e.supervisor_deadline || ""}"></div></div>
+            <div class="row" style="margin:12px 0"><button class="btn small" data-upd="${e.id}">Save changes</button><button class="btn small" data-poster="${e.id}">QR code poster</button></div>
+            ${supAdmin(e)}` : ""}
           <button class="btn small danger" data-del="${e.id}">Remove event</button></details>`;
       }).join("")}
       ${isAdmin() ? `<h2 style="margin-top:28px" id="guestsHead">Guests</h2>
@@ -2783,6 +2901,8 @@
       const ev = { kind: "event", title: $("#t", el).value.trim(), day: $("#d", el).value, time: $("#tm", el).value, location: $("#loc", el).value.trim(),
         price: Number($("#pr", el).value) || 0, capacity: Number($("#cap", el).value) || 1, access: $("#acc", el).value, fund: $("#fund", el).value, details: $("#det", el).value.trim(),
         link: $("#lnk", el).value.trim() || null };
+      if ($("#supOn", el).checked) ev.supervisors_open = true;
+      if ($("#supDl", el).value) ev.supervisor_deadline = $("#supDl", el).value;
       if (!ev.title || !ev.time) return toast("Fill in at least the name and start time");
       if (ev.link && !/^https?:\/\//.test(ev.link)) return toast("The link should start with https://");
       if (!ev.day) ev.day = null; // date to be confirmed
@@ -2817,10 +2937,20 @@
       if (!f("title").trim()) return toast("Give the event a name");
       const upd = { title: f("title").trim(), location: f("location").trim(), details: f("details").trim(), day: f("day") || null, time: f("time"), price: Number(f("price")) || 0, capacity: Number(f("capacity")) || 1, access: f("access"), link: f("link").trim() || null };
       if (!$('[data-f="fund"]', box).disabled) upd.fund = f("fund");
+      if (supApps) { upd.supervisors_open = $('[data-f="supervisors_open"]', box).checked; upd.supervisor_deadline = f("supervisor_deadline") || null; }
       if (upd.link && !/^https?:\/\//.test(upd.link)) return toast("The link should start with https://");
       const file = $(`[data-pic="${b.dataset.upd}"]`, box).files[0];
       if (file) upd.image = await picture(file);
       try { await q(sb.from("events").update(upd).eq("id", b.dataset.upd)); toast(upd.day ? "Saved" : "Saved, date still to be confirmed"); refresh(); } catch (e) { fail(e); }
+    }));
+    el.querySelectorAll("[data-sup-add]").forEach((b) => (b.onclick = async () => {
+      const box = b.closest(".sup-app"), who = box.dataset.who || $("[data-member]", box)?.value;
+      if (!who) return toast("Choose a member");
+      try { await q(sb.rpc("assign_supervisor", { p_event: b.dataset.supAdd, p_user: who, p_role: $("[data-team]", box).value })); toast(`${nameOf[who] || "They"} added to the team`); refresh(); } catch (e) { fail(e); }
+    }));
+    el.querySelectorAll("[data-sup-rm]").forEach((b) => (b.onclick = async () => {
+      const [ev, who] = b.dataset.supRm.split("|");
+      try { await q(sb.from("event_supervisors").delete().eq("event_id", ev).eq("user_id", who)); toast("Removed from the team"); refresh(); } catch (e) { fail(e); }
     }));
     el.querySelectorAll("[data-nopic]").forEach((b) => (b.onclick = async () => {
       try { await q(sb.from("events").update({ image: null }).eq("id", b.dataset.nopic)); toast("Picture removed"); refresh(); } catch (e) { fail(e); }
