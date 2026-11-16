@@ -158,8 +158,8 @@
 
   // ---------- router ----------
   const TABS = ["events", "groups", "schedule", "leaderboard", "more"];
-  const ROUTES = { about, home: about, events, groups, grouplist, accounts, chat, schedule, more, services, counselling, messages, notifications, account, football, admin, funds, eventaccounts, squarecheck, supervisors, footballadmin, guest, welcome, leaderboard, join: joinGuide };
-  const PARENT = { grouplist: "groups", accounts: "groups", chat: "groups", services: "more", counselling: "more", football: "events", funds: "more", eventaccounts: "more", squarecheck: "more", supervisors: "more", footballadmin: "more", guest: null, account: null, welcome: "more", join: "more", about: "more", admin: "more", messages: null, notifications: null };
+  const ROUTES = { about, home: about, events, groups, grouplist, accounts, chat, schedule, more, services, counselling, messages, notifications, account, football, admin, funds, eventaccounts, weekly, squarecheck: weekly, supervisors, footballadmin, guest, welcome, leaderboard, join: joinGuide };
+  const PARENT = { grouplist: "groups", accounts: "groups", chat: "groups", services: "more", counselling: "more", football: "events", funds: "more", eventaccounts: "more", weekly: "more", squarecheck: "more", supervisors: "more", footballadmin: "more", guest: null, account: null, welcome: "more", join: "more", about: "more", admin: "more", messages: null, notifications: null };
   let lastTab = "events", seq = 0;
 
   function go(route) { if (location.hash.slice(1) === route) render(); else location.hash = route; }
@@ -626,16 +626,16 @@
       <p class="muted">All funds together: <b>${money(Number(fs.kitty) + Number(fs.events) + Number(fs.credits || 0) + Number(fs.family || 0) + Number(fs.unclaimed || 0))}</b></p>
       ${isOrg() ? (onAccounts === Math.round(Number(fs.credits || 0) * 100) / 100 ? `<p class="note">Credits tally ✓ The credits fund matches the ${money(onAccounts)} of credit on members' accounts.</p>`
         : `<p class="note">Credits don't tally: members' accounts hold ${money(onAccounts)} but the credits fund shows ${money(fs.credits || 0)}.</p>`) : ""}
-      ${[[1, "Square"], [2, "Starling BR3 Funds Space"]].map(([id, name]) => { const st = stmts.find((x) => x.id === id);
-        return `<div class="note"><b>${name} balance</b><br>${st ? `Open the ${name} photo to check it against the funds. <span class="muted">Uploaded ${short(new Date(st.uploaded_at))}.</span>
-        <div data-stshow="${id}" style="margin-top:8px"><span class="muted">Loading…</span></div>` : `No ${name} photo uploaded yet.`}
-        ${isAdmin() ? `<label>${st ? "Replace it with this week's" : "Upload this week's"} ${name} balance photo (a screenshot or PDF)</label><input data-stfile="${id}" type="file" accept="image/*,application/pdf,.pdf">` : ""}</div>`; }).join("")}
+      ${[[1, "Square", fs.square_balance, fs.square_balance_at, "entered"], [2, fs.starling_name ? `Starling ${fs.starling_name}` : "Starling", fs.starling_balance, fs.starling_balance_at, "read by itself"]].map(([id, name, amt, at, how]) => { const st = stmts.find((x) => x.id === id);
+        return `<div class="note"><b>${esc(name)}${amt != null ? ` ${money(amt)}` : ""}</b>${at ? ` <span class="muted">${how} ${short(new Date(at))}</span>` : ""}
+        ${st ? `<div data-stshow="${id}" style="margin-top:8px"><span class="muted">Loading…</span></div>` : '<div class="muted">No balance photo yet.</div>'}</div>`; }).join("")}
+      <p class="muted">Updated every Saturday: Starling is read by itself, and the Square balance and both photos are added on Weekly accounts.</p>
       <p class="muted">Square and Starling together should hold all the funds, less any cash not yet banked. The Accounts Reconciliation chat checks this every Saturday.</p>
       ${FUND_INFO.replace("<details ", "<details open ")}
       <p class="note">Posted accounts, and every move between funds, are on the <a href="#accounts">Accounts tab</a>, one chat for each fund. The Accounts Reconciliation chat checks all the funds together against Square every week.</p>
-      <div class="form-actions"><button class="btn solid block" data-go="accounts">Open the Accounts tab</button>${isAdmin() ? '<button class="btn block" data-go="eventaccounts">Events accounts</button>' : ""}${isAdmin() ? '<button class="btn block" data-go="squarecheck">Square check</button>' : ""}</div>
+      <div class="form-actions"><button class="btn solid block" data-go="accounts">Open the Accounts tab</button>${isAdmin() ? '<button class="btn block" data-go="eventaccounts">Events accounts</button>' : ""}${isAdmin() ? '<button class="btn block" data-go="weekly">Weekly accounts</button>' : ""}</div>
       ${isAdmin() ? `<h3>Family Events fund</h3>
-        <p class="muted">The Individual, Concessionary and Family subscriptions come in from Square by themselves every Saturday morning, covering the last 7 days (or when you tap Sync from Square on Square check), with Square's fee taken off. Use this for the opening balance, other money in, and money spent.</p>
+        <p class="muted">The Individual, Concessionary and Family subscriptions come in from Square by themselves every Saturday morning, covering the last 7 days (or when you tap Sync from Square on Weekly accounts), with Square's fee taken off. Use this for the opening balance, other money in, and money spent.</p>
         ${familyWeeks(subs)}
         <p class="note">Each week's subscriptions, and any money in or spent recorded here, are posted to the <a href="#chat:family-accounts">BR3 Family Events Accounts chat</a> on the Accounts tab.</p>
         <div class="grid2"><div><label>Money</label><select id="yDir"><option value="1">In</option><option value="-1">Spent</option></select></div>
@@ -661,19 +661,6 @@
     </div></div>`;
     el.querySelectorAll("[data-f]").forEach((b) => (b.onclick = () => go(b.dataset.f ? "funds:" + b.dataset.f : "funds")));
     el.querySelectorAll("[data-stshow]").forEach((box) => showStatement(box, Number(box.dataset.stshow), alive, false));
-    el.querySelectorAll("[data-stfile]").forEach((inp) => (inp.onchange = () => {
-      const f = inp.files[0]; if (!f) return;
-      const isPdf = /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name);
-      if (!isPdf && !/^image\//.test(f.type)) return toast("Choose a photo, screenshot or PDF");
-      if (isPdf && f.size > 5e6) return toast("That PDF is over 5 MB. Try a smaller one");
-      const rd = new FileReader();
-      rd.onload = async () => {
-        const file = isPdf ? String(rd.result).replace(/^data:[^;,]*(;base64)?,/, "data:application/pdf;base64,") : await shrink(rd.result, 2000);
-        try { await q(sb.from("square_statement").upsert({ id: Number(inp.dataset.stfile), file, file_name: f.name, uploaded_at: new Date().toISOString(), uploaded_by: me.id }));
-          toast("Balance photo uploaded"); refresh(); } catch (e) { fail(e); }
-      };
-      rd.readAsDataURL(f);
-    }));
     el.querySelectorAll("[data-upaid]").forEach((b) => (b.onclick = async () => {
       const u = unclaimed.find((x) => String(x.id) === b.dataset.upaid);
       const note = prompt(`Paid ${money(u.amount)} back to ${u.name}? Add a note, e.g. "bank transfer 3 Nov".`, "bank transfer");
@@ -743,9 +730,12 @@
   // the Square balance against the funds, and lists each Square payment with its fee and net.
   const PLACE = { cash: "Cash in hand", bank: "Bank (Starling)", square: "Square", count: "Counted" };
   const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  async function squarecheck(el, alive, arg = "") {
-    if (!me) return needSignIn(el, "check Square");
-    if (!isDoor()) { el.innerHTML = '<div class="empty"><h2>For organisers</h2><p class="muted">The Square check is for organisers and the admin.</p></div>'; return; }
+  // Weekly accounts: one page for the Saturday routine. 1 balances and photos, 2 the week's accounts to post,
+  // 3 the reconciliation, then Square payments, matching and money moved underneath.
+  let starlingAutoAt = 0; // reads Starling by itself when the page opens, at most every 10 minutes
+  async function weekly(el, alive, arg = "") {
+    if (!me) return needSignIn(el, "see the weekly accounts");
+    if (!isDoor()) { el.innerHTML = '<div class="empty"><h2>For organisers</h2><p class="muted">Weekly accounts are for organisers and the admin.</p></div>'; return; }
     loading(el);
     const [a, b] = String(arg).split("~");
     const to = /^\d{4}-\d{2}-\d{2}$/.test(b || "") ? b : isoDay(new Date());
@@ -763,8 +753,27 @@
         isAdmin() ? q(sb.from("starling_txns").select("*").gte("at", start).lt("at", end).order("at", { ascending: false })).catch(() => []) : [],
       ]);
     } catch (e) {
-      el.innerHTML = `<div class="empty"><h2>Square check isn't ready</h2><p class="muted">Run supabase/add-square-check.sql in Supabase first. (${esc(e.message)})</p></div>`;
+      el.innerHTML = `<div class="empty"><h2>Weekly accounts aren't ready</h2><p class="muted">Run supabase/add-square-check.sql in Supabase first. (${esc(e.message)})</p></div>`;
       return;
+    }
+    // This week = since the last reconciliation was posted. Each step is done once it's been redone since then.
+    let last = null, stmts = [], games = [], evs = [], weekSince = new Date(0);
+    if (isAdmin()) {
+      last = await q(sb.from("reconciliations").select("posted_at").order("id", { ascending: false }).limit(1)).then((r) => r[0] || null).catch(() => null);
+      const since = last ? new Date(last.posted_at) : new Date(0), back = new Date(Math.max(since.getTime(), Date.now() - 60 * 864e5));
+      let evRows, posted, lines;
+      [stmts, games, evRows, posted, lines] = await Promise.all([
+        q(sb.from("square_statement").select("id,uploaded_at")).catch(() => []),
+        q(sb.from("events").select("id,title,day,time,accounts_posted").eq("kind", "football").eq("accounts_posted", false).not("day", "is", null).order("day")).catch(() => []),
+        q(sb.from("events").select("id,title,day,time,price").neq("kind", "football").not("day", "is", null).gte("day", isoDay(new Date(back.getTime() - 14 * 864e5))).order("day")).catch(() => []),
+        q(sb.from("event_accounts").select("event_id")).catch(() => []),
+        q(sb.from("event_account_lines").select("event_id")).catch(() => []),
+      ]);
+      const done = new Set(posted.map((r) => r.event_id)), withLines = new Set(lines.map((r) => r.event_id));
+      games = games.filter((g) => eventEnd(g) <= new Date());
+      // Events that took money (a price or receipts entered) and have ended, without posted accounts.
+      evs = evRows.filter((e) => !done.has(e.id) && eventEnd(e) <= new Date() && (Number(e.price) > 0 || withLines.has(e.id)));
+      weekSince = since;
     }
     if (!alive()) return;
     const ok = pays.filter((p) => p.status === "COMPLETED");
@@ -780,10 +789,15 @@
     const diff = bal == null ? null : Math.round((bal - Number(x.expected)) * 100) / 100;
     const KIND = { booking: "Booking", subscription: "Family Events", other: "Not matched" };
     const row = (label, v, sign = "") => `<tr><td>${label}</td><td class="amt ${sign === "−" ? "neg" : ""}">${sign}${money(Math.abs(Number(v)))}</td></tr>`;
-    el.innerHTML = `<div class="events"><div class="card fb"><h2>Square check</h2>
-      <p class="muted">Square holds all the funds. Cash and transfers count as held outside Square until they're moved in.</p>
-      <h3>Does Square match the funds?</h3>
-      <div class="scroll"><table class="wrap"><tbody>
+    const after = (t) => !!t && new Date(t) > weekSince;
+    const stOf = (id) => stmts.find((x) => x.id === id);
+    const step1 = isAdmin() && after(x.square_balance_at) && after(stOf(1)?.uploaded_at) && after(stOf(2)?.uploaded_at);
+    const step2 = isAdmin() && !games.length && !evs.length;
+    const tick = (b) => (b ? ' <span class="tag">✓ Done</span>' : "");
+    const photoRow = (id, name) => { const st = stOf(id);
+      return `<div class="note"><b>${name} balance photo</b> ${after(st?.uploaded_at) ? `<span class="tag">✓ ${short(new Date(st.uploaded_at))}</span>` : st ? `<span class="muted">last one ${short(new Date(st.uploaded_at))}</span>` : ""}
+        <label>${after(st?.uploaded_at) ? "Replace it" : "Add this week's"} (a screenshot or PDF)</label><input data-stfile="${id}" type="file" accept="image/*,application/pdf,.pdf"></div>`; };
+    const checkTable = `<div class="scroll"><table class="wrap"><tbody>
         ${row(`All funds (kitty, events, credits, Family Events${Number(x.unclaimed) ? ", unclaimed credit" : ""})`, x.funds)}
         ${row("Paid for games and events whose accounts aren't posted yet", x.pending_in, "+")}
         ${row("Square fees on those", x.pending_fees, "−")}
@@ -793,21 +807,30 @@
         <tr><td>Square balance${x.square_balance_at ? ` (entered ${short(new Date(x.square_balance_at))})` : ""}</td><td class="amt">${bal == null ? "—" : money(bal)}</td></tr>
       </tbody></table></div>
       ${diff == null ? "" : diff === 0 ? '<p class="note check-diff">✓ Square matches the funds.</p>' : `<p class="note check-diff">Square has ${money(Math.abs(diff))} ${diff > 0 ? "more" : "less"} than the funds.</p>
-        <p class="muted">Common reasons: pitch hire paid on the Square Card before the game's accounts are posted, a payment below marked "Not matched", a refund, or money moved but not recorded here.</p>`}
-      ${x.pending.length ? `<details class="info"><summary>Games and events not yet in accounts</summary>${x.pending.map((p) => `<p>${esc(p.title)}${p.day ? ` ${short(parseDay(p.day))}` : ""}: ${money(p.paid || 0)} paid, ${money(p.fees || 0)} Square fees</p>`).join("")}</details>` : ""}
-      <label>Square balance now, from the Square app £</label><input id="sqBal" type="number" step="0.01" inputmode="decimal" value="${bal == null ? "" : bal.toFixed(2)}">
-      <div class="form-actions"><button class="btn solid block" id="sqBalGo">Check against the funds</button></div>
-      ${isAdmin() ? `<h3>Starling</h3>
-        <p class="muted">${x.starling_at ? `Starling is read by itself every Saturday morning, with the week's transactions. Last read ${short(new Date(x.starling_at))}: ${money(x.starling)}.` : "Once STARLING_TOKEN is added in Netlify, the app reads Starling's balance and transactions (read-only) every Saturday morning, and the bank figure above becomes Starling's real balance."}</p>
-        <div class="form-actions"><button class="btn block" id="stPull">Pull from Starling now</button></div>
-        ${stx.length ? `<details class="info"><summary>Starling transactions, these dates (${stx.length})</summary><div class="scroll"><table class="wrap"><tbody>${stx.map((t) => `<tr><td>${esc(t.counterparty || t.source || "Starling")}${t.reference ? ` · ${esc(t.reference)}` : ""}<div class="muted" style="font-size:13px">${short(new Date(t.at))}${t.status && t.status !== "SETTLED" ? ` · ${esc(t.status.toLowerCase())}` : ""}</div></td><td class="amt ${Number(t.amount) < 0 ? "neg" : ""}">${Number(t.amount) < 0 ? `(${money(-t.amount)})` : money(t.amount)}</td></tr>`).join("")}</tbody></table></div></details>` : ""}` : ""}
-      ${isAdmin() ? `<h3>Weekly reconciliation</h3>
-        <p class="muted">On Saturday, after the week's accounts are posted, enter the Square balance above and draft this. It's posted, pinned, to the Accounts Reconciliation chat for every member to see, with the Square and Starling balance photos from the Funds page.</p>
-        <div class="form-actions"><button class="btn solid block" id="rcDraft">Draft the reconciliation</button></div>
-        <div id="rcBox" hidden><label>Reconciliation (edit freely)</label><textarea id="rcText" rows="20" class="mono"></textarea>
-          <div id="rcDiff" hidden><label>Why there is a difference</label><textarea id="rcWhy" rows="3"></textarea>
-            <label>How and when it will be corrected</label><textarea id="rcFix" rows="3"></textarea></div>
-          <div class="form-actions"><button class="btn solid block" id="rcPost">Post to the Accounts Reconciliation chat</button></div></div>` : ""}
+        <p class="muted">Common reasons: cash not yet banked, pitch hire paid before the game's accounts are posted, a payment below marked "Not matched", a refund, or money moved but not recorded.</p>`}
+      ${x.pending.length ? `<details class="info"><summary>Games and events not yet in accounts</summary>${x.pending.map((p) => `<p>${esc(p.title)}${p.day ? ` ${short(parseDay(p.day))}` : ""}: ${money(p.paid || 0)} paid, ${money(p.fees || 0)} Square fees</p>`).join("")}</details>` : ""}`;
+    el.innerHTML = `<div class="events"><div class="card fb"><h2>Weekly accounts</h2>
+      ${isAdmin() ? `<p class="muted">Every Saturday, three steps in order. Each gets a ✓ when it's done for this week.${last ? ` Last reconciliation posted ${short(new Date(last.posted_at))}.` : ""}</p>
+      <h3>1. Balances${tick(step1)}</h3>
+      <p class="note"><b>${x.starling_name ? `Starling ${esc(x.starling_name)}` : "Starling"} ${x.starling_at ? money(x.starling) : "—"}</b> <span class="muted">${x.starling_at ? `read by itself ${short(new Date(x.starling_at))} ${new Date(x.starling_at).toTimeString().slice(0, 5)}` : "not read yet"}</span>
+        <button class="btn small" id="stPull" style="margin-left:6px">Read again</button></p>
+      <label>Square balance now, from the Square app £ ${after(x.square_balance_at) ? '<span class="tag">✓ saved</span>' : ""}</label>
+      <div class="row" style="gap:8px"><input id="sqBal" type="number" step="0.01" inputmode="decimal" value="${bal == null ? "" : bal.toFixed(2)}" style="flex:1"><button class="btn solid" id="sqBalGo">Save</button></div>
+      ${photoRow(1, "Square")}${photoRow(2, "Starling")}
+      <h3>2. Accounts to post${tick(step2)}</h3>
+      ${games.length || evs.length ? `${games.map((g) => `<div class="member-row"><div><b>${esc(g.title)}</b><div class="muted" style="font-size:14px">${short(parseDay(g.day))} · football accounts</div></div><button class="btn solid small" data-go="footballadmin">Open</button></div>`).join("")}
+        ${evs.map((e) => `<div class="member-row"><div><b>${esc(e.title)}</b><div class="muted" style="font-size:14px">${short(parseDay(e.day))} · events accounts</div></div><button class="btn solid small" data-go="eventaccounts:${e.id}">Open</button></div>`).join("")}
+        <p class="muted">Post each one. It drops off this list once it's posted.</p>` : '<p class="muted">Nothing waiting: this week\'s games and events are posted.</p>'}
+      <h3>3. Reconciliation</h3>
+      ${checkTable}
+      ${step1 && step2 ? "" : `<p class="note">Finish ${!step1 && !step2 ? "steps 1 and 2" : !step1 ? "step 1" : "step 2"} first, so the reconciliation uses this week's figures.</p>`}
+      <div class="form-actions"><button class="btn ${step1 && step2 ? "solid " : ""}block" id="rcDraft">Draft the reconciliation</button></div>
+      <div id="rcBox" hidden><label>Reconciliation (edit freely)</label><textarea id="rcText" rows="20" class="mono"></textarea>
+        <div id="rcDiff" hidden><label>Why there is a difference</label><textarea id="rcWhy" rows="3" placeholder="e.g. £6 cash from Friday not banked yet"></textarea>
+          <label>How and when it will be corrected</label><textarea id="rcFix" rows="3" placeholder="e.g. Paid into Starling on Monday"></textarea></div>
+        <p class="muted">Posted, pinned, to the Accounts Reconciliation chat, with both balance photos.</p>
+        <div class="form-actions"><button class="btn solid block" id="rcPost">Post to the Accounts Reconciliation chat</button></div></div>
+      <details class="info" style="margin-top:18px"><summary><b>Square payments, matching and money moved</b></summary>` : `<h3>Does Square match the funds?</h3>${checkTable}`}
       ${isAdmin() ? `<h3>Money moved</h3>
         <p class="muted">Record cash paid into Square, or money moved from Starling to Square, so the check stays right.</p>
         <div class="grid2"><div><label>From</label><select id="mFrom"><option value="cash">Cash in hand (${money(x.held_cash)})</option><option value="bank">Bank (Starling) (${money(x.held_bank)})</option><option value="square">Square</option><option value="count">Correct to a counted figure</option></select></div>
@@ -832,6 +855,7 @@
         ${isAdmin() ? `<h3>Match by hand</h3>${other.map((p) => `<div class="grid2"><div><label>${money(p.gross)} on ${short(new Date(p.paid_at))}${p.note ? ` · ${esc(p.note)}` : ""}</label><select data-mpay="${esc(p.id)}"><option value="">Choose the booking</option>${cands.map((c) => `<option value="${c.id}">${candLabel(c)}</option>`).join("")}</select></div><div style="align-self:end"><button class="btn solid block" data-mgo="${esc(p.id)}">Match</button></div></div>`).join("")}
         <p class="muted">Matching marks the booking as paid by card, with Square's fee. A later Sync keeps the match.</p>` : ""}` : ""}
       ${missing.length ? `<p class="note">${missing.length} card booking${missing.length > 1 ? "s" : ""} in the app ${missing.length > 1 ? "have" : "has"} no Square payment here: ${missing.map((c) => esc(c.display_name)).join(", ")}. Tap Sync from Square, and if ${missing.length > 1 ? "they stay" : "it stays"}, check Square.</p>` : ""}
+      ${isAdmin() ? "</details>" : ""}
     </div></div>`;
     el.querySelectorAll("[data-mgo]").forEach((btn) => (btn.onclick = async () => {
       const sel = el.querySelector(`[data-mpay="${CSS.escape(btn.dataset.mgo)}"]`);
@@ -849,9 +873,9 @@
         if (!res.ok) throw new Error(r.error || "Couldn't reach Starling.");
         toast(`Starling ${r.name}: ${money(r.balance)}, ${r.transactions} transaction${r.transactions === 1 ? "" : "s"} read`);
         refresh();
-      } catch (err) { btn.disabled = false; btn.textContent = "Pull from Starling now"; fail(err); }
+      } catch (err) { btn.disabled = false; btn.textContent = "Read again"; fail(err); }
     };
-    $("#sqShow", el).onclick = () => go(`squarecheck:${$("#sqFrom", el).value}~${$("#sqTo", el).value}`);
+    $("#sqShow", el).onclick = () => go(`weekly:${$("#sqFrom", el).value}~${$("#sqTo", el).value}`);
     $("#sqSync", el).onclick = async (e) => {
       const btn = e.currentTarget; btn.disabled = true; btn.textContent = "Checking Square…";
       try {
@@ -860,7 +884,7 @@
         const r = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(r.error || "Couldn't reach Square.");
         toast(`${r.checked} Square payment${r.checked === 1 ? "" : "s"} checked, ${r.updated} updated${r.family ? `, ${r.family} to Family Events` : ""}`);
-        go(`squarecheck:${$("#sqFrom", el).value}~${$("#sqTo", el).value}`);
+        go(`weekly:${$("#sqFrom", el).value}~${$("#sqTo", el).value}`);
       } catch (err) { btn.disabled = false; btn.textContent = "Sync from Square"; fail(err); }
     };
     if ($("#rcDraft", el)) $("#rcDraft", el).onclick = async () => {
@@ -916,11 +940,36 @@
         catch (e) { $("#rcPost", el).disabled = false; fail(e); }
       };
     };
-    $("#sqBalGo", el).onclick = async () => {
+    if ($("#sqBalGo", el)) $("#sqBalGo", el).onclick = async () => {
       const v = $("#sqBal", el).value;
       if (v === "") return toast("Enter the Square balance");
-      try { await q(sb.rpc("set_square_balance", { p_amount: Number(v) })); refresh(); } catch (e) { fail(e); }
+      try { await q(sb.rpc("set_square_balance", { p_amount: Number(v) })); toast("Square balance saved"); refresh(); } catch (e) { fail(e); }
     };
+    // The Square and Starling balance photos: shown on the Funds page and attached to the reconciliation post.
+    el.querySelectorAll("[data-stfile]").forEach((inp) => (inp.onchange = () => {
+      const f = inp.files[0]; if (!f) return;
+      const isPdf = /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name);
+      if (!isPdf && !/^image\//.test(f.type)) return toast("Choose a photo, screenshot or PDF");
+      if (isPdf && f.size > 5e6) return toast("That PDF is over 5 MB. Try a smaller one");
+      const rd = new FileReader();
+      rd.onload = async () => {
+        const file = isPdf ? String(rd.result).replace(/^data:[^;,]*(;base64)?,/, "data:application/pdf;base64,") : await shrink(rd.result, 2000);
+        try { await q(sb.from("square_statement").upsert({ id: Number(inp.dataset.stfile), file, file_name: f.name, uploaded_at: new Date().toISOString(), uploaded_by: me.id }));
+          toast("Balance photo added"); refresh(); } catch (e) { fail(e); }
+      };
+      rd.readAsDataURL(f);
+    }));
+    // Starling is read by itself when the page opens (unless it was read in the last 10 minutes).
+    if (isAdmin() && $("#stPull", el) && Date.now() - starlingAutoAt > 6e5 && (!x.starling_at || Date.now() - new Date(x.starling_at) > 6e5)) {
+      starlingAutoAt = Date.now();
+      (async () => {
+        try {
+          const { data: { session } } = await sb.auth.getSession();
+          const res = await fetch("/.netlify/functions/starling-sync", { method: "POST", headers: { Authorization: `Bearer ${session?.access_token || ""}` } });
+          if (res.ok && alive()) refresh();
+        } catch {}
+      })();
+    }
     const mFrom = $("#mFrom", el);
     if (!mFrom) return;
     mFrom.onchange = () => {
@@ -2388,7 +2437,7 @@
       ${isAdmin() ? `<h3 class="menu-head">Admin</h3>
       <button class="menu-row" data-to="footballadmin">${ICON.ball}<span>Football Accounts ${ICON.chev}</span></button>
       <button class="menu-row" data-to="eventaccounts">${ICON.cal}<span>Events accounts to post ${ICON.chev}</span></button>
-      <button class="menu-row" data-to="squarecheck">${ICON.poll}<span>Square check ${ICON.chev}</span></button>
+      <button class="menu-row" data-to="weekly">${ICON.poll}<span>Weekly accounts ${ICON.chev}</span></button>
       <button class="menu-row" data-to="admin">${ICON.tools}<span>Admin tools ${ICON.chev}</span></button>` : ""}`;
     el.querySelectorAll("[data-to]").forEach((b) => (b.onclick = () => go(b.dataset.to)));
   }
