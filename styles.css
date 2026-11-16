@@ -410,3 +410,4 @@ label.check.risk { font-weight: 700; margin: 4px 0 10px; }
 .sup-app { padding: 10px 12px; margin: 8px 0; background: var(--field); border: 1px solid var(--line); border-radius: 10px; }
 .sup-app select { flex: 1; min-width: 0; }
 .sup-btn { border-color: var(--gold); color: var(--gold); }
+.sup-set { padding: 10px 12px; margin: 8px 0; border: 1px dashed var(--line); border-radius: 10px; }
