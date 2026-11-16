@@ -33,7 +33,19 @@
     if (!session) { me = null; return; }
     const { data } = await sb.from("profiles").select("*").eq("id", session.user.id).maybeSingle();
     me = data ? { ...data, email: session.user.email } : null;
+    // Events this person supervises, while their access lasts (empty until add-event-supervisors.sql is run).
+    if (me) me.sup = await sb.from("event_supervisors").select("event_id,role,events(*)").eq("user_id", me.id)
+      .then((r) => (r.data || []).filter((x) => x.events?.day && supUntil(x.events) > new Date()), () => []);
   }
+  // ---------- event supervisors ----------
+  // Shafi's call for supervisors, shown on each event advert that has applications open.
+  const SUP_BLURB = "Want to make this happen, we are looking for 3 2-man teams, 6 members to take this forwards. Our events are open to the public, so long as they book through our portal. One team will man the door, A second team will be concerned with crowd management and ensuring the attendees needs are seen to. The third team will run the event. You should apply singly with your preferences within the app about what you help with. We will form the team and encourage for you to float between roles. You will need to attend pre and post event meetings, the post-event meetings for a debrief.";
+  const SUP_ROLES = { door: "On the door", crowd: "Crowd management and attendees' needs", run: "Running the event" };
+  // A supervisor's scanning access ends at 4am the morning after the event (the database checks this too).
+  const supUntil = (ev) => at(ev.day, "04:00", 1);
+  // Applications are open until the end of the deadline day, and never after the event.
+  const supOpen = (ev) => !!ev.supervisors_open && ev.kind === "event" && (!ev.supervisor_deadline || parseDay(ev.supervisor_deadline) >= today()) && (!ev.day || parseDay(ev.day) >= today());
+  const supDeadline = (ev) => (ev.supervisor_deadline ? (() => { const d = parseDay(ev.supervisor_deadline); return `${DAYS[d.getDay()]} ${d.getDate()} ${MONTHS_LONG[d.getMonth()]}`; })() : "");
 
   // ---------- helpers ----------
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -158,8 +170,8 @@
 
   // ---------- router ----------
   const TABS = ["events", "groups", "schedule", "leaderboard", "more"];
-  const ROUTES = { about, home: about, events, groups, grouplist, accounts, chat, schedule, more, services, counselling, messages, notifications, account, football, admin, funds, eventaccounts, squarecheck, supervisors, footballadmin, guest, welcome, leaderboard, join: joinGuide };
-  const PARENT = { grouplist: "groups", accounts: "groups", chat: "groups", services: "more", counselling: "more", football: "events", funds: "more", eventaccounts: "more", squarecheck: "more", supervisors: "more", footballadmin: "more", guest: null, account: null, welcome: "more", join: "more", about: "more", admin: "more", messages: null, notifications: null };
+  const ROUTES = { about, home: about, events, groups, grouplist, accounts, chat, schedule, more, services, counselling, messages, notifications, account, football, admin, funds, eventaccounts, weekly, squarecheck: weekly, supervisors, supervising, footballadmin, guest, welcome, leaderboard, join: joinGuide };
+  const PARENT = { grouplist: "groups", accounts: "groups", chat: "groups", services: "more", counselling: "more", football: "events", funds: "more", eventaccounts: "more", weekly: "more", squarecheck: "more", supervisors: "more", supervising: "more", footballadmin: "more", guest: null, account: null, welcome: "more", join: "more", about: "more", admin: "more", messages: null, notifications: null };
   let lastTab = "events", seq = 0;
 
   function go(route) { if (location.hash.slice(1) === route) render(); else location.hash = route; }
@@ -378,7 +390,8 @@
       myGroups(),
       sb.from("fund_state").select("intro_offer").single().then((r) => !!r.data?.intro_offer, () => false),
       sb.from("groups").select("id,guests_allowed").then((r) => (r.data || []).filter((x) => x.guests_allowed).map((x) => x.id), () => []),
-    ]).then(([l, p, m, g, io, gg]) => { joined = g; introOn = io; guestGroups = gg; return [l, p, m]; });
+      me ? sb.from("supervisor_applications").select("*").eq("user_id", me.id).then((r) => r.data || [], () => []) : [],
+    ]).then(([l, p, m, g, io, gg, sa]) => { joined = g; introOn = io; guestGroups = gg; myApps = sa; return [l, p, m]; });
     if (!alive()) return;
     list.forEach(nextWeekly);
     const taken = Object.fromEntries(places.map((p) => [p.event_id, Number(p.taken)]));
@@ -403,10 +416,14 @@
       const card = el.querySelector(`[data-event="${ev.id}"]`)?.closest("article");
       const act = card?.querySelector(".event-foot .go");
       modal(`${picOf(ev) ? `<img class="event-pic modal-pic" src="${esc(ev.image || (ev.kind === "football" ? FOOTIE : picOf(ev)))}" alt="">` : ""}<h2>${esc(ev.title)}</h2><p class="muted">${ev.day ? fmtEvent(ev) : "Date to be confirmed"}<br>${esc(ev.location || "")}</p><p style="line-height:1.5;white-space:pre-wrap">${escLinks(ev.details || "")}</p>${ytCards(ev.details)}
+        ${supBox(ev)}
         <div class="form-actions">${act ? `<button class="btn solid block" id="dGo">${act.textContent}</button>` : ""}${isOrg() ? '<button class="btn block" id="dQr">QR code poster</button>' : ""}${isAdmin() && ev.kind === "event" ? '<button class="btn block" id="dEdit">Edit this event</button>' : ""}</div>`, (m) => {
         if (act) $("#dGo", m).onclick = () => { closeModal(); if (act.href) window.open(act.href, "_blank", "noopener"); else act.click(); };
         if (isOrg()) $("#dQr", m).onclick = () => posterModal(ev);
         if ($("#dEdit", m)) $("#dEdit", m).onclick = () => { closeModal(); go("admin:" + ev.id); };
+        if ($("#supApply", m)) $("#supApply", m).onclick = () => supApply(ev, () => detail(ev));
+        if ($("#supMine", m)) $("#supMine", m).onclick = () => { closeModal(); go("supervising"); };
+        m.querySelectorAll("[data-close]").forEach((a) => (a.onclick = closeModal));
       });
     };
     el.querySelectorAll("[data-event]").forEach((b) => (b.onclick = () => detail(list.find((x) => x.id === b.dataset.event))));
@@ -418,6 +435,46 @@
   let introOn = false;
   // Chats that non-members can read and join in as a guest (the Quran chat).
   let guestGroups = [];
+  // This person's supervisor applications, keyed by event.
+  let myApps = [];
+  // The supervisor call inside an event's advert: the blurb, the deadline and Apply (or what they've applied for).
+  function supBox(ev) {
+    const team = me?.sup?.find((x) => x.event_id === ev.id);
+    if (team) return `<div class="sup-box"><b>🙋 You're a supervisor for this event</b><p>Your team: <b>${SUP_ROLES[team.role]}</b>. Please come to the pre-event and post-event meetings.</p><button class="btn block sup-btn" id="supMine">Open supervisor tools</button></div>`;
+    if (!supOpen(ev)) return "";
+    const app = myApps.find((a) => a.event_id === ev.id);
+    return `<div class="sup-box"><b>🙋 Supervisor applications open</b>
+      <p>${esc(SUP_BLURB)}</p>
+      ${ev.supervisor_deadline ? `<p><b>Application deadline: ${supDeadline(ev)}</b></p>` : ""}
+      ${app ? `<p class="note">You've applied ✓ You'd like to help with: ${app.prefs.map((k) => SUP_ROLES[k]).join(", ")}.</p>` : ""}
+      ${!me ? '<button class="btn block" data-go="account" data-close>Sign in to apply</button>' : pending() ? '<p class="muted">You can apply once your membership is approved.</p>'
+        : `<button class="btn block sup-btn" id="supApply">${app ? "Change or withdraw my application" : "Apply to be a supervisor"}</button>`}</div>`;
+  }
+  function supApply(ev, back) {
+    const app = myApps.find((a) => a.event_id === ev.id);
+    const has = (k) => (app ? app.prefs.includes(k) : false);
+    modal(`<button class="close" aria-label="Close">×</button><h2>Supervise ${esc(ev.title)}</h2>
+      <p class="muted">${ev.day ? fmtEvent(ev) : "Date to be confirmed"}${ev.supervisor_deadline ? ` · apply by ${supDeadline(ev)}` : ""}</p>
+      <p>Apply on your own. Tick everything you'd be happy to help with. We'll form the teams, and you're welcome to float between roles on the night.</p>
+      <div class="attend">${Object.entries(SUP_ROLES).map(([k, v]) => `<label class="check"><input type="checkbox" data-pref="${k}" ${has(k) ? "checked" : ""}> ${v}</label>`).join("")}</div>
+      <label>Anything we should know? (optional)</label><textarea id="supNote" rows="3" maxlength="500">${esc(app?.note || "")}</textarea>
+      <label class="check"><input type="checkbox" id="supMeet" ${app ? "checked" : ""}> I can come to the pre-event meeting and the post-event debrief</label>
+      <div class="form-actions"><button class="btn solid block" id="supSend">${app ? "Save my application" : "Send my application"}</button>${app ? '<button class="btn block danger" id="supDrop">Withdraw my application</button>' : ""}</div>`, (m) => {
+      $("#supSend", m).onclick = async () => {
+        const prefs = [...m.querySelectorAll("[data-pref]:checked")].map((c) => c.dataset.pref);
+        if (!prefs.length) return toast("Tick at least one thing you'd like to help with");
+        if (!$("#supMeet", m).checked) return toast("Supervisors need to come to the meetings before and after the event");
+        try {
+          await q(sb.rpc("apply_supervisor", { p_event: ev.id, p_prefs: prefs, p_note: $("#supNote", m).value }));
+          myApps = [...myApps.filter((a) => a.event_id !== ev.id), { event_id: ev.id, prefs, note: $("#supNote", m).value }];
+          toast(app ? "Application saved" : "Thanks, your application is in"); back();
+        } catch (e) { fail(e); }
+      };
+      if ($("#supDrop", m)) $("#supDrop", m).onclick = async () => {
+        try { await q(sb.from("supervisor_applications").delete().eq("event_id", ev.id).eq("user_id", me.id)); myApps = myApps.filter((a) => a.event_id !== ev.id); toast("Application withdrawn"); back(); } catch (e) { fail(e); }
+      };
+    });
+  }
   const introBanner = (on, onFootball) => (on ? `<a class="offer${onFootball ? "" : " footie-offer"}" href="#football"><small>New member offer</small><b>New members, not in the kitty, pay just £1 for their first game</b>
       <span>Whilst the offer lasts.${onFootball ? "" : " Tap to book →"}</span></a>` : "");
   // A football game priced below the usual £6 gets a big banner on Events and Football.
@@ -436,12 +493,14 @@
   const FOOTIE = "images/footie.jpg", FOOTIE_BANNER = "images/footie-banner.jpg", QURAN = "images/quran.jpg", QURAN_BANNER = "images/quran-banner.jpg";
   const picOf = (ev) => ev.image || (ev.kind === "football" ? FOOTIE_BANNER : ev.group_id === "quran" ? QURAN_BANNER : "");
   const eventPic = (ev) => (picOf(ev) ? `<img class="event-pic" src="${esc(picOf(ev))}" alt="" data-event="${ev.id}">` : "");
+  // "Supervisor applications open" on the advert, with the deadline.
+  const supTag = (ev) => (supOpen(ev) ? `<span class="tag sup">🙋 Supervisor applications open${ev.supervisor_deadline ? ` · apply by ${supDeadline(ev)}` : ""}</span>` : "");
   function eventCard(ev, taken, mine) {
     if (!ev.day) return `<article class="card">${eventPic(ev)}
       <div class="event-body" data-event="${ev.id}" style="cursor:pointer">
         <div class="event-date tbc"><div class="d">TBC</div><div class="m">Date</div></div>
         <div><h2>${esc(ev.title)}</h2><p>Date to be confirmed</p>${ev.location ? `<p>${esc(ev.location)}</p>` : ""}
-          <div class="pills"><span class="tag">${Number(ev.price) > 0 ? money(ev.price) : "Free"}</span><span class="tag">${ACCESS_TAG[ev.access] || "Members only"}</span></div></div>
+          <div class="pills"><span class="tag">${Number(ev.price) > 0 ? money(ev.price) : "Free"}</span><span class="tag">${ACCESS_TAG[ev.access] || "Members only"}</span>${supTag(ev)}</div></div>
       </div>
       <div class="event-foot"><button data-invite="${ev.id}">${ICON.share.replace("viewBox", 'style="width:20px;height:20px" viewBox')} Share</button>${ev.link ? linkButton(ev) : '<button class="off" disabled>Booking opens soon</button>'}</div>
     </article>`;
@@ -450,7 +509,7 @@
     const pills = `<div class="pills"><span class="tag">${fb ? `${money(ev.price)} or kitty` : Number(ev.price) > 0 ? money(ev.price) : "Free"}</span>
       <span class="tag">${guestGroups.includes(ev.group_id) ? "Open to everyone" : ACCESS_TAG[ev.access] || "Members only"}</span>
       ${ev.weekly ? `<span class="tag gold">Every ${DAYS[d.getDay()]}</span>` : !past && !ev.link ? `<span class="tag ${left ? "" : "warn"}">${left ? `${left} of ${ev.capacity} places left` : "Full"}</span>` : ""}
-      ${!past && !ev.group_id && !ev.link ? `<span class="tag gold">${taken} booked</span>` : ""}</div>`;
+      ${!past && !ev.group_id && !ev.link ? `<span class="tag gold">${taken} booked</span>` : ""}${past ? "" : supTag(ev)}</div>`;
     let action;
     if (past) action = '<button class="off" style="color:var(--muted)" disabled>Event has ended</button>';
     else if (ev.link) action = linkButton(ev);
@@ -626,16 +685,16 @@
       <p class="muted">All funds together: <b>${money(Number(fs.kitty) + Number(fs.events) + Number(fs.credits || 0) + Number(fs.family || 0) + Number(fs.unclaimed || 0))}</b></p>
       ${isOrg() ? (onAccounts === Math.round(Number(fs.credits || 0) * 100) / 100 ? `<p class="note">Credits tally ✓ The credits fund matches the ${money(onAccounts)} of credit on members' accounts.</p>`
         : `<p class="note">Credits don't tally: members' accounts hold ${money(onAccounts)} but the credits fund shows ${money(fs.credits || 0)}.</p>`) : ""}
-      ${[[1, "Square"], [2, "Starling BR3 Funds Space"]].map(([id, name]) => { const st = stmts.find((x) => x.id === id);
-        return `<div class="note"><b>${name} balance</b><br>${st ? `Open the ${name} photo to check it against the funds. <span class="muted">Uploaded ${short(new Date(st.uploaded_at))}.</span>
-        <div data-stshow="${id}" style="margin-top:8px"><span class="muted">Loading…</span></div>` : `No ${name} photo uploaded yet.`}
-        ${isAdmin() ? `<label>${st ? "Replace it with this week's" : "Upload this week's"} ${name} balance photo (a screenshot or PDF)</label><input data-stfile="${id}" type="file" accept="image/*,application/pdf,.pdf">` : ""}</div>`; }).join("")}
+      ${[[1, "Square", fs.square_balance, fs.square_balance_at, "entered"], [2, fs.starling_name ? `Starling ${fs.starling_name}` : "Starling", fs.starling_balance, fs.starling_balance_at, "read by itself"]].map(([id, name, amt, at, how]) => { const st = stmts.find((x) => x.id === id);
+        return `<div class="note"><b>${esc(name)}${amt != null ? ` ${money(amt)}` : ""}</b>${at ? ` <span class="muted">${how} ${short(new Date(at))}</span>` : ""}
+        ${st ? `<div data-stshow="${id}" style="margin-top:8px"><span class="muted">Loading…</span></div>` : '<div class="muted">No balance photo yet.</div>'}</div>`; }).join("")}
+      <p class="muted">Updated every Saturday: Starling is read by itself, and the Square balance and both photos are added on Weekly accounts.</p>
       <p class="muted">Square and Starling together should hold all the funds, less any cash not yet banked. The Accounts Reconciliation chat checks this every Saturday.</p>
       ${FUND_INFO.replace("<details ", "<details open ")}
       <p class="note">Posted accounts, and every move between funds, are on the <a href="#accounts">Accounts tab</a>, one chat for each fund. The Accounts Reconciliation chat checks all the funds together against Square every week.</p>
-      <div class="form-actions"><button class="btn solid block" data-go="accounts">Open the Accounts tab</button>${isAdmin() ? '<button class="btn block" data-go="eventaccounts">Events accounts</button>' : ""}${isAdmin() ? '<button class="btn block" data-go="squarecheck">Square check</button>' : ""}</div>
+      <div class="form-actions"><button class="btn solid block" data-go="accounts">Open the Accounts tab</button>${isAdmin() ? '<button class="btn block" data-go="eventaccounts">Events accounts</button>' : ""}${isAdmin() ? '<button class="btn block" data-go="weekly">Weekly accounts</button>' : ""}</div>
       ${isAdmin() ? `<h3>Family Events fund</h3>
-        <p class="muted">The Individual, Concessionary and Family subscriptions come in from Square by themselves every Saturday morning, covering the last 7 days (or when you tap Sync from Square on Square check), with Square's fee taken off. Use this for the opening balance, other money in, and money spent.</p>
+        <p class="muted">The Individual, Concessionary and Family subscriptions come in from Square by themselves every Saturday morning, covering the last 7 days (or when you tap Sync from Square on Weekly accounts), with Square's fee taken off. Use this for the opening balance, other money in, and money spent.</p>
         ${familyWeeks(subs)}
         <p class="note">Each week's subscriptions, and any money in or spent recorded here, are posted to the <a href="#chat:family-accounts">BR3 Family Events Accounts chat</a> on the Accounts tab.</p>
         <div class="grid2"><div><label>Money</label><select id="yDir"><option value="1">In</option><option value="-1">Spent</option></select></div>
@@ -661,19 +720,6 @@
     </div></div>`;
     el.querySelectorAll("[data-f]").forEach((b) => (b.onclick = () => go(b.dataset.f ? "funds:" + b.dataset.f : "funds")));
     el.querySelectorAll("[data-stshow]").forEach((box) => showStatement(box, Number(box.dataset.stshow), alive, false));
-    el.querySelectorAll("[data-stfile]").forEach((inp) => (inp.onchange = () => {
-      const f = inp.files[0]; if (!f) return;
-      const isPdf = /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name);
-      if (!isPdf && !/^image\//.test(f.type)) return toast("Choose a photo, screenshot or PDF");
-      if (isPdf && f.size > 5e6) return toast("That PDF is over 5 MB. Try a smaller one");
-      const rd = new FileReader();
-      rd.onload = async () => {
-        const file = isPdf ? String(rd.result).replace(/^data:[^;,]*(;base64)?,/, "data:application/pdf;base64,") : await shrink(rd.result, 2000);
-        try { await q(sb.from("square_statement").upsert({ id: Number(inp.dataset.stfile), file, file_name: f.name, uploaded_at: new Date().toISOString(), uploaded_by: me.id }));
-          toast("Balance photo uploaded"); refresh(); } catch (e) { fail(e); }
-      };
-      rd.readAsDataURL(f);
-    }));
     el.querySelectorAll("[data-upaid]").forEach((b) => (b.onclick = async () => {
       const u = unclaimed.find((x) => String(x.id) === b.dataset.upaid);
       const note = prompt(`Paid ${money(u.amount)} back to ${u.name}? Add a note, e.g. "bank transfer 3 Nov".`, "bank transfer");
@@ -743,9 +789,12 @@
   // the Square balance against the funds, and lists each Square payment with its fee and net.
   const PLACE = { cash: "Cash in hand", bank: "Bank (Starling)", square: "Square", count: "Counted" };
   const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  async function squarecheck(el, alive, arg = "") {
-    if (!me) return needSignIn(el, "check Square");
-    if (!isDoor()) { el.innerHTML = '<div class="empty"><h2>For organisers</h2><p class="muted">The Square check is for organisers and the admin.</p></div>'; return; }
+  // Weekly accounts: one page for the Saturday routine. 1 balances and photos, 2 the week's accounts to post,
+  // 3 the reconciliation, then Square payments, matching and money moved underneath.
+  let starlingAutoAt = 0; // reads Starling by itself when the page opens, at most every 10 minutes
+  async function weekly(el, alive, arg = "") {
+    if (!me) return needSignIn(el, "see the weekly accounts");
+    if (!isDoor()) { el.innerHTML = '<div class="empty"><h2>For organisers</h2><p class="muted">Weekly accounts are for organisers and the admin.</p></div>'; return; }
     loading(el);
     const [a, b] = String(arg).split("~");
     const to = /^\d{4}-\d{2}-\d{2}$/.test(b || "") ? b : isoDay(new Date());
@@ -763,8 +812,27 @@
         isAdmin() ? q(sb.from("starling_txns").select("*").gte("at", start).lt("at", end).order("at", { ascending: false })).catch(() => []) : [],
       ]);
     } catch (e) {
-      el.innerHTML = `<div class="empty"><h2>Square check isn't ready</h2><p class="muted">Run supabase/add-square-check.sql in Supabase first. (${esc(e.message)})</p></div>`;
+      el.innerHTML = `<div class="empty"><h2>Weekly accounts aren't ready</h2><p class="muted">Run supabase/add-square-check.sql in Supabase first. (${esc(e.message)})</p></div>`;
       return;
+    }
+    // This week = since the last reconciliation was posted. Each step is done once it's been redone since then.
+    let last = null, stmts = [], games = [], evs = [], weekSince = new Date(0);
+    if (isAdmin()) {
+      last = await q(sb.from("reconciliations").select("posted_at").order("id", { ascending: false }).limit(1)).then((r) => r[0] || null).catch(() => null);
+      const since = last ? new Date(last.posted_at) : new Date(0), back = new Date(Math.max(since.getTime(), Date.now() - 60 * 864e5));
+      let evRows, posted, lines;
+      [stmts, games, evRows, posted, lines] = await Promise.all([
+        q(sb.from("square_statement").select("id,uploaded_at")).catch(() => []),
+        q(sb.from("events").select("id,title,day,time,accounts_posted").eq("kind", "football").eq("accounts_posted", false).not("day", "is", null).order("day")).catch(() => []),
+        q(sb.from("events").select("id,title,day,time,price").neq("kind", "football").not("day", "is", null).gte("day", isoDay(new Date(back.getTime() - 14 * 864e5))).order("day")).catch(() => []),
+        q(sb.from("event_accounts").select("event_id")).catch(() => []),
+        q(sb.from("event_account_lines").select("event_id")).catch(() => []),
+      ]);
+      const done = new Set(posted.map((r) => r.event_id)), withLines = new Set(lines.map((r) => r.event_id));
+      games = games.filter((g) => eventEnd(g) <= new Date());
+      // Events that took money (a price or receipts entered) and have ended, without posted accounts.
+      evs = evRows.filter((e) => !done.has(e.id) && eventEnd(e) <= new Date() && (Number(e.price) > 0 || withLines.has(e.id)));
+      weekSince = since;
     }
     if (!alive()) return;
     const ok = pays.filter((p) => p.status === "COMPLETED");
@@ -780,10 +848,15 @@
     const diff = bal == null ? null : Math.round((bal - Number(x.expected)) * 100) / 100;
     const KIND = { booking: "Booking", subscription: "Family Events", other: "Not matched" };
     const row = (label, v, sign = "") => `<tr><td>${label}</td><td class="amt ${sign === "−" ? "neg" : ""}">${sign}${money(Math.abs(Number(v)))}</td></tr>`;
-    el.innerHTML = `<div class="events"><div class="card fb"><h2>Square check</h2>
-      <p class="muted">Square holds all the funds. Cash and transfers count as held outside Square until they're moved in.</p>
-      <h3>Does Square match the funds?</h3>
-      <div class="scroll"><table class="wrap"><tbody>
+    const after = (t) => !!t && new Date(t) > weekSince;
+    const stOf = (id) => stmts.find((x) => x.id === id);
+    const step1 = isAdmin() && after(x.square_balance_at) && after(stOf(1)?.uploaded_at) && after(stOf(2)?.uploaded_at);
+    const step2 = isAdmin() && !games.length && !evs.length;
+    const tick = (b) => (b ? ' <span class="tag">✓ Done</span>' : "");
+    const photoRow = (id, name) => { const st = stOf(id);
+      return `<div class="note"><b>${name} balance photo</b> ${after(st?.uploaded_at) ? `<span class="tag">✓ ${short(new Date(st.uploaded_at))}</span>` : st ? `<span class="muted">last one ${short(new Date(st.uploaded_at))}</span>` : ""}
+        <label>${after(st?.uploaded_at) ? "Replace it" : "Add this week's"} (a screenshot or PDF)</label><input data-stfile="${id}" type="file" accept="image/*,application/pdf,.pdf"></div>`; };
+    const checkTable = `<div class="scroll"><table class="wrap"><tbody>
         ${row(`All funds (kitty, events, credits, Family Events${Number(x.unclaimed) ? ", unclaimed credit" : ""})`, x.funds)}
         ${row("Paid for games and events whose accounts aren't posted yet", x.pending_in, "+")}
         ${row("Square fees on those", x.pending_fees, "−")}
@@ -793,21 +866,30 @@
         <tr><td>Square balance${x.square_balance_at ? ` (entered ${short(new Date(x.square_balance_at))})` : ""}</td><td class="amt">${bal == null ? "—" : money(bal)}</td></tr>
       </tbody></table></div>
       ${diff == null ? "" : diff === 0 ? '<p class="note check-diff">✓ Square matches the funds.</p>' : `<p class="note check-diff">Square has ${money(Math.abs(diff))} ${diff > 0 ? "more" : "less"} than the funds.</p>
-        <p class="muted">Common reasons: pitch hire paid on the Square Card before the game's accounts are posted, a payment below marked "Not matched", a refund, or money moved but not recorded here.</p>`}
-      ${x.pending.length ? `<details class="info"><summary>Games and events not yet in accounts</summary>${x.pending.map((p) => `<p>${esc(p.title)}${p.day ? ` ${short(parseDay(p.day))}` : ""}: ${money(p.paid || 0)} paid, ${money(p.fees || 0)} Square fees</p>`).join("")}</details>` : ""}
-      <label>Square balance now, from the Square app £</label><input id="sqBal" type="number" step="0.01" inputmode="decimal" value="${bal == null ? "" : bal.toFixed(2)}">
-      <div class="form-actions"><button class="btn solid block" id="sqBalGo">Check against the funds</button></div>
-      ${isAdmin() ? `<h3>Starling</h3>
-        <p class="muted">${x.starling_at ? `Starling is read by itself every Saturday morning, with the week's transactions. Last read ${short(new Date(x.starling_at))}: ${money(x.starling)}.` : "Once STARLING_TOKEN is added in Netlify, the app reads Starling's balance and transactions (read-only) every Saturday morning, and the bank figure above becomes Starling's real balance."}</p>
-        <div class="form-actions"><button class="btn block" id="stPull">Pull from Starling now</button></div>
-        ${stx.length ? `<details class="info"><summary>Starling transactions, these dates (${stx.length})</summary><div class="scroll"><table class="wrap"><tbody>${stx.map((t) => `<tr><td>${esc(t.counterparty || t.source || "Starling")}${t.reference ? ` · ${esc(t.reference)}` : ""}<div class="muted" style="font-size:13px">${short(new Date(t.at))}${t.status && t.status !== "SETTLED" ? ` · ${esc(t.status.toLowerCase())}` : ""}</div></td><td class="amt ${Number(t.amount) < 0 ? "neg" : ""}">${Number(t.amount) < 0 ? `(${money(-t.amount)})` : money(t.amount)}</td></tr>`).join("")}</tbody></table></div></details>` : ""}` : ""}
-      ${isAdmin() ? `<h3>Weekly reconciliation</h3>
-        <p class="muted">On Saturday, after the week's accounts are posted, enter the Square balance above and draft this. It's posted, pinned, to the Accounts Reconciliation chat for every member to see, with the Square and Starling balance photos from the Funds page.</p>
-        <div class="form-actions"><button class="btn solid block" id="rcDraft">Draft the reconciliation</button></div>
-        <div id="rcBox" hidden><label>Reconciliation (edit freely)</label><textarea id="rcText" rows="20" class="mono"></textarea>
-          <div id="rcDiff" hidden><label>Why there is a difference</label><textarea id="rcWhy" rows="3"></textarea>
-            <label>How and when it will be corrected</label><textarea id="rcFix" rows="3"></textarea></div>
-          <div class="form-actions"><button class="btn solid block" id="rcPost">Post to the Accounts Reconciliation chat</button></div></div>` : ""}
+        <p class="muted">Common reasons: cash not yet banked, pitch hire paid before the game's accounts are posted, a payment below marked "Not matched", a refund, or money moved but not recorded.</p>`}
+      ${x.pending.length ? `<details class="info"><summary>Games and events not yet in accounts</summary>${x.pending.map((p) => `<p>${esc(p.title)}${p.day ? ` ${short(parseDay(p.day))}` : ""}: ${money(p.paid || 0)} paid, ${money(p.fees || 0)} Square fees</p>`).join("")}</details>` : ""}`;
+    el.innerHTML = `<div class="events"><div class="card fb"><h2>Weekly accounts</h2>
+      ${isAdmin() ? `<p class="muted">Every Saturday, three steps in order. Each gets a ✓ when it's done for this week.${last ? ` Last reconciliation posted ${short(new Date(last.posted_at))}.` : ""}</p>
+      <h3>1. Balances${tick(step1)}</h3>
+      <p class="note"><b>${x.starling_name ? `Starling ${esc(x.starling_name)}` : "Starling"} ${x.starling_at ? money(x.starling) : "—"}</b> <span class="muted">${x.starling_at ? `read by itself ${short(new Date(x.starling_at))} ${new Date(x.starling_at).toTimeString().slice(0, 5)}` : "not read yet"}</span>
+        <button class="btn small" id="stPull" style="margin-left:6px">Read again</button></p>
+      <label>Square balance now, from the Square app £ ${after(x.square_balance_at) ? '<span class="tag">✓ saved</span>' : ""}</label>
+      <div class="row" style="gap:8px"><input id="sqBal" type="number" step="0.01" inputmode="decimal" value="${bal == null ? "" : bal.toFixed(2)}" style="flex:1"><button class="btn solid" id="sqBalGo">Save</button></div>
+      ${photoRow(1, "Square")}${photoRow(2, "Starling")}
+      <h3>2. Accounts to post${tick(step2)}</h3>
+      ${games.length || evs.length ? `${games.map((g) => `<div class="member-row"><div><b>${esc(g.title)}</b><div class="muted" style="font-size:14px">${short(parseDay(g.day))} · football accounts</div></div><button class="btn solid small" data-go="footballadmin">Open</button></div>`).join("")}
+        ${evs.map((e) => `<div class="member-row"><div><b>${esc(e.title)}</b><div class="muted" style="font-size:14px">${short(parseDay(e.day))} · events accounts</div></div><button class="btn solid small" data-go="eventaccounts:${e.id}">Open</button></div>`).join("")}
+        <p class="muted">Post each one. It drops off this list once it's posted.</p>` : '<p class="muted">Nothing waiting: this week\'s games and events are posted.</p>'}
+      <h3>3. Reconciliation</h3>
+      ${checkTable}
+      ${step1 && step2 ? "" : `<p class="note">Finish ${!step1 && !step2 ? "steps 1 and 2" : !step1 ? "step 1" : "step 2"} first, so the reconciliation uses this week's figures.</p>`}
+      <div class="form-actions"><button class="btn ${step1 && step2 ? "solid " : ""}block" id="rcDraft">Draft the reconciliation</button></div>
+      <div id="rcBox" hidden><label>Reconciliation (edit freely)</label><textarea id="rcText" rows="20" class="mono"></textarea>
+        <div id="rcDiff" hidden><label>Why there is a difference</label><textarea id="rcWhy" rows="3" placeholder="e.g. £6 cash from Friday not banked yet"></textarea>
+          <label>How and when it will be corrected</label><textarea id="rcFix" rows="3" placeholder="e.g. Paid into Starling on Monday"></textarea></div>
+        <p class="muted">Posted, pinned, to the Accounts Reconciliation chat, with both balance photos.</p>
+        <div class="form-actions"><button class="btn solid block" id="rcPost">Post to the Accounts Reconciliation chat</button></div></div>
+      <details class="info" style="margin-top:18px"><summary><b>Square payments, matching and money moved</b></summary>` : `<h3>Does Square match the funds?</h3>${checkTable}`}
       ${isAdmin() ? `<h3>Money moved</h3>
         <p class="muted">Record cash paid into Square, or money moved from Starling to Square, so the check stays right.</p>
         <div class="grid2"><div><label>From</label><select id="mFrom"><option value="cash">Cash in hand (${money(x.held_cash)})</option><option value="bank">Bank (Starling) (${money(x.held_bank)})</option><option value="square">Square</option><option value="count">Correct to a counted figure</option></select></div>
@@ -832,6 +914,7 @@
         ${isAdmin() ? `<h3>Match by hand</h3>${other.map((p) => `<div class="grid2"><div><label>${money(p.gross)} on ${short(new Date(p.paid_at))}${p.note ? ` · ${esc(p.note)}` : ""}</label><select data-mpay="${esc(p.id)}"><option value="">Choose the booking</option>${cands.map((c) => `<option value="${c.id}">${candLabel(c)}</option>`).join("")}</select></div><div style="align-self:end"><button class="btn solid block" data-mgo="${esc(p.id)}">Match</button></div></div>`).join("")}
         <p class="muted">Matching marks the booking as paid by card, with Square's fee. A later Sync keeps the match.</p>` : ""}` : ""}
       ${missing.length ? `<p class="note">${missing.length} card booking${missing.length > 1 ? "s" : ""} in the app ${missing.length > 1 ? "have" : "has"} no Square payment here: ${missing.map((c) => esc(c.display_name)).join(", ")}. Tap Sync from Square, and if ${missing.length > 1 ? "they stay" : "it stays"}, check Square.</p>` : ""}
+      ${isAdmin() ? "</details>" : ""}
     </div></div>`;
     el.querySelectorAll("[data-mgo]").forEach((btn) => (btn.onclick = async () => {
       const sel = el.querySelector(`[data-mpay="${CSS.escape(btn.dataset.mgo)}"]`);
@@ -849,9 +932,9 @@
         if (!res.ok) throw new Error(r.error || "Couldn't reach Starling.");
         toast(`Starling ${r.name}: ${money(r.balance)}, ${r.transactions} transaction${r.transactions === 1 ? "" : "s"} read`);
         refresh();
-      } catch (err) { btn.disabled = false; btn.textContent = "Pull from Starling now"; fail(err); }
+      } catch (err) { btn.disabled = false; btn.textContent = "Read again"; fail(err); }
     };
-    $("#sqShow", el).onclick = () => go(`squarecheck:${$("#sqFrom", el).value}~${$("#sqTo", el).value}`);
+    $("#sqShow", el).onclick = () => go(`weekly:${$("#sqFrom", el).value}~${$("#sqTo", el).value}`);
     $("#sqSync", el).onclick = async (e) => {
       const btn = e.currentTarget; btn.disabled = true; btn.textContent = "Checking Square…";
       try {
@@ -860,7 +943,7 @@
         const r = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(r.error || "Couldn't reach Square.");
         toast(`${r.checked} Square payment${r.checked === 1 ? "" : "s"} checked, ${r.updated} updated${r.family ? `, ${r.family} to Family Events` : ""}`);
-        go(`squarecheck:${$("#sqFrom", el).value}~${$("#sqTo", el).value}`);
+        go(`weekly:${$("#sqFrom", el).value}~${$("#sqTo", el).value}`);
       } catch (err) { btn.disabled = false; btn.textContent = "Sync from Square"; fail(err); }
     };
     if ($("#rcDraft", el)) $("#rcDraft", el).onclick = async () => {
@@ -916,11 +999,36 @@
         catch (e) { $("#rcPost", el).disabled = false; fail(e); }
       };
     };
-    $("#sqBalGo", el).onclick = async () => {
+    if ($("#sqBalGo", el)) $("#sqBalGo", el).onclick = async () => {
       const v = $("#sqBal", el).value;
       if (v === "") return toast("Enter the Square balance");
-      try { await q(sb.rpc("set_square_balance", { p_amount: Number(v) })); refresh(); } catch (e) { fail(e); }
+      try { await q(sb.rpc("set_square_balance", { p_amount: Number(v) })); toast("Square balance saved"); refresh(); } catch (e) { fail(e); }
     };
+    // The Square and Starling balance photos: shown on the Funds page and attached to the reconciliation post.
+    el.querySelectorAll("[data-stfile]").forEach((inp) => (inp.onchange = () => {
+      const f = inp.files[0]; if (!f) return;
+      const isPdf = /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name);
+      if (!isPdf && !/^image\//.test(f.type)) return toast("Choose a photo, screenshot or PDF");
+      if (isPdf && f.size > 5e6) return toast("That PDF is over 5 MB. Try a smaller one");
+      const rd = new FileReader();
+      rd.onload = async () => {
+        const file = isPdf ? String(rd.result).replace(/^data:[^;,]*(;base64)?,/, "data:application/pdf;base64,") : await shrink(rd.result, 2000);
+        try { await q(sb.from("square_statement").upsert({ id: Number(inp.dataset.stfile), file, file_name: f.name, uploaded_at: new Date().toISOString(), uploaded_by: me.id }));
+          toast("Balance photo added"); refresh(); } catch (e) { fail(e); }
+      };
+      rd.readAsDataURL(f);
+    }));
+    // Starling is read by itself when the page opens (unless it was read in the last 10 minutes).
+    if (isAdmin() && $("#stPull", el) && Date.now() - starlingAutoAt > 6e5 && (!x.starling_at || Date.now() - new Date(x.starling_at) > 6e5)) {
+      starlingAutoAt = Date.now();
+      (async () => {
+        try {
+          const { data: { session } } = await sb.auth.getSession();
+          const res = await fetch("/.netlify/functions/starling-sync", { method: "POST", headers: { Authorization: `Bearer ${session?.access_token || ""}` } });
+          if (res.ok && alive()) refresh();
+        } catch {}
+      })();
+    }
     const mFrom = $("#mFrom", el);
     if (!mFrom) return;
     mFrom.onchange = () => {
@@ -1362,7 +1470,11 @@
   // ---------- Football Awards (supabase/add-football-awards.sql, then update-football-awards.sql) ----------
   // Players ticked in on the night pick one player per award (a different player each time, never themselves),
   // for 24 hours from 11pm. Loads after the rest of the page so it never slows the football tab down.
-  const AWARDS = [["goal", "⚽ Best Goal"], ["assist", "🎯 Best Assist"], ["overall", "🏅 Man of the Match"], ["motivator", "📣 Best Team Motivator"]];
+  // Man of the Match first, then the other four as a 2×2 grid (update-football-awards-save.sql).
+  const AWARDS = [["overall", "🏅 Man of the Match"], ["save", "🧤 Best Save / Defensive Play"], ["motivator", "📣 Best Team Motivator"], ["goal", "⚽ Best Goal"], ["assist", "🎯 Best Assist"]];
+  // The awards table also has Most Rounded Player: every vote across the four awards added up, Man of the Match not counted.
+  const AWARD_TABS = [["rounded", "🌟 Most Rounded Player"], ...AWARDS];
+  const MOTM_NOTE = "Anyone who stood out, including your picks below";
   const whenText = (iso) => { const d = new Date(iso), h = d.getHours(), m = d.getMinutes();
     return `${DAYS[d.getDay()]} ${h % 12 || 12}${m ? ":" + String(m).padStart(2, "0") : ""}${h < 12 ? "am" : "pm"}`; };
   const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
@@ -1377,7 +1489,7 @@
     const voted = (a.mine || []).length > 0, n = a.voters || 0;
     const names = (list) => list.map((x) => esc(x.name)).join(" and ");
     let inner;
-    if (a.state === "soon") inner = `<p>After tonight's game, the players who were ticked in vote for Best Goal, Best Assist, Best Team Motivator and Man of the Match. Voting opens at <b>${whenText(a.opens)}</b> and stays open for 24 hours.</p>`;
+    if (a.state === "soon") inner = `<p>After tonight's game, the players who were ticked in vote for Man of the Match, Best Save / Defensive Play, Best Team Motivator, Best Goal and Best Assist. Voting opens at <b>${whenText(a.opens)}</b> and stays open for 24 hours.</p>`;
     else if (a.state === "open") inner = `<p>Vote for the best from <b>${day}</b>. Voting closes <b>${whenText(a.closes)}</b>. ${plural(n, "player")} ${n === 1 ? "has" : "have"} voted so far.</p>
       ${a.can_vote ? `${voted ? '<p class="muted">You\'ve voted ✓ You can change your votes until voting closes.</p>' : ""}<button class="btn solid block" id="awVote">${voted ? "Change my votes" : "Vote now"}</button>`
         : '<p class="muted">Only players ticked in on the night can vote.</p>'}
@@ -1385,12 +1497,12 @@
     else {
       const won = (a.results || []).filter((r) => r.best.length);
       inner = !won.length ? `<p class="muted">Nobody voted for the ${day} game.</p>`
-        : `<p class="muted">Winners from ${day}, voted by ${plural(n, "player")}.</p><div class="aw-grid">${won.map((r) => `<div class="aw-cell">
+        : `<p class="muted">Winners from ${day}, voted by ${plural(n, "player")}.</p><div class="aw-grid">${won.map((r) => `<div class="aw-cell${r.category === "overall" ? " wide" : ""}">
             <span class="muted" style="font-size:13px">${esc(r.label)}</span><b>${names(r.best)}</b><span class="aw-votes">${plural(r.best[0].votes, "vote")}${r.best.length > 1 ? " each" : ""}</span></div>`).join("")}</div>`;
     }
     box.innerHTML = `<div class="card fb"><div class="row" style="justify-content:space-between;flex-wrap:wrap"><h2>🏆 Football Awards</h2>${a.state === "open" ? '<span class="tag gold">Voting open</span>' : ""}</div>
       ${inner}<button class="btn block" id="awTable" style="margin-top:10px">Awards table</button></div>`;
-    $("#awTable", box).onclick = () => awardTable("kitty", "goal");
+    $("#awTable", box).onclick = () => awardTable("kitty", "rounded");
     const v = $("#awVote", box);
     if (v) v.onclick = () => awardVote(a, () => footballAwards(box, alive));
   }
@@ -1398,8 +1510,8 @@
   function awardVote(a, done) {
     const pick = (c) => ((a.mine || []).find((x) => x.category === c) || {}).pick || "";
     modal(`<h2>🏆 Football Awards</h2>
-      <p class="muted" style="line-height:1.5">One player per award. Best Goal, Best Assist and Best Team Motivator go to a different player each; Man of the Match can be anyone who played. You can't pick yourself. Skip any you're not sure about.</p>
-      ${AWARDS.map(([c, label]) => `<label style="margin-top:14px">${label}</label><select data-c="${c}"></select>`).join("")}
+      <p class="muted" style="line-height:1.5">One player per award, and a different player for each of the four awards under Man of the Match. You can't pick yourself. Skip any you're not sure about.</p>
+      ${AWARDS.map(([c, label]) => `<label style="margin-top:14px">${label}${c === "overall" ? ` <span class="muted" style="font-weight:400">(${MOTM_NOTE.toLowerCase()})</span>` : ""}</label><select data-c="${c}"></select>`).join("")}
       <div class="form-actions"><button class="btn solid block" id="awSave">Save my votes</button></div>`, (m) => {
       const sels = [...m.querySelectorAll("select[data-c]")];
       const fill = () => {
@@ -1417,24 +1529,24 @@
         const votes = sels.map((s) => ({ category: s.dataset.c, pick: s.value })).filter((x) => x.pick);
         if (!votes.length) return toast("Pick at least one player");
         const others = votes.filter((x) => x.category !== "overall");
-        if (new Set(others.map((x) => x.pick)).size < others.length) return toast("Pick a different player for Best Goal, Best Assist and Best Team Motivator");
+        if (new Set(others.map((x) => x.pick)).size < others.length) return toast("Pick a different player for each award. Only Man of the Match can repeat a player");
         try { $("#awSave", m).disabled = true; await q(sb.rpc("cast_award_votes", { p_event: a.event_id, p_votes: votes })); closeModal(); toast("Thanks, your votes are in ✓"); done(); }
         catch (e) { $("#awSave", m).disabled = false; fail(e); }
       };
     });
   }
-  // Top 6 for one award at a time: last game, this kitty, or all time.
+  // Top 6 for one award (or Most Rounded Player) at a time: last game, this kitty, or all time.
   async function awardTable(period, cat) {
     const rows = await q(sb.rpc("award_table", { p_period: period, p_category: cat })).catch(() => null);
     const top = (rows || []).filter((r, i) => i < 6), mine = (rows || []).find((r) => r.me), inTop = top.some((r) => r.me);
-    const won = (r) => !r.wins ? "" : period === "last" ? "Winner" : `Won ${plural(r.wins, "game")}`;
+    const won = (r) => !r.wins ? "" : cat === "rounded" ? `Won ${plural(r.wins, "award")}` : period === "last" ? "Winner" : `Won ${plural(r.wins, "game")}`;
     const row = (r) => `<div class="lb-row ${r.me ? "me" : ""}"><span class="lb-rank">${r.rank}</span>
       <div style="flex:1;min-width:0"><b>${esc(r.name)}${r.me ? " (you)" : ""}</b><div class="muted" style="font-size:13px">${won(r)}</div></div><b class="lb-score">${r.votes}</b></div>`;
     const P = { last: "Last game", kitty: "This kitty", all: "All time" };
     modal(`<h2>🏆 Awards table</h2>
-      <p class="muted" style="line-height:1.5">${period === "kitty" && awardKitty ? `Kitty ${awardKitty}, up to 5 games. ` : ""}Each vote is 1 point. Results count once each game's voting closes.</p>
+      <p class="muted" style="line-height:1.5">${period === "kitty" && awardKitty ? `Kitty ${awardKitty}, up to 5 games. ` : ""}Each vote is 1 point. Results count once each game's voting closes.${cat === "rounded" ? " Most Rounded Player adds up every vote across the four awards, not counting Man of the Match." : ""}</p>
       <div class="seg">${Object.entries(P).map(([k, l]) => `<button data-p="${k}" class="${period === k ? "on" : ""}">${l}</button>`).join("")}</div>
-      <div class="aw-tabs">${AWARDS.map(([c, l]) => `<button data-k="${c}" class="${cat === c ? "on" : ""}">${l.replace(/^\S+\s/, "")}</button>`).join("")}</div>
+      <div class="aw-tabs">${AWARD_TABS.map(([c, l]) => `<button data-k="${c}" class="${cat === c ? "on" : ""}">${l.replace(/^\S+\s/, "")}</button>`).join("")}</div>
       ${rows === null ? '<p class="note">The awards are being set up. Check back soon.</p>'
         : top.length ? `<div class="lb">${top.map(row).join("")}</div>${mine && !inTop ? `<p class="muted" style="margin:14px 0 4px">Your place</p><div class="lb">${row(mine)}</div>` : ""}`
         : '<p class="muted">No votes counted yet.</p>'}`, (m) => {
@@ -2385,10 +2497,12 @@
       ${isDoor() ? `<h3 class="menu-head">Organisers · on the night</h3>
       <button class="menu-row" data-to="supervisors">${ICON.ball}<span>Football Supervisors ${ICON.chev}</span></button>
       ${isAdmin() ? "" : `<button class="menu-row" data-to="admin">${ICON.tools}<span>Check in at other events ${ICON.chev}</span></button>`}` : ""}
+      ${me?.sup?.length ? `<h3 class="menu-head">Event supervisor</h3>
+      <button class="menu-row" data-to="supervising">${ICON.tools}<span>Supervisor tools: scan tickets ${ICON.chev}</span></button>` : ""}
       ${isAdmin() ? `<h3 class="menu-head">Admin</h3>
       <button class="menu-row" data-to="footballadmin">${ICON.ball}<span>Football Accounts ${ICON.chev}</span></button>
       <button class="menu-row" data-to="eventaccounts">${ICON.cal}<span>Events accounts to post ${ICON.chev}</span></button>
-      <button class="menu-row" data-to="squarecheck">${ICON.poll}<span>Square check ${ICON.chev}</span></button>
+      <button class="menu-row" data-to="weekly">${ICON.poll}<span>Weekly accounts ${ICON.chev}</span></button>
       <button class="menu-row" data-to="admin">${ICON.tools}<span>Admin tools ${ICON.chev}</span></button>` : ""}`;
     el.querySelectorAll("[data-to]").forEach((b) => (b.onclick = () => go(b.dataset.to)));
   }
@@ -2645,6 +2759,37 @@
     tick();
   }
 
+  // ---------- SUPERVISOR TOOLS ----------
+  // Members chosen to supervise an event: their team, the other supervisors, and scanning at that event only.
+  // It disappears at 4am the morning after the event.
+  async function supervising(el, alive) {
+    loading(el);
+    await loadMe();
+    if (!alive()) return;
+    const mine = (me?.sup || []).sort((a, b) => eventStart(a.events) - eventStart(b.events));
+    if (!mine.length) { el.innerHTML = `<div class="empty"><h2>Supervisor tools</h2><p class="muted">You're not supervising an event at the moment. When the admin puts you in a team, the event shows here, and your access ends the morning after it.</p></div>`; return; }
+    const ids = mine.map((x) => x.event_id);
+    const all = await q(sb.from("event_supervisors").select("event_id,user_id,role,profiles(name)").in("event_id", ids)).catch(() => []);
+    if (!alive()) return;
+    el.innerHTML = `<div class="pad" style="padding-top:24px"><h1>Supervisor tools</h1>
+      <p class="muted">Thank you for helping run our events. Scan tickets at the door, and see who's here and who's still to come.</p>
+      ${mine.map((x) => { const ev = x.events, team = all.filter((s) => s.event_id === ev.id);
+        return `<div class="card" style="padding:14px;margin:12px 0"><h2 style="margin:0 0 4px">${esc(ev.title)}</h2>
+          <p class="muted" style="margin:0 0 8px">${fmtEvent(ev)}${ev.location ? ` · ${esc(ev.location)}` : ""}</p>
+          <p>Your team: <b>${SUP_ROLES[x.role]}</b></p>
+          <div class="sup-teams">${Object.entries(SUP_ROLES).map(([k, v]) => `<div><small>${v}</small>${team.filter((s) => s.role === k).map((s) => `<b>${esc(s.profiles?.name || "?")}${s.user_id === me.id ? " (you)" : ""}</b>`).join("") || '<span class="muted">No one yet</span>'}</div>`).join("")}</div>
+          <p class="muted" style="font-size:14px">Please come to the pre-event meeting and the post-event debrief. Your scanning access ends at 4am the morning after the event.</p>
+          <button class="btn solid block" data-scan style="margin-bottom:10px">Scan a ticket's QR code</button>
+          <div class="row"><input data-code placeholder="Or type the code, e.g. AA-7K2QX" style="text-transform:uppercase"><button class="btn small" data-type>Check in</button></div>
+          <div data-list="${ev.id}"></div></div>`; }).join("")}</div>`;
+    el.querySelectorAll("[data-scan]").forEach((b) => (b.onclick = () => scanTicket(checkIn)));
+    el.querySelectorAll("[data-type]").forEach((b) => (b.onclick = () => { const i = b.parentElement.querySelector("[data-code]"), c = i.value.trim(); if (!c) return toast("Type the ticket code"); i.value = ""; checkIn(c); }));
+    // One who's-in list at a time keeps the live updates simple: the soonest event's list.
+    whosIn(el.querySelector(`[data-list="${mine[0].event_id}"]`), mine[0].event_id);
+    mine.slice(1).forEach((x) => { const box = el.querySelector(`[data-list="${x.event_id}"]`); box.innerHTML = `<button class="btn small block" data-show="${x.event_id}">Show who's in</button>`; });
+    el.querySelectorAll("[data-show]").forEach((b) => (b.onclick = () => whosIn(b.parentElement, b.dataset.show)));
+  }
+
   // ---------- ORGANISER TOOLS ----------
   // What organisers see in Organiser tools: scanning and who's in.
   async function doorTools(el) {
@@ -2677,6 +2822,8 @@
     const report = Object.fromEntries((await q(sb.rpc("member_report")).catch(() => [])).map((r) => [r.id, r]));
     // Guests (empty until add-guest-admin.sql is run).
     const greport = isAdmin() ? await q(sb.rpc("guest_report")).catch(() => null) : null;
+    // Supervisor applications and teams (null until add-event-supervisors.sql is run).
+    const [supApps, supRows] = await Promise.all([q(sb.from("supervisor_applications").select("*").order("created_at")).catch(() => null), q(sb.from("event_supervisors").select("*")).catch(() => null)]);
     if (!alive()) return;
     const g = Object.fromEntries(guests.map((x) => [x.booking_id, x]));
     // events from today on, soonest first, for the who's-in list under the scan button
@@ -2686,6 +2833,25 @@
     const guestRequests = bks.filter((b) => b.status === "pending" && !b.user_id);
     const pending = isAdmin() ? members.filter((m) => m.approved === false) : [];
     const ids = pending.map((m) => m.id);
+    const nameOf = Object.fromEntries(members.map((m) => [m.id, m.name]));
+    // Supervisors for one event: the 3 teams of 2, then everyone who applied, with a team to put them in.
+    function supAdmin(e) {
+      if (!supApps) return '<p class="muted"><b>Run add-event-supervisors.sql in Supabase to choose supervisors here.</b></p>';
+      const team = supRows.filter((x) => x.event_id === e.id), apps = supApps.filter((x) => x.event_id === e.id);
+      const inTeam = Object.fromEntries(team.map((x) => [x.user_id, x.role]));
+      const teamPick = (dflt) => `<select data-team>${Object.entries(SUP_ROLES).map(([k, v]) => `<option value="${k}" ${k === dflt ? "selected" : ""}>${v}</option>`).join("")}</select>`;
+      return `<div class="sup-admin"><h3>Supervisors (${team.length} of 6)</h3>
+        <p class="muted" style="font-size:14px">${e.supervisors_open ? `Applications are open${e.supervisor_deadline ? ` until ${supDeadline(e)}` : ""}.` : "Applications are closed. Tick the box above and save to open them."} Supervisors can scan tickets at this event until 4am the morning after it.</p>
+        <div class="sup-teams">${Object.entries(SUP_ROLES).map(([k, v]) => `<div><small>${v} (${team.filter((x) => x.role === k).length}/2)</small>${team.filter((x) => x.role === k).map((x) => `<span class="sup-name">${esc(nameOf[x.user_id] || "?")} <button class="btn small" data-sup-rm="${e.id}|${x.user_id}">Remove</button></span>`).join("") || '<span class="muted">No one yet</span>'}</div>`).join("")}</div>
+        <h3>Applied (${apps.length})</h3>
+        ${apps.map((a) => `<div class="sup-app" data-who="${a.user_id}"><b>${esc(nameOf[a.user_id] || "Member")}</b> <span class="muted" style="font-size:13px">applied ${short(new Date(a.created_at))}</span>
+          <div>Would like: ${a.prefs.map((k) => SUP_ROLES[k]).join(", ")}</div>${a.note ? `<div class="muted" style="white-space:pre-line">${esc(a.note)}</div>` : ""}
+          <div class="row" style="gap:8px;margin-top:6px">${teamPick(inTeam[a.user_id] || a.prefs[0])}<button class="btn small solid" data-sup-add="${e.id}">${inTeam[a.user_id] ? "Move team" : "Add to team"}</button></div>
+          ${a.user_id in inTeam ? `<span class="tag">In team: ${SUP_ROLES[inTeam[a.user_id]]}</span>` : ""}</div>`).join("") || '<p class="muted">No applications yet.</p>'}
+        <details><summary class="muted">Add a member who didn't apply</summary>
+          <div class="sup-app"><select data-member>${members.filter((m) => m.approved !== false && !(m.id in inTeam)).map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join("")}</select>
+          <div class="row" style="gap:8px;margin-top:6px">${teamPick("door")}<button class="btn small" data-sup-add="${e.id}">Add to team</button></div></div></details></div>`;
+    }
     const [pcs, apps] = ids.length ? await Promise.all([q(sb.from("member_postcodes").select("*").in("user_id", ids)), q(sb.from("applications").select("*").in("user_id", ids))]) : [[], []];
     if (!alive()) return;
     el.innerHTML = `<div class="pad" style="padding-top:24px">
@@ -2716,6 +2882,8 @@
       <label>Details</label><textarea id="det"></textarea>
       <label>Picture (optional)</label><input id="pic" type="file" accept="image/*">
       <label>Link instead of booking here (optional, e.g. the debate's page in Let's Debate)</label><input id="lnk" type="url" placeholder="https://debate.ourhomelands.co.uk/debates/…">
+      <label class="check"><input type="checkbox" id="supOn"> Supervisor applications open (shows the call for supervisors on the advert, and tells members)</label>
+      <label>Supervisor application deadline</label><input id="supDl" type="date">
       <div class="form-actions"><button class="btn solid block" id="add">Add event</button></div>
       <h2 style="margin-top:28px">Events and bookings</h2>
       <button class="btn block" id="csv">Download all event bookings (opens in Google Sheets or Excel)</button>
@@ -2736,8 +2904,11 @@
             <div style="grid-column:1/-1"><label>Linked fund (gets the profit, or pays the loss)</label><select data-f="fund" ${e.accounts_posted ? "disabled" : ""}>${fundOpts(e.fund || "events")}</select></div>
             <div style="grid-column:1/-1"><label>Details</label><textarea data-f="details" rows="6">${esc(e.details || "")}</textarea></div>
             <div style="grid-column:1/-1"><label>Link instead of booking here (optional)</label><input data-f="link" type="url" value="${esc(e.link || "")}" placeholder="https://debate.ourhomelands.co.uk/debates/…"></div>
-            <div style="grid-column:1/-1"><label>Picture</label>${e.image ? `<img class="event-pic" src="${esc(e.image)}" alt="">` : ""}<input data-pic="${e.id}" type="file" accept="image/*">${e.image ? `<button class="btn small" data-nopic="${e.id}" style="margin-top:8px">Remove picture</button>` : ""}</div></div>
-            <div class="row" style="margin:12px 0"><button class="btn small" data-upd="${e.id}">Save changes</button><button class="btn small" data-poster="${e.id}">QR code poster</button></div>` : ""}
+            <div style="grid-column:1/-1"><label>Picture</label>${e.image ? `<img class="event-pic" src="${esc(e.image)}" alt="">` : ""}<input data-pic="${e.id}" type="file" accept="image/*">${e.image ? `<button class="btn small" data-nopic="${e.id}" style="margin-top:8px">Remove picture</button>` : ""}</div>
+            <div style="grid-column:1/-1"><label class="check"><input type="checkbox" data-f="supervisors_open" ${e.supervisors_open ? "checked" : ""}> Supervisor applications open (shows on the advert)</label></div>
+            <div style="grid-column:1/-1"><label>Supervisor application deadline</label><input data-f="supervisor_deadline" type="date" value="${e.supervisor_deadline || ""}"></div></div>
+            <div class="row" style="margin:12px 0"><button class="btn small" data-upd="${e.id}">Save changes</button><button class="btn small" data-poster="${e.id}">QR code poster</button></div>
+            ${supAdmin(e)}` : ""}
           <button class="btn small danger" data-del="${e.id}">Remove event</button></details>`;
       }).join("")}
       ${isAdmin() ? `<h2 style="margin-top:28px" id="guestsHead">Guests</h2>
@@ -2783,6 +2954,8 @@
       const ev = { kind: "event", title: $("#t", el).value.trim(), day: $("#d", el).value, time: $("#tm", el).value, location: $("#loc", el).value.trim(),
         price: Number($("#pr", el).value) || 0, capacity: Number($("#cap", el).value) || 1, access: $("#acc", el).value, fund: $("#fund", el).value, details: $("#det", el).value.trim(),
         link: $("#lnk", el).value.trim() || null };
+      if ($("#supOn", el).checked) ev.supervisors_open = true;
+      if ($("#supDl", el).value) ev.supervisor_deadline = $("#supDl", el).value;
       if (!ev.title || !ev.time) return toast("Fill in at least the name and start time");
       if (ev.link && !/^https?:\/\//.test(ev.link)) return toast("The link should start with https://");
       if (!ev.day) ev.day = null; // date to be confirmed
@@ -2817,10 +2990,20 @@
       if (!f("title").trim()) return toast("Give the event a name");
       const upd = { title: f("title").trim(), location: f("location").trim(), details: f("details").trim(), day: f("day") || null, time: f("time"), price: Number(f("price")) || 0, capacity: Number(f("capacity")) || 1, access: f("access"), link: f("link").trim() || null };
       if (!$('[data-f="fund"]', box).disabled) upd.fund = f("fund");
+      if (supApps) { upd.supervisors_open = $('[data-f="supervisors_open"]', box).checked; upd.supervisor_deadline = f("supervisor_deadline") || null; }
       if (upd.link && !/^https?:\/\//.test(upd.link)) return toast("The link should start with https://");
       const file = $(`[data-pic="${b.dataset.upd}"]`, box).files[0];
       if (file) upd.image = await picture(file);
       try { await q(sb.from("events").update(upd).eq("id", b.dataset.upd)); toast(upd.day ? "Saved" : "Saved, date still to be confirmed"); refresh(); } catch (e) { fail(e); }
+    }));
+    el.querySelectorAll("[data-sup-add]").forEach((b) => (b.onclick = async () => {
+      const box = b.closest(".sup-app"), who = box.dataset.who || $("[data-member]", box)?.value;
+      if (!who) return toast("Choose a member");
+      try { await q(sb.rpc("assign_supervisor", { p_event: b.dataset.supAdd, p_user: who, p_role: $("[data-team]", box).value })); toast(`${nameOf[who] || "They"} added to the team`); refresh(); } catch (e) { fail(e); }
+    }));
+    el.querySelectorAll("[data-sup-rm]").forEach((b) => (b.onclick = async () => {
+      const [ev, who] = b.dataset.supRm.split("|");
+      try { await q(sb.from("event_supervisors").delete().eq("event_id", ev).eq("user_id", who)); toast("Removed from the team"); refresh(); } catch (e) { fail(e); }
     }));
     el.querySelectorAll("[data-nopic]").forEach((b) => (b.onclick = async () => {
       try { await q(sb.from("events").update({ image: null }).eq("id", b.dataset.nopic)); toast("Picture removed"); refresh(); } catch (e) { fail(e); }
