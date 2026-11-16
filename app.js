@@ -1421,7 +1421,11 @@
   // ---------- Football Awards (supabase/add-football-awards.sql, then update-football-awards.sql) ----------
   // Players ticked in on the night pick one player per award (a different player each time, never themselves),
   // for 24 hours from 11pm. Loads after the rest of the page so it never slows the football tab down.
-  const AWARDS = [["goal", "⚽ Best Goal"], ["assist", "🎯 Best Assist"], ["overall", "🏅 Man of the Match"], ["motivator", "📣 Best Team Motivator"]];
+  // Man of the Match first, then the other four as a 2×2 grid (update-football-awards-save.sql).
+  const AWARDS = [["overall", "🏅 Man of the Match"], ["save", "🧤 Best Save / Defensive Play"], ["motivator", "📣 Best Team Motivator"], ["goal", "⚽ Best Goal"], ["assist", "🎯 Best Assist"]];
+  // The awards table also has Most Rounded Player: every vote across the four awards added up, Man of the Match not counted.
+  const AWARD_TABS = [["rounded", "🌟 Most Rounded Player"], ...AWARDS];
+  const MOTM_NOTE = "Anyone who stood out, including your picks below";
   const whenText = (iso) => { const d = new Date(iso), h = d.getHours(), m = d.getMinutes();
     return `${DAYS[d.getDay()]} ${h % 12 || 12}${m ? ":" + String(m).padStart(2, "0") : ""}${h < 12 ? "am" : "pm"}`; };
   const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
@@ -1436,7 +1440,7 @@
     const voted = (a.mine || []).length > 0, n = a.voters || 0;
     const names = (list) => list.map((x) => esc(x.name)).join(" and ");
     let inner;
-    if (a.state === "soon") inner = `<p>After tonight's game, the players who were ticked in vote for Best Goal, Best Assist, Best Team Motivator and Man of the Match. Voting opens at <b>${whenText(a.opens)}</b> and stays open for 24 hours.</p>`;
+    if (a.state === "soon") inner = `<p>After tonight's game, the players who were ticked in vote for Man of the Match, Best Save / Defensive Play, Best Team Motivator, Best Goal and Best Assist. Voting opens at <b>${whenText(a.opens)}</b> and stays open for 24 hours.</p>`;
     else if (a.state === "open") inner = `<p>Vote for the best from <b>${day}</b>. Voting closes <b>${whenText(a.closes)}</b>. ${plural(n, "player")} ${n === 1 ? "has" : "have"} voted so far.</p>
       ${a.can_vote ? `${voted ? '<p class="muted">You\'ve voted ✓ You can change your votes until voting closes.</p>' : ""}<button class="btn solid block" id="awVote">${voted ? "Change my votes" : "Vote now"}</button>`
         : '<p class="muted">Only players ticked in on the night can vote.</p>'}
@@ -1444,12 +1448,12 @@
     else {
       const won = (a.results || []).filter((r) => r.best.length);
       inner = !won.length ? `<p class="muted">Nobody voted for the ${day} game.</p>`
-        : `<p class="muted">Winners from ${day}, voted by ${plural(n, "player")}.</p><div class="aw-grid">${won.map((r) => `<div class="aw-cell">
+        : `<p class="muted">Winners from ${day}, voted by ${plural(n, "player")}.</p><div class="aw-grid">${won.map((r) => `<div class="aw-cell${r.category === "overall" ? " wide" : ""}">
             <span class="muted" style="font-size:13px">${esc(r.label)}</span><b>${names(r.best)}</b><span class="aw-votes">${plural(r.best[0].votes, "vote")}${r.best.length > 1 ? " each" : ""}</span></div>`).join("")}</div>`;
     }
     box.innerHTML = `<div class="card fb"><div class="row" style="justify-content:space-between;flex-wrap:wrap"><h2>🏆 Football Awards</h2>${a.state === "open" ? '<span class="tag gold">Voting open</span>' : ""}</div>
       ${inner}<button class="btn block" id="awTable" style="margin-top:10px">Awards table</button></div>`;
-    $("#awTable", box).onclick = () => awardTable("kitty", "goal");
+    $("#awTable", box).onclick = () => awardTable("kitty", "rounded");
     const v = $("#awVote", box);
     if (v) v.onclick = () => awardVote(a, () => footballAwards(box, alive));
   }
@@ -1457,8 +1461,8 @@
   function awardVote(a, done) {
     const pick = (c) => ((a.mine || []).find((x) => x.category === c) || {}).pick || "";
     modal(`<h2>🏆 Football Awards</h2>
-      <p class="muted" style="line-height:1.5">One player per award. Best Goal, Best Assist and Best Team Motivator go to a different player each; Man of the Match can be anyone who played. You can't pick yourself. Skip any you're not sure about.</p>
-      ${AWARDS.map(([c, label]) => `<label style="margin-top:14px">${label}</label><select data-c="${c}"></select>`).join("")}
+      <p class="muted" style="line-height:1.5">One player per award, and a different player for each of the four awards under Man of the Match. You can't pick yourself. Skip any you're not sure about.</p>
+      ${AWARDS.map(([c, label]) => `<label style="margin-top:14px">${label}${c === "overall" ? ` <span class="muted" style="font-weight:400">(${MOTM_NOTE.toLowerCase()})</span>` : ""}</label><select data-c="${c}"></select>`).join("")}
       <div class="form-actions"><button class="btn solid block" id="awSave">Save my votes</button></div>`, (m) => {
       const sels = [...m.querySelectorAll("select[data-c]")];
       const fill = () => {
@@ -1476,24 +1480,24 @@
         const votes = sels.map((s) => ({ category: s.dataset.c, pick: s.value })).filter((x) => x.pick);
         if (!votes.length) return toast("Pick at least one player");
         const others = votes.filter((x) => x.category !== "overall");
-        if (new Set(others.map((x) => x.pick)).size < others.length) return toast("Pick a different player for Best Goal, Best Assist and Best Team Motivator");
+        if (new Set(others.map((x) => x.pick)).size < others.length) return toast("Pick a different player for each award. Only Man of the Match can repeat a player");
         try { $("#awSave", m).disabled = true; await q(sb.rpc("cast_award_votes", { p_event: a.event_id, p_votes: votes })); closeModal(); toast("Thanks, your votes are in ✓"); done(); }
         catch (e) { $("#awSave", m).disabled = false; fail(e); }
       };
     });
   }
-  // Top 6 for one award at a time: last game, this kitty, or all time.
+  // Top 6 for one award (or Most Rounded Player) at a time: last game, this kitty, or all time.
   async function awardTable(period, cat) {
     const rows = await q(sb.rpc("award_table", { p_period: period, p_category: cat })).catch(() => null);
     const top = (rows || []).filter((r, i) => i < 6), mine = (rows || []).find((r) => r.me), inTop = top.some((r) => r.me);
-    const won = (r) => !r.wins ? "" : period === "last" ? "Winner" : `Won ${plural(r.wins, "game")}`;
+    const won = (r) => !r.wins ? "" : cat === "rounded" ? `Won ${plural(r.wins, "award")}` : period === "last" ? "Winner" : `Won ${plural(r.wins, "game")}`;
     const row = (r) => `<div class="lb-row ${r.me ? "me" : ""}"><span class="lb-rank">${r.rank}</span>
       <div style="flex:1;min-width:0"><b>${esc(r.name)}${r.me ? " (you)" : ""}</b><div class="muted" style="font-size:13px">${won(r)}</div></div><b class="lb-score">${r.votes}</b></div>`;
     const P = { last: "Last game", kitty: "This kitty", all: "All time" };
     modal(`<h2>🏆 Awards table</h2>
-      <p class="muted" style="line-height:1.5">${period === "kitty" && awardKitty ? `Kitty ${awardKitty}, up to 5 games. ` : ""}Each vote is 1 point. Results count once each game's voting closes.</p>
+      <p class="muted" style="line-height:1.5">${period === "kitty" && awardKitty ? `Kitty ${awardKitty}, up to 5 games. ` : ""}Each vote is 1 point. Results count once each game's voting closes.${cat === "rounded" ? " Most Rounded Player adds up every vote across the four awards, not counting Man of the Match." : ""}</p>
       <div class="seg">${Object.entries(P).map(([k, l]) => `<button data-p="${k}" class="${period === k ? "on" : ""}">${l}</button>`).join("")}</div>
-      <div class="aw-tabs">${AWARDS.map(([c, l]) => `<button data-k="${c}" class="${cat === c ? "on" : ""}">${l.replace(/^\S+\s/, "")}</button>`).join("")}</div>
+      <div class="aw-tabs">${AWARD_TABS.map(([c, l]) => `<button data-k="${c}" class="${cat === c ? "on" : ""}">${l.replace(/^\S+\s/, "")}</button>`).join("")}</div>
       ${rows === null ? '<p class="note">The awards are being set up. Check back soon.</p>'
         : top.length ? `<div class="lb">${top.map(row).join("")}</div>${mine && !inTop ? `<p class="muted" style="margin:14px 0 4px">Your place</p><div class="lb">${row(mine)}</div>` : ""}`
         : '<p class="muted">No votes counted yet.</p>'}`, (m) => {

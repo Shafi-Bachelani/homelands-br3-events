@@ -382,6 +382,7 @@ label.check.risk { font-weight: 700; margin: 4px 0 10px; }
 /* Football Awards */
 .aw-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .aw-cell { display: flex; flex-direction: column; gap: 3px; background: var(--field); border-radius: 10px; padding: 10px 12px; min-width: 0; }
+.aw-cell.wide { grid-column: 1 / -1; align-items: center; text-align: center; border: 1px solid var(--gold); }
 .aw-votes { color: var(--green); font-size: 13px; font-weight: 700; }
 .aw-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 10px 0 12px; }
 .aw-tabs button { min-height: 44px; border: 1px solid var(--line); background: var(--field); color: var(--muted); border-radius: 999px; font-weight: 700; font-size: 14px; padding: 4px 10px; }
