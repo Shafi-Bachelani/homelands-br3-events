@@ -1,7 +1,7 @@
 -- Applications for public events (first used for the Speed Chess Tournament, Sat 12 Dec 2026).
 -- Anyone can apply as a Player or as non-playing Audience. Non-members fill in a Jotform
 -- application; the admin approves or declines it; once approved they pay by card and get the QR ticket.
--- Members book straight in (they are already vetted), choosing Player or Audience.
+-- Members apply too, answering only the tournament questions on the form, and wait for approval like everyone else.
 -- Safe to run more than once.
 
 -- ---------- events: the application form and two ticket types ----------
@@ -27,7 +27,7 @@ language sql stable security definer set search_path = public as $$
 $$;
 grant execute on function public.event_type_places(uuid) to anon, authenticated;
 
--- Apply (non-members: waits for approval) or book (approved members: straight in).
+-- Apply: everyone waits for the admin's approval. Members don't fill in the guest details (email, guest record).
 create or replace function public.apply_event(p_event uuid, p_type text, p_name text, p_age int, p_email text,
   p_linked text default '', p_adult text default '', p_consent boolean default null)
 returns table (id uuid, code text, status text)
@@ -58,14 +58,15 @@ begin
 
   if uid is not null then select * into p from profiles where profiles.id = uid; end if;
   if uid is not null and p.approved is not false then
-    -- a member: booked straight away
+    -- a member: waits for approval too
     if exists (select 1 from bookings where event_id = p_event and user_id = uid and bookings.status <> 'cancelled') then
       raise exception 'You have already booked this event.';
     end if;
     insert into bookings (event_id, user_id, display_name, places, charge, amount, paid, status, code, ticket_type, linked_to, adult_name, age, parent_ok)
-    values (p_event, uid, coalesce(nullif(trim(p_name), ''), p.name), 1, 'ticket', v_price, v_price = 0, 'booked', new_code('AA-'),
+    values (p_event, uid, coalesce(nullif(trim(p_name), ''), p.name), 1, 'ticket', v_price, v_price = 0, 'pending', new_code('AA-'),
             p_type, nullif(trim(p_linked), ''), nullif(trim(p_adult), ''), p_age, case when p_age <= 18 then coalesce(p_consent, p_age < 16) end)
     returning * into b;
+    perform send_admin_alert('🎟️ Member applying: ' || e.title, b.display_name || ' (' || p_type || E')\nApprove or decline it in Admin → Events and bookings.');
   else
     if e.access <> 'open' then raise exception 'This event is not open to the public.'; end if;
     if coalesce(p_email, '') !~ '^\S+@\S+\.\S+$' then raise exception 'Enter a valid email address.'; end if;

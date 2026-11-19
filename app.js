@@ -518,9 +518,9 @@
     else if (pending() && !fb) action = '<button class="off" style="color:var(--muted)" disabled>Bookable once approved</button>';
     else if (ev.group_id) action = joined.includes(ev.group_id) ? '<button class="go" data-go="groups">Signed up ✓ · Open chat</button>' : `<button class="go" data-join="${esc(ev.group_id)}">Sign up · Free</button>`;
     else if (fb) action = `<button class="go" data-go="football">${mine ? "Booked ✓ · Open" : "Open football"}</button>`;
-    else if (mine) action = `<button class="go" data-ticket="${mine.code}">${mine.status === "waitlist" ? "On waitlist · Ticket" : "Booked ✓ · Ticket"}</button>`;
+    else if (mine) action = `<button class="go" data-ticket="${mine.code}">${mine.status === "pending" ? "Applied · Waiting for approval" : mine.status === "declined" ? "Not approved" : mine.status === "waitlist" ? "On waitlist · Ticket" : "Booked ✓ · Ticket"}</button>`;
     else if (!me && ev.access === "members") action = '<button class="go" data-go="account">Members only · Sign in</button>';
-    else if (ev.player_places != null) action = left ? `<button class="go" data-book="${ev.id}">${me ? "Book" : "Apply"}</button>` : '<button class="off" disabled>Full</button>';
+    else if (ev.player_places != null) action = left ? `<button class="go" data-book="${ev.id}">Apply</button>` : '<button class="off" disabled>Full</button>';
     else action = `<button class="go" data-book="${ev.id}">${left ? "Book" : "Join waitlist"}</button>`;
     return `<article class="card${fb ? " footie-card" : ""}">${eventPic(ev)}
       <div class="event-body" data-event="${ev.id}" style="cursor:pointer">
@@ -560,12 +560,14 @@
   }
   const shareEvent = (ev) => share(ev.title, `${ev.title} – ${ev.day ? fmtEvent(ev) : "date to be confirmed"}. Book here:`, eventLink(ev), ev.kind === "football" ? FOOTIE : ev.group_id === "quran" ? QURAN : null);
 
-  // Events with Player and Audience tickets (e.g. the Speed Chess Tournament). Non-members apply and
-  // wait for approval, then fill in the Jotform; members are booked straight away.
+  // Events with Player and Audience tickets (e.g. the Speed Chess Tournament). Everyone applies and waits
+  // for approval. Non-members answer the whole Jotform; members only the tournament questions (member=Yes).
   const TYPE_NAME = { player: "Player", audience: "Non-playing audience" };
   const typePrice = (ev, t) => Number(t === "audience" ? ev.audience_price ?? ev.price : ev.price);
   const applyFormUrl = (t) => {
     const u = new URL(t.apply_form);
+    // Members answer only the tournament questions: the app already has their name, age and ticket type.
+    if (t.member) { u.searchParams.set("q3_textbox1", t.code); u.searchParams.set("member", "Yes"); return u.toString(); }
     const [first, ...rest] = String(t.display_name || "").split(" ");
     const v = { q3_textbox1: t.code, q5_textbox3: first, q6_textbox4: rest.join(" "), q4_radio2: t.ticket_type === "audience" ? "Non-playing audience (£10)" : "Player (£6)" };
     Object.entries(v).forEach(([k, x]) => x && u.searchParams.set(k, x));
@@ -580,9 +582,9 @@
     const left = { player: Math.max(0, (ev.player_places || 0) - (counts.player || 0)), audience: Math.max(0, (ev.audience_places || 0) - (counts.audience || 0)) };
     const guest = !me;
     const opt = (t) => `<label class="check"><input type="radio" name="tt" value="${t}" ${left[t] ? "" : "disabled"}> ${TYPE_NAME[t]}, ${money(typePrice(ev, t))} <span class="muted">(${left[t] ? `${left[t]} of ${t === "player" ? ev.player_places : ev.audience_places} left` : "full"})</span></label>`;
-    modal(`<button class="close" aria-label="Close">×</button><h2>${guest ? "Apply" : "Book"}: ${esc(ev.title)}</h2>
+    modal(`<button class="close" aria-label="Close">×</button><h2>Apply: ${esc(ev.title)}</h2>
       <p class="muted">${ev.day ? fmtEvent(ev) : "Date to be confirmed"}${ev.location ? ` · ${esc(ev.location)}` : ""}</p>
-      ${guest ? `<p class="note">This event is open to the public. Every application is checked by the organiser before a ticket is issued. <b>Step 1</b> is this page, <b>step 2</b> is our application form, and once you're approved you pay and get your QR ticket. Members, <a href="#account" data-close>sign in</a> first.</p>` : ""}
+      <p class="note">Every application is checked by the organiser before a ticket is issued. <b>Step 1</b> is this page, <b>step 2</b> is our application form${guest ? "" : " (a few tournament questions)"}, and once you're approved you pay and get your QR ticket.${guest ? ` Members, <a href="#account" data-close>sign in</a> first.` : ""}</p>
       <label>I'm coming as</label><div class="radios" id="tt">${opt("player")}${opt("audience")}</div>
       <div id="linkRow" hidden><label>Name of the applicant you're coming with</label><input id="lk"><p class="muted" style="font-size:14px">Audience places are only for people coming with an applicant.</p></div>
       <label>Full name</label><input id="gn" autocomplete="name" value="${guest ? "" : esc(me.name || "")}">
@@ -591,7 +593,7 @@
       <div id="adultRow" hidden><p class="note">Under 16s must come with a parent or responsible adult, either as a player or as non-playing audience.</p><label>Their name</label><input id="ad"></div>
       <label class="check" id="consentRow" hidden><input type="checkbox" id="cs"> I have my parents' consent</label>
       <p class="muted" style="font-size:14px;line-height:1.5">${DISCLAIMER} ${PRIVACY}</p>
-      <div class="form-actions"><button class="btn solid block" id="ok">${guest ? "Next: the application form" : "Book"}</button></div>`, (m) => {
+      <div class="form-actions"><button class="btn solid block" id="ok">Next: the application form</button></div>`, (m) => {
       m.querySelectorAll("[data-close]").forEach((a) => (a.onclick = closeModal));
       const type = () => m.querySelector('[name="tt"]:checked')?.value, age = () => Number($("#ga", m).value) || 0;
       const sync = () => { $("#linkRow", m).hidden = type() !== "audience"; $("#adultRow", m).hidden = !(age() > 0 && age() < 16); $("#consentRow", m).hidden = !(age() >= 16 && age() <= 18); };
@@ -613,7 +615,7 @@
             const link = await q(sb.rpc("guest_link_booking", { p_code: r.code, p_token: guestToken() })).catch(() => "ok");
             if (link === "blocked") { closeModal(); return toast("Sorry, we can't take an application from you. Please contact the organiser."); }
           }
-          state.applyInfo = { ...(state.applyInfo || {}), [r.code]: { email, age: age(), linked, adult } }; save();
+          state.applyInfo = { ...(state.applyInfo || {}), [r.code]: { email, age: age(), linked, adult, member: !guest } }; save();
           closeModal(); await refresh(); showTicket(r.code);
         } catch (e) { $("#ok", m).disabled = false; fail(e); }
       };
@@ -684,7 +686,7 @@
         </div>
         ${t.apply_form && ["pending", "booked", "waitlist"].includes(t.status) ? (t.applied ? '<p class="muted">✓ Application form received.</p>'
           : `<p class="note">${t.status === "pending" ? "<b>Step 2:</b> fill in our application form. The organiser checks it before approving you." : "Please fill in the tournament questions too."}</p>
-            <a class="btn solid block" target="_blank" rel="noopener" href="${esc(applyFormUrl({ ...t, ...(state.applyInfo?.[t.code] || {}) }))}">Fill in the application form</a>`) : ""}
+            <a class="btn solid block" target="_blank" rel="noopener" href="${esc(applyFormUrl({ ...t, member: !!me, ...(state.applyInfo?.[t.code] || {}) }))}">Fill in the application form</a>`) : ""}
         ${!t.paid && Number(t.amount) > 0 && t.status === "booked" ? `<p class="note">${money(t.amount)} still to pay.</p><button class="btn solid block" data-pay="${esc(t.code)}">Pay ${money(t.amount)} by card</button>` : ""}
         ${t.status === "pending" && t.apply_form ? `<p class="muted" style="font-size:14px">Once you're approved you can pay ${money(t.amount)} here and your QR ticket appears. Open Schedule on this phone to check, or use the link we email you.</p>`
           : t.status === "pending" ? '<p class="note">Thanks, your request has been received. An organiser will check it, and your QR ticket appears here once it\'s approved. Open Schedule on this phone to check.</p>'
@@ -2903,7 +2905,7 @@
     const soon = evs.filter((e) => e.day && e.day >= dayKey(today())).sort((a, b) => eventStart(a) - eventStart(b)).slice(0, 10);
     const ROLES = ["member", "organiser", "admin"];
     const evById = Object.fromEntries(evs.map((e) => [e.id, e]));
-    const guestRequests = bks.filter((b) => b.status === "pending" && !b.user_id);
+    const guestRequests = bks.filter((b) => b.status === "pending" && (!b.user_id || evById[b.event_id]?.apply_form));
     // Application details for events with Player and Audience tickets: type, who with, age checks, form answers.
     const appInfo = (b) => {
       const e = evById[b.event_id];
@@ -3000,8 +3002,8 @@
       }).join("")}
       ${isAdmin() ? `<h2 style="margin-top:28px" id="guestsHead">Guests</h2>
       <p class="muted">People who aren't members: they booked an event open to guests, or joined in the Quran chat from its link. Each phone counts as one guest. Only you see this.</p>
-      ${guestRequests.length ? `<h3>Booking requests waiting for approval</h3>${guestRequests.map((b) => { const gu = g[b.id], e = evById[b.event_id];
-        return `<div class="card" style="padding:14px;margin-bottom:10px"><b>${esc(gu?.full_name || b.display_name)}</b> <span class="muted">${gu ? `age ${gu.age}, ${esc(gu.email)}` : ""}</span>
+      ${guestRequests.length ? `<h3>Booking requests and applications waiting for approval</h3>${guestRequests.map((b) => { const gu = g[b.id], e = evById[b.event_id];
+        return `<div class="card" style="padding:14px;margin-bottom:10px"><b>${esc(gu?.full_name || b.display_name)}</b> <span class="muted">${gu ? `age ${gu.age}, ${esc(gu.email)}` : `member${b.age ? `, age ${b.age}` : ""}`}</span>
           <div class="muted">${esc(e?.title || "Event")} · ${e?.day ? short(parseDay(e.day)) : "Date TBC"} · ${b.places} place${b.places > 1 ? "s" : ""}${b.age && b.age < 16 && !b.ticket_type ? ` · under 16, parent permission: ${b.parent_ok ? "yes" : "no"}` : ""}</div>${appInfo(b)}
           <div class="row" style="gap:8px;margin-top:8px"><button class="btn solid small" data-ok="${b.id}">Approve</button><button class="btn small danger" data-no="${b.id}">Decline</button></div></div>`; }).join("")}` : ""}
       ${greport ? `<div class="member-search">
