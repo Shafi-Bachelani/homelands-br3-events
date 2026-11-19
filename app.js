@@ -568,8 +568,7 @@
     const u = new URL(t.apply_form);
     // Members answer only the tournament questions: the app already has their name, age and ticket type.
     if (t.member) { u.searchParams.set("q3_textbox1", t.code); u.searchParams.set("member", "Yes"); return u.toString(); }
-    const [first, ...rest] = String(t.display_name || "").split(" ");
-    const v = { q3_textbox1: t.code, q5_textbox3: first, q6_textbox4: rest.join(" "), q4_radio2: t.ticket_type === "audience" ? "Non-playing audience (£10)" : "Player (£6)" };
+    const v = { q3_textbox1: t.code, yourName: t.display_name, q4_radio2: t.ticket_type === "audience" ? "Non-playing audience (£10)" : "Player (£6)" };
     Object.entries(v).forEach(([k, x]) => x && u.searchParams.set(k, x));
     if (t.email) u.searchParams.set("q7_email5", t.email);
     if (t.age) u.searchParams.set("q8_number6", t.age);
@@ -587,7 +586,7 @@
       <p class="note">Every application is checked by the organiser before a ticket is issued. <b>Step 1</b> is this page, <b>step 2</b> is our application form${guest ? "" : " (a few tournament questions)"}, and once you're approved you pay and get your QR ticket.${guest ? ` Members, <a href="#account" data-close>sign in</a> first.` : ""}</p>
       <label>I'm coming as</label><div class="radios" id="tt">${opt("player")}${opt("audience")}</div>
       <div id="linkRow" hidden><label>Name of the applicant you're coming with</label><input id="lk"><p class="muted" style="font-size:14px">Audience places are only for people coming with an applicant.</p></div>
-      <label>Full name</label><input id="gn" autocomplete="name" value="${guest ? "" : esc(me.name || "")}">
+      <label>Your name or handle</label><input id="gn" autocomplete="name" value="${guest ? "" : esc(me.name || "")}">
       ${guest ? '<label>Email</label><input id="ge" type="email" autocomplete="email">' : ""}
       <label>Age</label><input id="ga" type="number" min="1" max="120" inputmode="numeric">
       <div id="adultRow" hidden><p class="note">Under 16s must come with a parent or responsible adult, either as a player or as non-playing audience.</p><label>Their name</label><input id="ad"></div>
@@ -601,7 +600,7 @@
       $("#ok", m).onclick = async () => {
         const t = type(), name = $("#gn", m).value.trim(), email = $("#ge", m)?.value.trim() || "", linked = $("#lk", m).value.trim(), adult = $("#ad", m).value.trim();
         if (!t) return toast("Choose Player or Audience");
-        if (!name) return toast("Please add your full name");
+        if (!name) return toast("Please add your name or handle");
         if (guest && !/^\S+@\S+\.\S+$/.test(email)) return toast("Please add a valid email address");
         if (!age()) return toast("Please add your age");
         if (t === "audience" && !linked) return toast("Add the name of the applicant you're coming with");
