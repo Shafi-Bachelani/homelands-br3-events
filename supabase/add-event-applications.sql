@@ -27,7 +27,7 @@ language sql stable security definer set search_path = public as $$
 $$;
 grant execute on function public.event_type_places(uuid) to anon, authenticated;
 
--- Apply: everyone waits for the admin's approval. Members don't fill in the guest details (email, guest record).
+-- Apply: everyone waits for the admin's approval. No email is taken from anyone.
 create or replace function public.apply_event(p_event uuid, p_type text, p_name text, p_age int, p_email text,
   p_linked text default '', p_adult text default '', p_consent boolean default null)
 returns table (id uuid, code text, status text)
@@ -69,12 +69,12 @@ begin
     perform send_admin_alert('🎟️ Member applying: ' || e.title, b.display_name || ' (' || p_type || E')\nApprove or decline it in Admin → Events and bookings.');
   else
     if e.access <> 'open' then raise exception 'This event is not open to the public.'; end if;
-    if coalesce(p_email, '') !~ '^\S+@\S+\.\S+$' then raise exception 'Enter a valid email address.'; end if;
+    -- No email is taken: the applicant comes back to the app on the same phone to see if they're approved.
     insert into bookings (event_id, display_name, places, charge, amount, paid, status, code, ticket_type, linked_to, adult_name, age, parent_ok)
     values (p_event, trim(p_name), 1, 'ticket', v_price, v_price = 0, 'pending', new_code('AA-'),
             p_type, nullif(trim(p_linked), ''), nullif(trim(p_adult), ''), p_age, case when p_age <= 18 then coalesce(p_consent, p_age < 16) end)
     returning * into b;
-    insert into guests (booking_id, full_name, age, email) values (b.id, trim(p_name), p_age, trim(p_email));
+    insert into guests (booking_id, full_name, age, email) values (b.id, trim(p_name), p_age, '');
   end if;
   return query select b.id, b.code, b.status;
 end $$;
@@ -168,7 +168,7 @@ update public.events set
   player_places = 24, audience_places = 3, capacity = 27,
   apply_form = 'https://form.jotform.com/263227494603055',
   details = 'Speed chess tournament, open to the public. Players £6 (covers hall hire only). Non-playing audience £10, and must come with an applicant. 24 players, 3 organisers and 3 audience (room capacity 30).' || E'\n\n'
-    || 'Everyone who is not a member applies first. The organiser checks each application before a ticket is issued. Once approved, pay by card and your QR ticket appears in the app.' || E'\n\n'
+    || 'Everyone who is not a member applies first. The organiser checks each application before a ticket is issued. Approval usually takes a day: come back to the app after 24 hours, on the same phone, to see if you are approved, then pay by card and your QR ticket appears.' || E'\n\n'
     || 'Bring your own portable chess set and a phone with a chess clock app if you can. The final between the 2 top rated players takes place at Dessert Hub, Penge. We rely on donations for a prize, so the winner may receive only accolade.' || E'\n\n'
     || 'Under 16s must come with a parent or responsible adult (as a player or audience). Ages 16 to 18 need their parents'' consent.'
 where kind = 'event' and title ilike '%chess%';
