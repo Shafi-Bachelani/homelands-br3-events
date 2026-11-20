@@ -9,7 +9,7 @@ export default async (req) => {
   const missing = missingSettings();
   if (missing.length) return json({ error: "Card payments aren't switched on yet." }, 503);
 
-  const { code, confirm, info, guest } = await req.json().catch(() => ({}));
+  const { code, confirm, info, guest, extra } = await req.json().catch(() => ({}));
   if (!code) return json({ error: "Missing booking code." }, 400);
   try {
     const booking = await bookingBy("code", String(code).trim().toUpperCase());
@@ -40,8 +40,11 @@ export default async (req) => {
     // A friend's place lists both names on the checkout, the receipt and the Square payment.
     const who = names ? `Guest ${names.guest}, booked by ${names.member}` : "";
     const price_money = { amount: pence, currency: "GBP" };
-    const item = names
-      ? { order: { location_id: await getLocationId(), line_items: [{ name: name.slice(0, 255), quantity: "1", base_price_money: price_money, note: who.slice(0, 2000) }] } }
+    // Events: an optional extra contribution (whole pounds, up to £100) chosen in the app, as its own line.
+    const extraPence = ev.kind === "event" ? Math.min(100, Math.max(0, Math.round(Number(extra) || 0))) * 100 : 0;
+    const line = { name: name.slice(0, 255), quantity: "1", base_price_money: price_money, ...(who ? { note: who.slice(0, 2000) } : {}) };
+    const item = names || extraPence
+      ? { order: { location_id: await getLocationId(), line_items: [line, ...(extraPence ? [{ name: "Extra contribution", quantity: "1", base_price_money: { amount: extraPence, currency: "GBP" } }] : [])] } }
       : { quick_pay: { name: name.slice(0, 255), price_money, location_id: await getLocationId() } };
     const { payment_link: link } = await square("/v2/online-checkout/payment-links", {
       method: "POST",
