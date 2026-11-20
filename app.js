@@ -395,7 +395,17 @@
   async function joinGroup(id) {
     try { await q(sb.from("group_members").insert({ group_id: id, user_id: me.id })); toast("You're signed up ✓"); go("grouplist"); } catch (e) { fail(e); }
   }
+  // Records that this phone opened the app, for its tickets (and a member's own bookings), so the door
+  // can see who opened it in the 24 hours before the event. At most every 30 minutes.
+  let seenMarked = 0;
+  function markSeen() {
+    if (Date.now() - seenMarked < 30 * 6e4 || (!me && !state.guestTickets.length)) return;
+    seenMarked = Date.now();
+    sb.rpc("mark_seen", { p_codes: state.guestTickets }).then(() => {}, () => {});
+  }
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) markSeen(); });
   async function events(el, alive, arg) {
+    markSeen();
     loading(el);
     const [list, places, mine] = await Promise.all([
       q(sb.from("events").select("*")),
@@ -431,7 +441,7 @@
       const card = el.querySelector(`[data-event="${ev.id}"]`)?.closest("article");
       const act = card?.querySelector(".event-foot .go");
       modal(`${picOf(ev) ? `<img class="event-pic modal-pic" src="${esc(ev.image || (ev.kind === "football" ? FOOTIE : picOf(ev)))}" alt="">` : ""}<h2>${esc(ev.title)}</h2><p class="muted">${ev.day ? fmtEvent(ev) : "Date to be confirmed"}<br>${esc(ev.location || "")}</p><p style="line-height:1.5;white-space:pre-wrap">${escLinks(ev.details || "")}</p>${ytCards(ev.details)}
-        ${supBox(ev)}
+        ${preBox(ev)}${supBox(ev)}
         <div class="form-actions">${act ? `<button class="btn solid block" id="dGo">${act.textContent}</button>` : ""}${isOrg() ? '<button class="btn block" id="dQr">QR code poster</button>' : ""}${isAdmin() && ev.kind === "event" ? '<button class="btn block" id="dEdit">Edit this event</button>' : ""}</div>`, (m) => {
         if (act) $("#dGo", m).onclick = () => { closeModal(); if (act.href) window.open(act.href, "_blank", "noopener"); else act.click(); };
         if (isOrg()) $("#dQr", m).onclick = () => posterModal(ev);
@@ -582,13 +592,17 @@
   // for approval. Non-members answer the whole Jotform; members only the tournament questions (member=Yes).
   // The application code saved on this phone for an event, if they applied from here.
   const appliedHere = (ev) => Object.entries(state.applyInfo || {}).find(([c, v]) => v.event === ev.id && state.guestTickets.includes(c))?.[0];
+  // Pre-event information and the instructions video, on the event and on the ticket.
+  const preBox = (x) => x.pre_info || x.video_url ? `<div class="card" style="padding:14px;margin:12px 0"><h3 style="margin:0 0 6px">Before the day</h3>
+    ${x.pre_info ? `<p style="line-height:1.5;white-space:pre-wrap;margin:0 0 8px">${escLinks(x.pre_info)}</p>` : ""}
+    ${x.video_url ? ytCards(x.video_url) || `<a class="btn block" href="${esc(x.video_url)}" target="_blank" rel="noopener">Watch the instructions video</a>` : ""}</div>` : "";
   const TYPE_NAME = { player: "Player", audience: "Non-playing audience" };
   const typePrice = (ev, t) => Number(t === "audience" ? ev.audience_price ?? ev.price : ev.price);
   const applyFormUrl = (t) => {
     const u = new URL(t.apply_form);
     // Members answer only the tournament questions: the app already has their name, age and ticket type.
     if (t.member) { u.searchParams.set("q3_textbox1", t.code); u.searchParams.set("member", "Yes"); return u.toString(); }
-    const v = { q3_textbox1: t.code, yourName: t.display_name, q4_radio2: t.ticket_type === "audience" ? "Non-playing audience (£10)" : "Player (£6)" };
+    const v = { q3_textbox1: t.code, yourFull: t.display_name, yourName: t.handle, q4_radio2: t.ticket_type === "audience" ? "Non-playing audience (£10)" : "Player (£6)" };
     Object.entries(v).forEach(([k, x]) => x && u.searchParams.set(k, x));
     if (t.age) u.searchParams.set("q8_number6", t.age);
     if (t.linked) u.searchParams.set("q14_textbox12", t.linked);
@@ -606,7 +620,9 @@
       <p class="note">Every application is checked by the organiser before a ticket is issued. <b>Step 1</b> is this page, <b>step 2</b> is our application form${guest ? "" : " (a few tournament questions)"}, and once you're approved you pay and get your QR ticket.${guest ? ` Members, <a href="#account" data-close>sign in</a> first.` : ""}</p>
       <label>I'm coming as</label><div class="radios" id="tt">${opt("player")}${opt("audience")}</div>
       <div id="linkRow" hidden><label>Name of the applicant you're coming with</label><input id="lk"><p class="muted" style="font-size:14px">Audience places are only for people coming with an applicant.</p></div>
-      <label>Your name or handle</label><input id="gn" autocomplete="name" value="${guest ? "" : esc(me.name || "")}">
+      <label>Your full name</label><input id="gn" autocomplete="name" value="${guest ? "" : esc(me.name || "")}">
+      <p class="muted" style="font-size:14px;margin-top:4px">Please bring photo ID which confirms your age. You may be asked for it, and refused entry if you don't provide it. No record of it is kept.</p>
+      <label>Your handle: how would you like us to refer to you?</label><input id="gh" maxlength="40">
       <label>Age</label><input id="ga" type="number" min="1" max="120" inputmode="numeric">
       <div id="adultRow" hidden><p class="note">Under 16s must come with a parent or responsible adult, either as a player or as non-playing audience.</p><label>Their name</label><input id="ad"></div>
       <label class="check" id="consentRow" hidden><input type="checkbox" id="cs"> I have my parents' consent</label>
@@ -617,16 +633,17 @@
       const sync = () => { $("#linkRow", m).hidden = type() !== "audience"; $("#adultRow", m).hidden = !(age() > 0 && age() < 16); $("#consentRow", m).hidden = !(age() >= 16 && age() <= 18); };
       m.querySelectorAll('[name="tt"]').forEach((r) => (r.onchange = sync)); $("#ga", m).oninput = sync;
       $("#ok", m).onclick = async () => {
-        const t = type(), name = $("#gn", m).value.trim(), linked = $("#lk", m).value.trim(), adult = $("#ad", m).value.trim();
+        const t = type(), name = $("#gn", m).value.trim(), handle = $("#gh", m).value.trim(), linked = $("#lk", m).value.trim(), adult = $("#ad", m).value.trim();
         if (!t) return toast("Choose Player or Audience");
-        if (!name) return toast("Please add your name or handle");
+        if (!name) return toast("Please add your full name");
+        if (!handle) return toast("Please add your handle");
         if (!age()) return toast("Please add your age");
         if (t === "audience" && !linked) return toast("Add the name of the applicant you're coming with");
         if (age() < 16 && !adult) return toast("Add the name of your parent or responsible adult");
         if (age() >= 16 && age() <= 18 && !$("#cs", m).checked) return toast("Applicants aged 16 to 18 need their parents' consent");
         try {
           $("#ok", m).disabled = true;
-          const [r] = await q(sb.rpc("apply_event", { p_event: ev.id, p_type: t, p_name: name, p_age: age(), p_email: "", p_linked: linked, p_adult: adult, p_consent: age() >= 16 && age() <= 18 ? true : null }));
+          const [r] = await q(sb.rpc("apply_event", { p_event: ev.id, p_type: t, p_name: name, p_age: age(), p_email: "", p_linked: linked, p_adult: adult, p_consent: age() >= 16 && age() <= 18 ? true : null, p_handle: handle }));
           if (guest) {
             state.guestTickets.push(r.code); save();
             const link = await q(sb.rpc("guest_link_booking", { p_code: r.code, p_token: guestToken() })).catch(() => "ok");
@@ -699,7 +716,7 @@
           <div class="stamp ${t.status}">${t.status === "waitlist" ? "On the waitlist" : t.status === "cancelled" ? "Cancelled" : t.status === "pending" ? "Waiting for approval" : t.status === "declined" ? "Not approved" : t.checked_in ? "Checked in" : "Confirmed"}</div>
           <div class="qr" id="qr"></div>
           <div class="code">${esc(t.code)}</div>
-          <div>${esc(t.display_name)} · ${t.ticket_type ? TYPE_NAME[t.ticket_type] : `${t.places} place${t.places > 1 ? "s" : ""}`}</div>
+          <div>${esc(t.display_name)}${t.handle ? ` (${esc(t.handle)})` : ""} · ${t.ticket_type ? TYPE_NAME[t.ticket_type] : `${t.places} place${t.places > 1 ? "s" : ""}`}</div>
         </div>
         ${t.apply_form && ["pending", "booked", "waitlist"].includes(t.status) ? (t.applied ? '<p class="muted">✓ Application form received.</p>'
           : `<p class="note">${t.status === "pending" ? "<b>Step 2:</b> fill in our application form. The organiser checks it before approving you." : "Please fill in the tournament questions too."}</p>
@@ -709,7 +726,8 @@
             <p class="muted" style="font-size:14px">Keep your code <b>${esc(t.code)}</b> (a screenshot is fine) in case you change phone.</p>`
           : t.status === "pending" ? '<p class="note">Thanks, your request has been received. An organiser will check it, and your QR ticket appears here once it\'s approved. Open Schedule on this phone to check.</p>'
           : t.status === "declined" ? '<p class="note">Sorry, we can\'t offer you a place at this event.</p>'
-          : '<p class="muted" style="font-size:14px">Show this at the door. A screenshot works too.</p>'}`, (m) => { if (["booked", "cancelled"].includes(t.status)) qr($("#qr", m), t.code); });
+          : '<p class="muted" style="font-size:14px">Show this at the door. A screenshot works too.</p>'}
+        ${t.status === "booked" ? preBox(t) : ""}`, (m) => { if (["booked", "cancelled"].includes(t.status)) qr($("#qr", m), t.code); });
       // If they paid by card but didn't come back through Square's return link, check with Square now.
       if (!t.paid && Number(t.amount) > 0 && !recheck) payApi({ code: t.code, confirm: true }).then((r) => { if (r.paid) { toast("Payment received, thank you!"); showTicket(t.code, true); } }).catch(() => {});
     } catch (e) { fail(e); }
@@ -2776,9 +2794,12 @@
       if (onCheckedIn) onCheckedIn(t);
       modal(`<button class="close" aria-label="Close">×</button>
         <p class="${ok ? "" : "note"}" style="font-size:18px;margin:0 0 6px"><b>${head}</b></p>
-        <h2 style="font-size:26px;margin:0 0 12px">${esc(t.guest_name || t.name)}</h2>
+        <h2 style="font-size:26px;margin:0 0 ${t.handle ? 2 : 12}px">${esc(t.guest_name || t.name)}</h2>
+        ${t.handle ? `<p class="muted" style="font-size:18px;margin:0 0 12px">Handle: <b>${esc(t.handle)}</b></p>` : ""}
         ${row("Event", `${esc(t.title)} · ${short(parseDay(t.day))} ${hhmm(t.time)}`)}
-        ${row("Places", t.places)}
+        ${t.ticket_type ? row("Ticket", t.ticket_type === "audience" ? `Audience${t.linked_to ? `, with ${esc(t.linked_to)}` : ""}` : "Player") : row("Places", t.places)}
+        ${t.app_check ? row("Opened the app in the 24 hours before", seenOk(t)) : ""}
+        ${t.adult_name ? row("Under 16, adult attending", esc(t.adult_name)) : ""}
         ${t.age || t.gender ? row("Age", `${t.age ? esc(t.age) : "?"}${t.gender ? ` · ${esc(t.gender)}` : ""}`) : ""}
         ${t.guest ? row("Guest", t.booked_by ? `invited by ${esc(t.booked_by)}` : "yes") : t.booked_by ? row("Booked by", esc(t.booked_by)) : ""}
         ${row("Payment", payStatus(t))}
@@ -2787,6 +2808,14 @@
         $("#ciNext", m).onclick = () => { closeModal(); if (again) scanTicket(checkIn); };
       });
     } catch (e) { fail(e); if (again) setTimeout(() => scanTicket(checkIn), 1200); }
+  }
+  // Whether the ticket holder opened the app in the 24 hours before the event started.
+  function seenOk(t) {
+    const warn = (x) => `<span style="color:var(--warn,#e0a030)">${x}</span>`;
+    if (!t.seen_at) return warn("No");
+    const seen = new Date(t.seen_at), start = t.starts_at ? new Date(t.starts_at) : null;
+    const when = seen.toLocaleString("en-GB", { weekday: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
+    return start && seen >= new Date(start.getTime() - 864e5) ? `Yes (${when})` : warn(`No, last opened ${when}`);
   }
   // How a booking is paid, in words: kitty, pay and play, paid or still to pay.
   const METHOD_NAME = { card: "card", transfer: "transfer", cash: "cash", credit: "credit", owes: "owes" };
@@ -2934,7 +2963,7 @@
     const appInfo = (b) => {
       const e = evById[b.event_id];
       if (!b.ticket_type && !e?.apply_form) return "";
-      const bits = [b.ticket_type ? `<b>${TYPE_NAME[b.ticket_type]}</b>` : "", b.linked_to ? `with ${esc(b.linked_to)}` : "", b.adult_name ? `under 16, adult attending: ${esc(b.adult_name)}` : "",
+      const bits = [b.handle ? `handle <b>${esc(b.handle)}</b>` : "", b.ticket_type ? `<b>${TYPE_NAME[b.ticket_type]}</b>` : "", b.linked_to ? `with ${esc(b.linked_to)}` : "", b.adult_name ? `under 16, adult attending: ${esc(b.adult_name)}` : "",
         b.age >= 16 && b.age <= 18 ? `16 to 18, parents' consent: ${b.parent_ok ? "yes" : "no"}` : ""].filter(Boolean).join(" · ");
       const form = !e?.apply_form ? "" : b.application ? `<details><summary>Application form answers</summary><p style="white-space:pre-wrap;font-size:14px">${esc(b.application)}</p></details>`
         : `<div class="tag warn" style="margin-top:4px">Application form not in yet</div>`;
@@ -3028,6 +3057,8 @@
             ${"apply_form" in e ? `<div style="grid-column:1/-1"><label>Application form link (Jotform; when set, non-members apply and wait for approval)</label><input data-f="apply_form" type="url" value="${esc(e.apply_form || "")}" placeholder="https://form.jotform.com/…"></div>
             <div><label>Player places (empty = one kind of ticket)</label><input data-f="player_places" type="number" min="1" value="${e.player_places ?? ""}"></div><div><label>Audience places</label><input data-f="audience_places" type="number" min="0" value="${e.audience_places ?? ""}"></div>
             <div><label>Audience price (£)</label><input data-f="audience_price" type="number" min="0" step="0.5" value="${e.audience_price ?? ""}"></div><div></div>` : ""}
+            ${"pre_info" in e ? `<div style="grid-column:1/-1"><label>Before the day (shown on the event and on tickets)</label><textarea data-f="pre_info" rows="4">${esc(e.pre_info || "")}</textarea></div>
+            <div style="grid-column:1/-1"><label>Instructions video link (YouTube)</label><input data-f="video_url" type="url" value="${esc(e.video_url || "")}" placeholder="https://www.youtube.com/watch?v=…"></div>` : ""}
             <div style="grid-column:1/-1"><label>Link instead of booking here (optional)</label><input data-f="link" type="url" value="${esc(e.link || "")}" placeholder="https://debate.ourhomelands.co.uk/debates/…"></div>
             <div style="grid-column:1/-1"><label>Picture</label>${e.image ? `<img class="event-pic" src="${esc(e.image)}" alt="">` : ""}<input data-pic="${e.id}" type="file" accept="image/*">${e.image ? `<button class="btn small" data-nopic="${e.id}" style="margin-top:8px">Remove picture</button>` : ""}</div>
             </div>
@@ -3125,6 +3156,10 @@
         Object.assign(upd, { apply_form: f("apply_form").trim() || null, player_places: num("player_places"), audience_places: num("audience_places"), audience_price: num("audience_price") });
         if (upd.apply_form && !/^https:\/\//.test(upd.apply_form)) return toast("The application form link should start with https://");
         if (upd.player_places != null) upd.capacity = upd.player_places + (upd.audience_places || 0);
+      }
+      if ($('[data-f="pre_info"]', box)) {
+        Object.assign(upd, { pre_info: f("pre_info").trim() || null, video_url: f("video_url").trim() || null });
+        if (upd.video_url && !/^https:\/\//.test(upd.video_url)) return toast("The video link should start with https://");
       }
       if (upd.link && !/^https?:\/\//.test(upd.link)) return toast("The link should start with https://");
       const file = $(`[data-pic="${b.dataset.upd}"]`, box).files[0];
