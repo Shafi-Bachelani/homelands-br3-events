@@ -176,8 +176,8 @@
 
   // ---------- router ----------
   const TABS = ["events", "groups", "schedule", "leaderboard", "more"];
-  const ROUTES = { about, home: about, events, groups, grouplist, accounts, chat, schedule, more, services, counselling, messages, notifications, account, football, admin, funds, eventaccounts, weekly, squarecheck: weekly, supervisors, supervising, footballadmin, guest, welcome, leaderboard, join: joinGuide };
-  const PARENT = { grouplist: "groups", accounts: "groups", chat: "groups", services: "more", counselling: "more", football: "events", funds: "more", eventaccounts: "more", weekly: "more", squarecheck: "more", supervisors: "more", supervising: "more", footballadmin: "more", guest: null, account: null, welcome: "more", join: "more", about: "more", admin: "more", messages: null, notifications: null };
+  const ROUTES = { about, home: about, events, groups, grouplist, accounts, chat, schedule, more, services, counselling, messages, notifications, account, football, admin, funds, eventaccounts, weekly, squarecheck: weekly, supervisors, supervising, footballadmin, guest, welcome, leaderboard, join: joinGuide, ticket: ticketLink };
+  const PARENT = { grouplist: "groups", accounts: "groups", chat: "groups", services: "more", counselling: "more", football: "events", funds: "more", eventaccounts: "more", weekly: "more", squarecheck: "more", supervisors: "more", supervising: "more", footballadmin: "more", guest: null, ticket: null, account: null, welcome: "more", join: "more", about: "more", admin: "more", messages: null, notifications: null };
   let lastTab = "events", seq = 0;
 
   function go(route) { if (location.hash.slice(1) === route) render(); else location.hash = route; }
@@ -525,8 +525,10 @@
     else if (pending() && !fb) action = '<button class="off" style="color:var(--muted)" disabled>Bookable once approved</button>';
     else if (ev.group_id) action = joined.includes(ev.group_id) ? '<button class="go" data-go="groups">Signed up ✓ · Open chat</button>' : `<button class="go" data-join="${esc(ev.group_id)}">Sign up · Free</button>`;
     else if (fb) action = `<button class="go" data-go="football">${mine ? "Booked ✓ · Open" : "Open football"}</button>`;
-    else if (mine) action = `<button class="go" data-ticket="${mine.code}">${mine.status === "waitlist" ? "On waitlist · Ticket" : "Booked ✓ · Ticket"}</button>`;
+    else if (mine) action = `<button class="go" data-ticket="${mine.code}">${mine.status === "pending" ? "Applied · Waiting for approval" : mine.status === "declined" ? "Not approved" : mine.status === "waitlist" ? "On waitlist · Ticket" : "Booked ✓ · Ticket"}</button>`;
     else if (!me && ev.access === "members") action = '<button class="go" data-go="account">Members only · Sign in</button>';
+    else if (ev.player_places != null && !me && appliedHere(ev)) action = `<button class="go" data-ticket="${appliedHere(ev)}">Applied · Check if approved</button>`;
+    else if (ev.player_places != null) action = left ? `<button class="go" data-book="${ev.id}">Apply</button>` : '<button class="off" disabled>Full</button>';
     else action = `<button class="go" data-book="${ev.id}">${left ? "Book" : "Join waitlist"}</button>`;
     return `<article class="card${fb ? " footie-card" : ""}">${eventPic(ev)}
       <div class="event-body" data-event="${ev.id}" style="cursor:pointer">
@@ -566,7 +568,69 @@
   }
   const shareEvent = (ev) => share(ev.title, `${ev.title} – ${ev.day ? fmtEvent(ev) : "date to be confirmed"}. Book here:`, eventLink(ev), ev.kind === "football" ? FOOTIE : ev.group_id === "quran" ? QURAN : null);
 
+  // Events with Player and Audience tickets (e.g. the Speed Chess Tournament). Everyone applies and waits
+  // for approval. Non-members answer the whole Jotform; members only the tournament questions (member=Yes).
+  // The application code saved on this phone for an event, if they applied from here.
+  const appliedHere = (ev) => Object.entries(state.applyInfo || {}).find(([c, v]) => v.event === ev.id && state.guestTickets.includes(c))?.[0];
+  const TYPE_NAME = { player: "Player", audience: "Non-playing audience" };
+  const typePrice = (ev, t) => Number(t === "audience" ? ev.audience_price ?? ev.price : ev.price);
+  const applyFormUrl = (t) => {
+    const u = new URL(t.apply_form);
+    // Members answer only the tournament questions: the app already has their name, age and ticket type.
+    if (t.member) { u.searchParams.set("q3_textbox1", t.code); u.searchParams.set("member", "Yes"); return u.toString(); }
+    const v = { q3_textbox1: t.code, yourName: t.display_name, q4_radio2: t.ticket_type === "audience" ? "Non-playing audience (£10)" : "Player (£6)" };
+    Object.entries(v).forEach(([k, x]) => x && u.searchParams.set(k, x));
+    if (t.age) u.searchParams.set("q8_number6", t.age);
+    if (t.linked) u.searchParams.set("q14_textbox12", t.linked);
+    if (t.adult) u.searchParams.set("q11_textbox9", t.adult);
+    return u.toString();
+  };
+  async function applySheet(ev) {
+    if (!me && appliedHere(ev)) return showTicket(appliedHere(ev));
+    const counts = Object.fromEntries((await q(sb.rpc("event_type_places", { p_event: ev.id })).catch(() => [])).map((r) => [r.ticket_type, Number(r.taken)]));
+    const left = { player: Math.max(0, (ev.player_places || 0) - (counts.player || 0)), audience: Math.max(0, (ev.audience_places || 0) - (counts.audience || 0)) };
+    const guest = !me;
+    const opt = (t) => `<label class="check"><input type="radio" name="tt" value="${t}" ${left[t] ? "" : "disabled"}> ${TYPE_NAME[t]}, ${money(typePrice(ev, t))} <span class="muted">(${left[t] ? `${left[t]} of ${t === "player" ? ev.player_places : ev.audience_places} left` : "full"})</span></label>`;
+    modal(`<button class="close" aria-label="Close">×</button><h2>Apply: ${esc(ev.title)}</h2>
+      <p class="muted">${ev.day ? fmtEvent(ev) : "Date to be confirmed"}${ev.location ? ` · ${esc(ev.location)}` : ""}</p>
+      <p class="note">Every application is checked by the organiser before a ticket is issued. <b>Step 1</b> is this page, <b>step 2</b> is our application form${guest ? "" : " (a few tournament questions)"}, and once you're approved you pay and get your QR ticket.${guest ? ` Members, <a href="#account" data-close>sign in</a> first.` : ""}</p>
+      <label>I'm coming as</label><div class="radios" id="tt">${opt("player")}${opt("audience")}</div>
+      <div id="linkRow" hidden><label>Name of the applicant you're coming with</label><input id="lk"><p class="muted" style="font-size:14px">Audience places are only for people coming with an applicant.</p></div>
+      <label>Your name or handle</label><input id="gn" autocomplete="name" value="${guest ? "" : esc(me.name || "")}">
+      <label>Age</label><input id="ga" type="number" min="1" max="120" inputmode="numeric">
+      <div id="adultRow" hidden><p class="note">Under 16s must come with a parent or responsible adult, either as a player or as non-playing audience.</p><label>Their name</label><input id="ad"></div>
+      <label class="check" id="consentRow" hidden><input type="checkbox" id="cs"> I have my parents' consent</label>
+      <p class="muted" style="font-size:14px;line-height:1.5">${DISCLAIMER} ${PRIVACY}</p>
+      <div class="form-actions"><button class="btn solid block" id="ok">Next: the application form</button></div>`, (m) => {
+      m.querySelectorAll("[data-close]").forEach((a) => (a.onclick = closeModal));
+      const type = () => m.querySelector('[name="tt"]:checked')?.value, age = () => Number($("#ga", m).value) || 0;
+      const sync = () => { $("#linkRow", m).hidden = type() !== "audience"; $("#adultRow", m).hidden = !(age() > 0 && age() < 16); $("#consentRow", m).hidden = !(age() >= 16 && age() <= 18); };
+      m.querySelectorAll('[name="tt"]').forEach((r) => (r.onchange = sync)); $("#ga", m).oninput = sync;
+      $("#ok", m).onclick = async () => {
+        const t = type(), name = $("#gn", m).value.trim(), linked = $("#lk", m).value.trim(), adult = $("#ad", m).value.trim();
+        if (!t) return toast("Choose Player or Audience");
+        if (!name) return toast("Please add your name or handle");
+        if (!age()) return toast("Please add your age");
+        if (t === "audience" && !linked) return toast("Add the name of the applicant you're coming with");
+        if (age() < 16 && !adult) return toast("Add the name of your parent or responsible adult");
+        if (age() >= 16 && age() <= 18 && !$("#cs", m).checked) return toast("Applicants aged 16 to 18 need their parents' consent");
+        try {
+          $("#ok", m).disabled = true;
+          const [r] = await q(sb.rpc("apply_event", { p_event: ev.id, p_type: t, p_name: name, p_age: age(), p_email: "", p_linked: linked, p_adult: adult, p_consent: age() >= 16 && age() <= 18 ? true : null }));
+          if (guest) {
+            state.guestTickets.push(r.code); save();
+            const link = await q(sb.rpc("guest_link_booking", { p_code: r.code, p_token: guestToken() })).catch(() => "ok");
+            if (link === "blocked") { closeModal(); return toast("Sorry, we can't take an application from you. Please contact the organiser."); }
+          }
+          state.applyInfo = { ...(state.applyInfo || {}), [r.code]: { event: ev.id, age: age(), linked, adult, member: !guest } }; save();
+          closeModal(); await refresh(); showTicket(r.code);
+        } catch (e) { $("#ok", m).disabled = false; fail(e); }
+      };
+    });
+  }
+
   function bookSheet(ev, taken) {
+    if (ev.player_places != null) return applySheet(ev);
     const left = ev.capacity - taken, price = Number(ev.price);
     const placeOpts = [1, 2, 3, 4, 5, 6].map((n) => `<option>${n}</option>`).join("");
     const guest = !me;
@@ -625,10 +689,15 @@
           <div class="stamp ${t.status}">${t.status === "waitlist" ? "On the waitlist" : t.status === "cancelled" ? "Cancelled" : t.status === "pending" ? "Waiting for approval" : t.status === "declined" ? "Not approved" : t.checked_in ? "Checked in" : "Confirmed"}</div>
           <div class="qr" id="qr"></div>
           <div class="code">${esc(t.code)}</div>
-          <div>${esc(t.display_name)} · ${t.places} place${t.places > 1 ? "s" : ""}</div>
+          <div>${esc(t.display_name)} · ${t.ticket_type ? TYPE_NAME[t.ticket_type] : `${t.places} place${t.places > 1 ? "s" : ""}`}</div>
         </div>
+        ${t.apply_form && ["pending", "booked", "waitlist"].includes(t.status) ? (t.applied ? '<p class="muted">✓ Application form received.</p>'
+          : `<p class="note">${t.status === "pending" ? "<b>Step 2:</b> fill in our application form. The organiser checks it before approving you." : "Please fill in the tournament questions too."}</p>
+            <a class="btn solid block" target="_blank" rel="noopener" href="${esc(applyFormUrl({ ...t, member: !!me, ...(state.applyInfo?.[t.code] || {}) }))}">Fill in the application form</a>`) : ""}
         ${!t.paid && Number(t.amount) > 0 && t.status === "booked" ? `<p class="note">${money(t.amount)} still to pay.</p><button class="btn solid block" data-pay="${esc(t.code)}">Pay ${money(t.amount)} by card</button>` : ""}
-        ${t.status === "pending" ? '<p class="note">Thanks, your request has been received. An organiser will check it, and your QR ticket appears here once it\'s approved. Open Schedule on this phone to check.</p>'
+        ${t.status === "pending" && t.apply_form ? `<p class="note">Approval usually takes a day. Come back after 24 hours: tap <b>Applied · Check if approved</b> on the event, on this phone. If you're approved, complete your application by paying ${money(t.amount)}, and your QR ticket appears here. If not, spaces may have been limited: after this preliminary speed chess tournament we will be organising a fuller version, or you can apply again to come as a spectator rather than a participant.</p>
+            <p class="muted" style="font-size:14px">Keep your code <b>${esc(t.code)}</b> (a screenshot is fine) in case you change phone.</p>`
+          : t.status === "pending" ? '<p class="note">Thanks, your request has been received. An organiser will check it, and your QR ticket appears here once it\'s approved. Open Schedule on this phone to check.</p>'
           : t.status === "declined" ? '<p class="note">Sorry, we can\'t offer you a place at this event.</p>'
           : '<p class="muted" style="font-size:14px">Show this at the door. A screenshot works too.</p>'}`, (m) => { if (["booked", "cancelled"].includes(t.status)) qr($("#qr", m), t.code); });
       // If they paid by card but didn't come back through Square's return link, check with Square now.
@@ -1245,6 +1314,13 @@
       };
       $("#glCopy", m).onclick = async () => { try { await navigator.clipboard.writeText(`${text} ${url}`); toast("Link copied. Paste it to your friend"); } catch { toast(url); } };
     });
+  }
+  // A ticket link the admin emails to an approved applicant: keeps the ticket on this phone and opens it.
+  async function ticketLink(el, alive, code) {
+    code = String(code || "").trim().toUpperCase();
+    if (code && !state.guestTickets.includes(code)) { state.guestTickets.push(code); save(); }
+    await events(el, alive);
+    if (alive() && code) showTicket(code);
   }
   // The page a guest opens from their payment link. No sign-in needed.
   async function guest(el, alive, code) {
@@ -2845,7 +2921,17 @@
     const soon = evs.filter((e) => e.day && e.day >= dayKey(today())).sort((a, b) => eventStart(a) - eventStart(b)).slice(0, 10);
     const ROLES = ["member", "organiser", "admin"];
     const evById = Object.fromEntries(evs.map((e) => [e.id, e]));
-    const guestRequests = bks.filter((b) => b.status === "pending" && !b.user_id);
+    const guestRequests = bks.filter((b) => b.status === "pending" && (!b.user_id || evById[b.event_id]?.apply_form));
+    // Application details for events with Player and Audience tickets: type, who with, age checks, form answers.
+    const appInfo = (b) => {
+      const e = evById[b.event_id];
+      if (!b.ticket_type && !e?.apply_form) return "";
+      const bits = [b.ticket_type ? `<b>${TYPE_NAME[b.ticket_type]}</b>` : "", b.linked_to ? `with ${esc(b.linked_to)}` : "", b.adult_name ? `under 16, adult attending: ${esc(b.adult_name)}` : "",
+        b.age >= 16 && b.age <= 18 ? `16 to 18, parents' consent: ${b.parent_ok ? "yes" : "no"}` : ""].filter(Boolean).join(" · ");
+      const form = !e?.apply_form ? "" : b.application ? `<details><summary>Application form answers</summary><p style="white-space:pre-wrap;font-size:14px">${esc(b.application)}</p></details>`
+        : `<div class="tag warn" style="margin-top:4px">Application form not in yet</div>`;
+      return `<div style="margin-top:4px">${bits}</div>${form}`;
+    };
     const pending = isAdmin() ? members.filter((m) => m.approved === false) : [];
     const ids = pending.map((m) => m.id);
     const nameOf = Object.fromEntries(members.map((m) => [m.id, m.name]));
@@ -2919,9 +3005,9 @@
         // Weekly events (like the Quran target) are saved under their first date: show the next one.
         const nx = { ...e }; nextWeekly(nx);
         const when = !e.day ? "Date TBC" : e.weekly ? `Every ${DAYS[parseDay(e.day).getDay()]} · next ${short(parseDay(nx.day))}` : short(parseDay(e.day));
-        return `<details class="card adm" data-ev="${e.id}" ${list.some((b) => b.status === "pending") || e.id === openId ? "open" : ""}><summary><b>${esc(e.title)}</b> <span class="muted">${when} · ${e.group_id ? "chat sign-up" : `${list.reduce((t, b) => t + (b.status === "booked" ? b.places : 0), 0)}/${e.capacity}`}</span>${list.some((b) => b.status === "pending") ? ` <span class="tag warn">${list.filter((b) => b.status === "pending").length} to approve</span>` : ""}</summary>
+        return `<details class="card adm" data-ev="${e.id}" ${list.some((b) => b.status === "pending") || e.id === openId ? "open" : ""}><summary><b>${esc(e.title)}</b> <span class="muted">${when} · ${e.group_id ? "chat sign-up" : e.player_places != null ? ["player", "audience"].map((t) => `${TYPE_NAME[t].replace("Non-playing a", "A")}s ${list.filter((b) => b.status === "booked" && (b.ticket_type || "player") === t).length}/${t === "player" ? e.player_places : e.audience_places}`).join(", ") : `${list.reduce((t, b) => t + (b.status === "booked" ? b.places : 0), 0)}/${e.capacity}`}</span>${list.some((b) => b.status === "pending") ? ` <span class="tag warn">${list.filter((b) => b.status === "pending").length} to approve</span>` : ""}</summary>
           <div class="scroll"><table><thead><tr><th>Name</th><th>Who</th><th>Places</th><th>Status</th><th>Code</th></tr></thead><tbody>
-          ${list.map((b) => `<tr><td>${esc(b.display_name)}</td><td>${g[b.id] ? `Guest, age ${g[b.id].age}, ${esc(g[b.id].email)}, invited by ${esc(g[b.id].profiles?.name || "?")}` : "Member"}</td><td>${b.places}</td><td>${b.status === "pending" ? `<b>Waiting for approval</b><br><button class="btn small" data-ok="${b.id}">Approve</button> <button class="btn small danger" data-no="${b.id}">Decline</button>` : b.status}${b.checked_in ? ", in" : ""}${b.paid || b.status === "pending" ? "" : ", unpaid"}${b.age < 16 && b.age ? `<br>Under 16, parent permission: ${b.parent_ok ? "yes" : "no"}` : ""}</td><td class="mono">${b.code}</td></tr>`).join("") || '<tr><td colspan="5" class="muted">No bookings yet.</td></tr>'}
+          ${list.map((b) => `<tr><td>${esc(b.display_name)}</td><td>${g[b.id] ? `Guest, age ${g[b.id].age}${g[b.id].email ? `, ${esc(g[b.id].email)}` : ""}${g[b.id].invited_by ? `, invited by ${esc(g[b.id].profiles?.name || "?")}` : ""}` : "Member"}${appInfo(b)}</td><td>${b.places}</td><td>${b.status === "pending" ? `<b>Waiting for approval</b><br><button class="btn small" data-ok="${b.id}">Approve</button> <button class="btn small danger" data-no="${b.id}">Decline</button>` : b.status}${b.checked_in ? ", in" : ""}${b.paid || b.status === "pending" ? "" : ", unpaid"}${b.age < 16 && b.age ? `<br>Under 16, parent permission: ${b.parent_ok ? "yes" : "no"}` : ""}</td><td class="mono">${b.code}</td></tr>`).join("") || '<tr><td colspan="5" class="muted">No bookings yet.</td></tr>'}
           </tbody></table></div>
           ${e.kind === "event" ? `<div class="grid2" data-edit="${e.id}"><div style="grid-column:1/-1"><label>Event name</label><input data-f="title" value="${esc(e.title)}"></div>
             <div><label>${e.weekly ? "First date (repeats every week)" : "Date"}</label><input data-f="day" type="date" value="${e.day || ""}"></div><div><label>Start time</label><input data-f="time" type="time" value="${hhmm(e.time)}"></div>
@@ -2930,6 +3016,9 @@
             <div style="grid-column:1/-1"><label>Who can book</label><select data-f="access">${accessOpts(e.access)}</select></div>
             <div style="grid-column:1/-1"><label>Linked fund (gets the profit, or pays the loss)</label><select data-f="fund" ${e.accounts_posted ? "disabled" : ""}>${fundOpts(e.fund || "events")}</select></div>
             <div style="grid-column:1/-1"><label>Details</label><textarea data-f="details" rows="6">${esc(e.details || "")}</textarea></div>
+            ${"apply_form" in e ? `<div style="grid-column:1/-1"><label>Application form link (Jotform; when set, non-members apply and wait for approval)</label><input data-f="apply_form" type="url" value="${esc(e.apply_form || "")}" placeholder="https://form.jotform.com/…"></div>
+            <div><label>Player places (empty = one kind of ticket)</label><input data-f="player_places" type="number" min="1" value="${e.player_places ?? ""}"></div><div><label>Audience places</label><input data-f="audience_places" type="number" min="0" value="${e.audience_places ?? ""}"></div>
+            <div><label>Audience price (£)</label><input data-f="audience_price" type="number" min="0" step="0.5" value="${e.audience_price ?? ""}"></div><div></div>` : ""}
             <div style="grid-column:1/-1"><label>Link instead of booking here (optional)</label><input data-f="link" type="url" value="${esc(e.link || "")}" placeholder="https://debate.ourhomelands.co.uk/debates/…"></div>
             <div style="grid-column:1/-1"><label>Picture</label>${e.image ? `<img class="event-pic" src="${esc(e.image)}" alt="">` : ""}<input data-pic="${e.id}" type="file" accept="image/*">${e.image ? `<button class="btn small" data-nopic="${e.id}" style="margin-top:8px">Remove picture</button>` : ""}</div>
             </div>
@@ -2939,9 +3028,9 @@
       }).join("")}
       ${isAdmin() ? `<h2 style="margin-top:28px" id="guestsHead">Guests</h2>
       <p class="muted">People who aren't members: they booked an event open to guests, or joined in the Quran chat from its link. Each phone counts as one guest. Only you see this.</p>
-      ${guestRequests.length ? `<h3>Booking requests waiting for approval</h3>${guestRequests.map((b) => { const gu = g[b.id], e = evById[b.event_id];
-        return `<div class="card" style="padding:14px;margin-bottom:10px"><b>${esc(gu?.full_name || b.display_name)}</b> <span class="muted">${gu ? `age ${gu.age}, ${esc(gu.email)}` : ""}</span>
-          <div class="muted">${esc(e?.title || "Event")} · ${e?.day ? short(parseDay(e.day)) : "Date TBC"} · ${b.places} place${b.places > 1 ? "s" : ""}${b.age && b.age < 16 ? ` · under 16, parent permission: ${b.parent_ok ? "yes" : "no"}` : ""}</div>
+      ${guestRequests.length ? `<h3>Booking requests and applications waiting for approval</h3>${guestRequests.map((b) => { const gu = g[b.id], e = evById[b.event_id];
+        return `<div class="card" style="padding:14px;margin-bottom:10px"><b>${esc(gu?.full_name || b.display_name)}</b> <span class="muted">${gu ? `age ${gu.age}${gu.email ? `, ${esc(gu.email)}` : ""}` : `member${b.age ? `, age ${b.age}` : ""}`}</span>
+          <div class="muted">${esc(e?.title || "Event")} · ${e?.day ? short(parseDay(e.day)) : "Date TBC"} · ${b.places} place${b.places > 1 ? "s" : ""}${b.age && b.age < 16 && !b.ticket_type ? ` · under 16, parent permission: ${b.parent_ok ? "yes" : "no"}` : ""}</div>${appInfo(b)}
           <div class="row" style="gap:8px;margin-top:8px"><button class="btn solid small" data-ok="${b.id}">Approve</button><button class="btn small danger" data-no="${b.id}">Decline</button></div></div>`; }).join("")}` : ""}
       ${greport ? `<div class="member-search">
         <input id="gQ" type="search" placeholder="Search guests by name or email">
@@ -3004,8 +3093,14 @@
       a.download = `event-bookings-${dayKey(new Date())}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
       if (!rows.length) toast("No event bookings yet, the file only has headings");
     };
-    const decide = (id, ok) => q(sb.rpc("decide_booking", { p_id: id, p_ok: ok })).then((v) => { toast(ok ? (v === "waitlist" ? "Approved, but it's full so they're on the waitlist" : "Approved") : "Declined"); refresh(); }).catch(fail);
-    el.querySelectorAll("[data-ok]").forEach((b) => (b.onclick = () => decide(b.dataset.ok, true)));
+    const decide = (id, ok) => q(sb.rpc("decide_booking", { p_id: id, p_ok: ok })).then((v) => {
+      toast(ok ? (v === "waitlist" ? "Approved, but it's full so they're on the waitlist" : "Approved") : "Declined"); refresh();
+    }).catch(fail);
+    el.querySelectorAll("[data-ok]").forEach((b) => (b.onclick = () => {
+      const bk = bks.find((x) => x.id === b.dataset.ok);
+      if (evById[bk?.event_id]?.apply_form && !bk.application && !confirm("Their application form isn't in yet. Approve anyway?")) return;
+      decide(b.dataset.ok, true);
+    }));
     el.querySelectorAll("[data-no]").forEach((b) => (b.onclick = () => confirm("Decline this booking?") && decide(b.dataset.no, false)));
     el.querySelectorAll("[data-poster]").forEach((b) => (b.onclick = () => posterModal(evs.find((x) => x.id === b.dataset.poster))));
     // Opened from an event's "Edit this event" button: scroll to it, open at the top of the box.
@@ -3016,6 +3111,12 @@
       if (!f("title").trim()) return toast("Give the event a name");
       const upd = { title: f("title").trim(), location: f("location").trim(), details: f("details").trim(), day: f("day") || null, time: f("time"), price: Number(f("price")) || 0, capacity: Number(f("capacity")) || 1, access: f("access"), link: f("link").trim() || null };
       if (!$('[data-f="fund"]', box).disabled) upd.fund = f("fund");
+      if ($('[data-f="apply_form"]', box)) {
+        const num = (k) => (f(k) === "" ? null : Number(f(k)));
+        Object.assign(upd, { apply_form: f("apply_form").trim() || null, player_places: num("player_places"), audience_places: num("audience_places"), audience_price: num("audience_price") });
+        if (upd.apply_form && !/^https:\/\//.test(upd.apply_form)) return toast("The application form link should start with https://");
+        if (upd.player_places != null) upd.capacity = upd.player_places + (upd.audience_places || 0);
+      }
       if (upd.link && !/^https?:\/\//.test(upd.link)) return toast("The link should start with https://");
       const file = $(`[data-pic="${b.dataset.upd}"]`, box).files[0];
       if (file) upd.image = await picture(file);
