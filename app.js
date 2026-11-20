@@ -35,16 +35,31 @@
     me = data ? { ...data, email: session.user.email } : null;
     // Events this person supervises, while their access lasts (empty until add-event-supervisors.sql is run).
     if (me) me.sup = await sb.from("event_supervisors").select("event_id,role,events(*)").eq("user_id", me.id)
-      .then((r) => (r.data || []).filter((x) => x.events?.day && supUntil(x.events) > new Date()), () => []);
+      .then((r) => (r.data || []).filter((x) => x.events?.day && (x.events.weekly || supUntil(x.events) > new Date())), () => []);
   }
   // ---------- event supervisors ----------
-  // Shafi's call for supervisors, shown on each event advert that has applications open.
-  const SUP_BLURB = "Want to make this happen, we are looking for 3 2-man teams, 6 members to take this forwards. Our events are open to the public, so long as they book through our portal. One team will man the door, A second team will be concerned with crowd management and ensuring the attendees needs are seen to. The third team will run the event. You should apply singly with your preferences within the app about what you help with. We will form the team and encourage for you to float between roles. You will need to attend pre and post event meetings, the post-event meetings for a debrief.";
-  const SUP_ROLES = { door: "On the door", crowd: "Crowd management and attendees' needs", run: "Running the event" };
+  // Shafi's call for supervisors (20 Nov), shown on every advert that has applications open and no blurb of its own.
+  const SUP_BLURB = "Want to make this happen, we are looking for UP TO A MAXIMUM of three 2-man teams, 6 members to take this forward. For some events we just need one or two to step up, for others a little more, to know how many we need just click to apply and help make this a great memory for everyone.\n\nOur larger events will be open to the public, so long as they book through our portal, and are happy with who we all are, which you can see in About Us, and the Welcome & Our Agreement, to which they are each signposted.\n\nOne team will man the door and be charged with SECURITY. A second team will be concerned with crowd management and ensuring the attendees needs are seen to and are charged with SAFETY. The third team will run the event and will ensure it’s MEMORABLE. You should apply singly with your preferences within the app about what you help with. We will form the team and encourage for you, each, to float between roles.\n\nYou will need to attend pre and post event meetings, the post-event meetings for a debrief.";
+  // The standard call with About Us and Welcome & Our Agreement as links.
+  const supBlurbHtml = () => esc(SUP_BLURB).replace("About Us", '<a href="#about" data-close>About Us</a>').replace("Welcome &amp; Our Agreement", '<a href="#welcome" data-close>Welcome &amp; Our Agreement</a>');
+  const SUP_ROLES = { door: "Door and entrance security", crowd: "Audience control: keeping order inside, for safety", run: "Running the show up front: making it memorable and fun" };
   // A supervisor's scanning access ends at 4am the morning after the event (the database checks this too).
   const supUntil = (ev) => at(ev.day, "04:00", 1);
   // Applications are open until the end of the deadline day, and never after the event.
-  const supOpen = (ev) => !!ev.supervisors_open && ev.kind === "event" && (!ev.supervisor_deadline || parseDay(ev.supervisor_deadline) >= today()) && (!ev.day || parseDay(ev.day) >= today());
+  const supOpen = (ev) => !!ev.supervisors_open && supNeeded(ev) > 0 && (!ev.supervisor_deadline || parseDay(ev.supervisor_deadline) >= today()) && (!ev.day || ev.weekly || parseDay(ev.day) >= today());
+  // Hall events have 6 supervisors in 3 teams of 2. Any other event (football, Quran…) has a number needed, 1 to 6, and its own blurb.
+  // How many supervisors each role needs at this event, 0 to 2 (the admin sets them per event).
+  // Not set yet: hall events 2 / 2 / 2, anything else 2 on the door.
+  const supCount = (ev, r) => (["sup_door", "sup_crowd", "sup_run"].every((k) => ev[k] == null)
+    ? (ev.kind === "event" && !ev.weekly ? 2 : r === "door" ? 2 : 0) : Number(ev["sup_" + r]) || 0);
+  const supRoles = (ev) => Object.keys(SUP_ROLES).filter((r) => supCount(ev, r) > 0);
+  const supNeeded = (ev) => supRoles(ev).reduce((t, r) => t + supCount(ev, r), 0);
+  // The standard call is for the full 3 teams of 2 at a hall event.
+  const supStandard = (ev) => ev.kind === "event" && !ev.weekly && supRoles(ev).length === 3 && supNeeded(ev) === 6;
+  const supNeededText = (ev) => `${supNeeded(ev)} supervisor${supNeeded(ev) === 1 ? "" : "s"} needed`;
+  const supRoleList = (ev) => `<ul class="sup-roles">${supRoles(ev).map((r) => `<li>${SUP_ROLES[r]}: <b>${supCount(ev, r)}</b></li>`).join("")}</ul>`;
+  // Supervising a Friday game: the Football Supervisors screen for it, until 4am Saturday.
+  const supFootball = () => !!me?.sup?.some((x) => x.events?.kind === "football");
   const supDeadline = (ev) => (ev.supervisor_deadline ? (() => { const d = parseDay(ev.supervisor_deadline); return `${DAYS[d.getDay()]} ${d.getDate()} ${MONTHS_LONG[d.getMonth()]}`; })() : "");
 
   // ---------- helpers ----------
@@ -440,30 +455,32 @@
   // The supervisor call inside an event's advert: the blurb, the deadline and Apply (or what they've applied for).
   function supBox(ev) {
     const team = me?.sup?.find((x) => x.event_id === ev.id);
-    if (team) return `<div class="sup-box"><b>🙋 You're a supervisor for this event</b><p>Your team: <b>${SUP_ROLES[team.role]}</b>. Please come to the pre-event and post-event meetings.</p><button class="btn block sup-btn" id="supMine">Open supervisor tools</button></div>`;
-    if (!supOpen(ev)) return "";
+    if (team) return `<div class="sup-box"><b>🙋 You're a supervisor for this event</b><p>Your role: <b>${SUP_ROLES[team.role] || "Supervisor"}</b>.${supStandard(ev) ? " Please come to the pre-event and post-event meetings." : ""}</p><button class="btn block sup-btn" id="supMine">Open supervisor tools</button></div>`;
+    if (!supOpen(ev) || !supNeeded(ev)) return "";
     const app = myApps.find((a) => a.event_id === ev.id);
     return `<div class="sup-box"><b>🙋 Supervisor applications open</b>
-      <p>${esc(SUP_BLURB)}</p>
+      ${ev.supervisor_blurb ? `<p style="white-space:pre-wrap">${escLinks(ev.supervisor_blurb)}</p>` : `<p style="white-space:pre-line">${supBlurbHtml()}</p>`}
+      <p><b>${supNeededText(ev)}</b></p>${supRoleList(ev)}
       ${ev.supervisor_deadline ? `<p><b>Application deadline: ${supDeadline(ev)}</b></p>` : ""}
-      ${app ? `<p class="note">You've applied ✓ You'd like to help with: ${app.prefs.map((k) => SUP_ROLES[k]).join(", ")}.</p>` : ""}
+      ${app ? `<p class="note">You've applied ✓${app.prefs?.length ? ` You'd like to help with: ${app.prefs.map((k) => SUP_ROLES[k]).join(", ")}.` : ""}</p>` : ""}
       ${!me ? '<button class="btn block" data-go="account" data-close>Sign in to apply</button>' : pending() ? '<p class="muted">You can apply once your membership is approved.</p>'
         : `<button class="btn block sup-btn" id="supApply">${app ? "Change or withdraw my application" : "Apply to be a supervisor"}</button>`}</div>`;
   }
   function supApply(ev, back) {
     const app = myApps.find((a) => a.event_id === ev.id);
-    const has = (k) => (app ? app.prefs.includes(k) : false);
+    const has = (k) => (app ? app.prefs.includes(k) : false), roles = supRoles(ev), hall = ev.kind === "event" && !ev.weekly;
     modal(`<button class="close" aria-label="Close">×</button><h2>Supervise ${esc(ev.title)}</h2>
-      <p class="muted">${ev.day ? fmtEvent(ev) : "Date to be confirmed"}${ev.supervisor_deadline ? ` · apply by ${supDeadline(ev)}` : ""}</p>
-      <p>Apply on your own. Tick everything you'd be happy to help with. We'll form the teams, and you're welcome to float between roles on the night.</p>
-      <div class="attend">${Object.entries(SUP_ROLES).map(([k, v]) => `<label class="check"><input type="checkbox" data-pref="${k}" ${has(k) ? "checked" : ""}> ${v}</label>`).join("")}</div>
+      <p class="muted">${ev.day ? (ev.weekly ? `Every ${DAYS[parseDay(ev.day).getDay()]}` : fmtEvent(ev)) : "Date to be confirmed"}${ev.supervisor_deadline ? ` · apply by ${supDeadline(ev)}` : ""}</p>
+      ${roles.length > 1 ? `<p>Apply on your own. Tick everything you'd be happy to help with. We'll choose who does what, and you're welcome to float between roles on the night.</p>
+      <div class="attend">${roles.map((k) => `<label class="check"><input type="checkbox" data-pref="${k}" ${has(k) ? "checked" : ""}> ${SUP_ROLES[k]} <span class="muted">(${supCount(ev, k)} needed)</span></label>`).join("")}</div>`
+        : `<p>We need ${supCount(ev, roles[0])} for <b>${SUP_ROLES[roles[0]]}</b>. Apply on your own, and we'll choose from everyone who applies.</p>`}
       <label>Anything we should know? (optional)</label><textarea id="supNote" rows="3" maxlength="500">${esc(app?.note || "")}</textarea>
-      <label class="check"><input type="checkbox" id="supMeet" ${app ? "checked" : ""}> I can come to the pre-event meeting and the post-event debrief</label>
+      ${hall ? `<label class="check"><input type="checkbox" id="supMeet" ${app ? "checked" : ""}> I can come to the pre-event meeting and the post-event debrief</label>` : ""}
       <div class="form-actions"><button class="btn solid block" id="supSend">${app ? "Save my application" : "Send my application"}</button>${app ? '<button class="btn block danger" id="supDrop">Withdraw my application</button>' : ""}</div>`, (m) => {
       $("#supSend", m).onclick = async () => {
-        const prefs = [...m.querySelectorAll("[data-pref]:checked")].map((c) => c.dataset.pref);
+        const prefs = roles.length > 1 ? [...m.querySelectorAll("[data-pref]:checked")].map((c) => c.dataset.pref) : roles;
         if (!prefs.length) return toast("Tick at least one thing you'd like to help with");
-        if (!$("#supMeet", m).checked) return toast("Supervisors need to come to the meetings before and after the event");
+        if (hall && !$("#supMeet", m).checked) return toast("Supervisors need to come to the meetings before and after the event");
         try {
           await q(sb.rpc("apply_supervisor", { p_event: ev.id, p_prefs: prefs, p_note: $("#supNote", m).value }));
           myApps = [...myApps.filter((a) => a.event_id !== ev.id), { event_id: ev.id, prefs, note: $("#supNote", m).value }];
@@ -494,7 +511,7 @@
   const picOf = (ev) => ev.image || (ev.kind === "football" ? FOOTIE_BANNER : ev.group_id === "quran" ? QURAN_BANNER : "");
   const eventPic = (ev) => (picOf(ev) ? `<img class="event-pic" src="${esc(picOf(ev))}" alt="" data-event="${ev.id}">` : "");
   // "Supervisor applications open" on the advert, with the deadline.
-  const supTag = (ev) => (supOpen(ev) ? `<span class="tag sup">🙋 Supervisor applications open${ev.supervisor_deadline ? ` · apply by ${supDeadline(ev)}` : ""}</span>` : "");
+  const supTag = (ev) => (supOpen(ev) ? `<span class="tag sup">🙋 Supervisor applications open${` · ${supNeeded(ev)} needed`}${ev.supervisor_deadline ? ` · apply by ${supDeadline(ev)}` : ""}</span>` : "");
   function eventCard(ev, taken, mine) {
     if (!ev.day) return `<article class="card">${eventPic(ev)}
       <div class="event-body" data-event="${ev.id}" style="cursor:pointer">
@@ -1482,7 +1499,7 @@
     }
 
     const fund = `<div class="card fb"><p class="muted" style="margin:0">Kitty fund <b>${money(fs.kitty)}</b> · kitty ${fs.session_no}, ${fs.games_played} of 5 games played${fs.games_played < 5 ? `, next is game ${fs.games_played + 1} of 5` : ""}. Past accounts are in the <a href="#chat:football-accounts">Friday Football Accounts chat</a>.</p>
-      ${isDoor() ? `<div class="form-actions"><button class="btn solid block" data-go="supervisors">Football Supervisors</button>${isAdmin() ? '<button class="btn block" data-go="footballadmin">Football Accounts</button>' : ""}</div>` : ""}</div>`;
+      ${isDoor() || supFootball() ? `<div class="form-actions"><button class="btn solid block" data-go="supervisors">Football Supervisors</button>${isAdmin() ? '<button class="btn block" data-go="footballadmin">Football Accounts</button>' : ""}</div>` : ""}</div>`;
 
     el.innerHTML = `<div class="events">${offerBanner(allGames, true)}${introBanner(fs.intro_offer, true)}${top}${ev ? footballInfo(ev, fs) : ""}${you}${players}${fund}<div id="awards"></div></div>`;
     footballAwards($("#awards", el), alive);
@@ -1746,7 +1763,7 @@
   function footballadmin(el, alive) { return footballScreen(el, alive, "admin"); }
   async function footballScreen(el, alive, mode) {
     if (!me) return needSignIn(el, "run the football");
-    if (mode === "night" ? !isDoor() : !isAdmin()) { el.innerHTML = `<div class="empty"><h2>${mode === "night" ? "For organisers" : "For the admin"}</h2></div>`; return; }
+    if (mode === "night" ? !isDoor() && !supFootball() : !isAdmin()) { el.innerHTML = `<div class="empty"><h2>${mode === "night" ? "For organisers" : "For the admin"}</h2></div>`; return; }
     loading(el);
     await sb.rpc("expire_unpaid");
     const now = new Date();
@@ -2849,20 +2866,26 @@
     if (!alive()) return;
     el.innerHTML = `<div class="pad" style="padding-top:24px"><h1>Supervisor tools</h1>
       <p class="muted">Thank you for helping run our events. Scan tickets at the door, and see who's here and who's still to come.</p>
-      ${mine.map((x) => { const ev = x.events, team = all.filter((s) => s.event_id === ev.id);
+      ${mine.map((x) => { const ev = x.events, team = all.filter((s) => s.event_id === ev.id), roles = supRoles(ev);
+        const nameRow = (s) => `<b>${esc(s.profiles?.name || "?")}${s.user_id === me.id ? " (you)" : ""}</b>`;
+        // Tickets to scan: hall and other booked events. Football uses its own screen; chat sign-ups (Quran) have none.
+        const tools = ev.kind === "football" ? '<button class="btn solid block" data-go="supervisors">Open Football Supervisors</button><p class="muted" style="font-size:14px">Scan tickets, tick people in and add people at the pitch, for this game.</p>'
+          : ev.group_id || ev.link ? "" : `<button class="btn solid block" data-scan style="margin-bottom:10px">Scan a ticket's QR code</button>
+          <div class="row"><input data-code placeholder="Or type the code, e.g. AA-7K2QX" style="text-transform:uppercase"><button class="btn small" data-type>Check in</button></div>`;
         return `<div class="card" style="padding:14px;margin:12px 0"><h2 style="margin:0 0 4px">${esc(ev.title)}</h2>
-          <p class="muted" style="margin:0 0 8px">${fmtEvent(ev)}${ev.location ? ` · ${esc(ev.location)}` : ""}</p>
-          <p>Your team: <b>${SUP_ROLES[x.role]}</b></p>
-          <div class="sup-teams">${Object.entries(SUP_ROLES).map(([k, v]) => `<div><small>${v}</small>${team.filter((s) => s.role === k).map((s) => `<b>${esc(s.profiles?.name || "?")}${s.user_id === me.id ? " (you)" : ""}</b>`).join("") || '<span class="muted">No one yet</span>'}</div>`).join("")}</div>
-          <p class="muted" style="font-size:14px">Please come to the pre-event meeting and the post-event debrief. Your scanning access ends at 4am the morning after the event.</p>
-          <button class="btn solid block" data-scan style="margin-bottom:10px">Scan a ticket's QR code</button>
-          <div class="row"><input data-code placeholder="Or type the code, e.g. AA-7K2QX" style="text-transform:uppercase"><button class="btn small" data-type>Check in</button></div>
-          <div data-list="${ev.id}"></div></div>`; }).join("")}</div>`;
+          <p class="muted" style="margin:0 0 8px">${ev.weekly ? `Every ${DAYS[parseDay(ev.day).getDay()]} · ${hhmm(ev.time)}` : fmtEvent(ev)}${ev.location ? ` · ${esc(ev.location)}` : ""}</p>
+          <p>Your role: <b>${SUP_ROLES[x.role] || "Supervisor"}</b></p>
+          ${ev.supervisor_blurb ? `<p style="white-space:pre-wrap">${escLinks(ev.supervisor_blurb)}</p>` : ""}
+          <div class="sup-teams">${(roles.length ? roles : [x.role]).map((k) => `<div><small>${SUP_ROLES[k] || "Supervisors"}</small>${team.filter((s) => s.role === k).map(nameRow).join("") || '<span class="muted">No one yet</span>'}</div>`).join("")}</div>
+          <p class="muted" style="font-size:14px">${supStandard(ev) ? "Please come to the pre-event meeting and the post-event debrief. " : ""}${ev.weekly ? "You stay a supervisor until the admin changes it." : "Your access ends at 4am the morning after the event."}</p>
+          ${tools}
+          ${tools && ev.kind !== "football" ? `<div data-list="${ev.id}"></div>` : ""}</div>`; }).join("")}</div>`;
     el.querySelectorAll("[data-scan]").forEach((b) => (b.onclick = () => scanTicket(checkIn)));
     el.querySelectorAll("[data-type]").forEach((b) => (b.onclick = () => { const i = b.parentElement.querySelector("[data-code]"), c = i.value.trim(); if (!c) return toast("Type the ticket code"); i.value = ""; checkIn(c); }));
     // One who's-in list at a time keeps the live updates simple: the soonest event's list.
-    whosIn(el.querySelector(`[data-list="${mine[0].event_id}"]`), mine[0].event_id);
-    mine.slice(1).forEach((x) => { const box = el.querySelector(`[data-list="${x.event_id}"]`); box.innerHTML = `<button class="btn small block" data-show="${x.event_id}">Show who's in</button>`; });
+    const lists = [...el.querySelectorAll("[data-list]")];
+    if (lists[0]) whosIn(lists[0], lists[0].dataset.list);
+    lists.slice(1).forEach((box) => { box.innerHTML = `<button class="btn small block" data-show="${box.dataset.list}">Show who's in</button>`; });
     el.querySelectorAll("[data-show]").forEach((b) => (b.onclick = () => whosIn(b.parentElement, b.dataset.show)));
   }
 
@@ -2925,18 +2948,31 @@
       if (!supApps) return '<p class="muted"><b>Run add-event-supervisors.sql in Supabase to choose supervisors here.</b></p>';
       const team = supRows.filter((x) => x.event_id === e.id), apps = supApps.filter((x) => x.event_id === e.id);
       const inTeam = Object.fromEntries(team.map((x) => [x.user_id, x.role]));
-      const teamPick = (dflt) => `<select data-team>${Object.entries(SUP_ROLES).map(([k, v]) => `<option value="${k}" ${k === dflt ? "selected" : ""}>${v}</option>`).join("")}</select>`;
-      return `<div class="sup-admin"><h3>Supervisors (${team.length} of 6)</h3>
-        <p class="muted" style="font-size:14px">${e.supervisors_open ? `Applications are open${e.supervisor_deadline ? ` until ${supDeadline(e)}` : ""}.` : "Applications are closed. Tick the box above and save to open them."} Supervisors can scan tickets at this event until 4am the morning after it.</p>
-        <div class="sup-teams">${Object.entries(SUP_ROLES).map(([k, v]) => `<div><small>${v} (${team.filter((x) => x.role === k).length}/2)</small>${team.filter((x) => x.role === k).map((x) => `<span class="sup-name">${esc(nameOf[x.user_id] || "?")} <button class="btn small" data-sup-rm="${e.id}|${x.user_id}">Remove</button></span>`).join("") || '<span class="muted">No one yet</span>'}</div>`).join("")}</div>
+      const perRole = "sup_door" in e, roles = supRoles(e), need = supNeeded(e);
+      const rolePick = (dflt) => `<select data-team>${roles.map((k) => `<option value="${k}" ${k === dflt ? "selected" : ""}>${SUP_ROLES[k]}</option>`).join("")}</select>`;
+      const settings = `<div class="sup-set" data-sup-set="${e.id}">
+        <label class="check"><input type="checkbox" data-s="open" ${e.supervisors_open ? "checked" : ""}> Supervisor applications open (shows on the advert and tells members)</label>
+        ${perRole ? `<p style="margin:6px 0 2px"><b>Supervisors needed for each role</b></p>
+          ${Object.entries(SUP_ROLES).map(([k, v]) => `<div class="sup-count"><span>${v}</span><select data-s="${k}">${[0, 1, 2].map((n) => `<option ${n === supCount(e, k) ? "selected" : ""}>${n}</option>`).join("")}</select></div>`).join("")}
+          <label>Blurb and tasks for this event (shown on the advert)</label><textarea data-s="blurb" rows="5" maxlength="3000" placeholder="Leave empty to use the standard call for supervisors">${esc(e.supervisor_blurb || "")}</textarea>`
+          : '<p class="muted" style="font-size:14px"><b>Run add-supervisors-any-event.sql in Supabase to set the numbers for each role and your own blurb.</b></p>'}
+        <label>Application deadline (optional)</label><input data-s="deadline" type="date" value="${e.supervisor_deadline || ""}">
+        <button class="btn small" data-sup-save="${e.id}" style="margin-top:8px">Save supervisor settings</button></div>`;
+      const nameRow = (x) => `<span class="sup-name">${esc(nameOf[x.user_id] || "?")} <button class="btn small" data-sup-rm="${e.id}|${x.user_id}">Remove</button></span>`;
+      // Anyone already chosen for a role this event no longer needs still shows, so they can be moved or removed.
+      const shown = [...new Set([...roles, ...team.map((x) => x.role)])];
+      return `<div class="sup-admin"><h3>Supervisors (${team.length} of ${need})</h3>
+        ${settings}
+        <p class="muted" style="font-size:14px">${e.kind === "football" ? "Supervisors get the Football Supervisors screen for this game until 4am Saturday." : e.weekly ? "Supervisors stay until you remove them." : "Supervisors can scan tickets at this event until 4am the morning after it."}</p>
+        <div class="sup-teams">${shown.map((k) => `<div><small>${SUP_ROLES[k] || "Supervisors"} (${team.filter((x) => x.role === k).length}/${supCount(e, k)})</small>${team.filter((x) => x.role === k).map(nameRow).join("") || '<span class="muted">No one yet</span>'}</div>`).join("") || '<p class="muted">No roles set yet.</p>'}</div>
         <h3>Applied (${apps.length})</h3>
         ${apps.map((a) => `<div class="sup-app" data-who="${a.user_id}"><b>${esc(nameOf[a.user_id] || "Member")}</b> <span class="muted" style="font-size:13px">applied ${short(new Date(a.created_at))}</span>
-          <div>Would like: ${a.prefs.map((k) => SUP_ROLES[k]).join(", ")}</div>${a.note ? `<div class="muted" style="white-space:pre-line">${esc(a.note)}</div>` : ""}
-          <div class="row" style="gap:8px;margin-top:6px">${teamPick(inTeam[a.user_id] || a.prefs[0])}<button class="btn small solid" data-sup-add="${e.id}">${inTeam[a.user_id] ? "Move team" : "Add to team"}</button></div>
-          ${a.user_id in inTeam ? `<span class="tag">In team: ${SUP_ROLES[inTeam[a.user_id]]}</span>` : ""}</div>`).join("") || '<p class="muted">No applications yet.</p>'}
-        <details><summary class="muted">Add a member who didn't apply</summary>
+          ${a.prefs?.length ? `<div>Would like: ${a.prefs.map((k) => SUP_ROLES[k]).join(", ")}</div>` : ""}${a.note ? `<div class="muted" style="white-space:pre-line">${esc(a.note)}</div>` : ""}
+          ${roles.length ? `<div class="row" style="gap:8px;margin-top:6px">${rolePick(inTeam[a.user_id] || a.prefs?.find((k) => roles.includes(k)))}<button class="btn small solid" data-sup-add="${e.id}">${a.user_id in inTeam ? "Change role" : "Choose"}</button></div>` : ""}
+          ${a.user_id in inTeam ? `<span class="tag">Chosen: ${SUP_ROLES[inTeam[a.user_id]] || "supervisor"}</span>` : ""}</div>`).join("") || '<p class="muted">No applications yet.</p>'}
+        ${roles.length ? `<details><summary class="muted">Add a member who didn't apply</summary>
           <div class="sup-app"><select data-member>${members.filter((m) => m.approved !== false && !(m.id in inTeam)).map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join("")}</select>
-          <div class="row" style="gap:8px;margin-top:6px">${teamPick("door")}<button class="btn small" data-sup-add="${e.id}">Add to team</button></div></div></details></div>`;
+          <div class="row" style="gap:8px;margin-top:6px">${rolePick(roles[0])}<button class="btn small" data-sup-add="${e.id}">Add</button></div></div></details>` : ""}</div>`;
     }
     const [pcs, apps] = ids.length ? await Promise.all([q(sb.from("member_postcodes").select("*").in("user_id", ids)), q(sb.from("applications").select("*").in("user_id", ids))]) : [[], []];
     if (!alive()) return;
@@ -2994,10 +3030,9 @@
             <div><label>Audience price (£)</label><input data-f="audience_price" type="number" min="0" step="0.5" value="${e.audience_price ?? ""}"></div><div></div>` : ""}
             <div style="grid-column:1/-1"><label>Link instead of booking here (optional)</label><input data-f="link" type="url" value="${esc(e.link || "")}" placeholder="https://debate.ourhomelands.co.uk/debates/…"></div>
             <div style="grid-column:1/-1"><label>Picture</label>${e.image ? `<img class="event-pic" src="${esc(e.image)}" alt="">` : ""}<input data-pic="${e.id}" type="file" accept="image/*">${e.image ? `<button class="btn small" data-nopic="${e.id}" style="margin-top:8px">Remove picture</button>` : ""}</div>
-            <div style="grid-column:1/-1"><label class="check"><input type="checkbox" data-f="supervisors_open" ${e.supervisors_open ? "checked" : ""}> Supervisor applications open (shows on the advert)</label></div>
-            <div style="grid-column:1/-1"><label>Supervisor application deadline</label><input data-f="supervisor_deadline" type="date" value="${e.supervisor_deadline || ""}"></div></div>
-            <div class="row" style="margin:12px 0"><button class="btn small" data-upd="${e.id}">Save changes</button><button class="btn small" data-poster="${e.id}">QR code poster</button></div>
-            ${supAdmin(e)}` : ""}
+            </div>
+            <div class="row" style="margin:12px 0"><button class="btn small" data-upd="${e.id}">Save changes</button><button class="btn small" data-poster="${e.id}">QR code poster</button></div>` : ""}
+          ${supAdmin(e)}
           <button class="btn small danger" data-del="${e.id}">Remove event</button></details>`;
       }).join("")}
       ${isAdmin() ? `<h2 style="margin-top:28px" id="guestsHead">Guests</h2>
@@ -3091,7 +3126,6 @@
         if (upd.apply_form && !/^https:\/\//.test(upd.apply_form)) return toast("The application form link should start with https://");
         if (upd.player_places != null) upd.capacity = upd.player_places + (upd.audience_places || 0);
       }
-      if (supApps) { upd.supervisors_open = $('[data-f="supervisors_open"]', box).checked; upd.supervisor_deadline = f("supervisor_deadline") || null; }
       if (upd.link && !/^https?:\/\//.test(upd.link)) return toast("The link should start with https://");
       const file = $(`[data-pic="${b.dataset.upd}"]`, box).files[0];
       if (file) upd.image = await picture(file);
@@ -3100,7 +3134,15 @@
     el.querySelectorAll("[data-sup-add]").forEach((b) => (b.onclick = async () => {
       const box = b.closest(".sup-app"), who = box.dataset.who || $("[data-member]", box)?.value;
       if (!who) return toast("Choose a member");
-      try { await q(sb.rpc("assign_supervisor", { p_event: b.dataset.supAdd, p_user: who, p_role: $("[data-team]", box).value })); toast(`${nameOf[who] || "They"} added to the team`); refresh(); } catch (e) { fail(e); }
+      try { await q(sb.rpc("assign_supervisor", { p_event: b.dataset.supAdd, p_user: who, p_role: $("[data-team]", box).value })); toast(`${nameOf[who] || "They"} added`); refresh(); } catch (e) { fail(e); }
+    }));
+    // Supervisor settings: open or closed, how many for each role (0 to 2), the blurb and the deadline.
+    el.querySelectorAll("[data-sup-save]").forEach((b) => (b.onclick = async () => {
+      const box = b.closest("[data-sup-set]"), v = (k) => $(`[data-s="${k}"]`, box);
+      const upd = { supervisors_open: v("open").checked, supervisor_deadline: v("deadline").value || null };
+      if (v("door")) Object.assign(upd, { sup_door: Number(v("door").value), sup_crowd: Number(v("crowd").value), sup_run: Number(v("run").value), supervisor_blurb: v("blurb").value.trim() || null });
+      if (upd.supervisors_open && v("door") && !(upd.sup_door + upd.sup_crowd + upd.sup_run)) return toast("Set at least one supervisor for a role, or untick applications open");
+      try { await q(sb.from("events").update(upd).eq("id", b.dataset.supSave)); toast(upd.supervisors_open ? "Saved. Applications are open" : "Saved"); refresh(); } catch (e) { fail(e); }
     }));
     el.querySelectorAll("[data-sup-rm]").forEach((b) => (b.onclick = async () => {
       const [ev, who] = b.dataset.supRm.split("|");
