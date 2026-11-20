@@ -160,17 +160,14 @@ grant execute on function public.purge_old_event_data() to service_role;
 -- ---------- the Speed Chess Tournament ----------
 -- Sat 12 Dec 2026, open to everyone, 24 players at £6 and 3 audience at £10 (3 organisers make 30).
 -- Time and place: check them in Admin → Events and bookings after running this.
+-- The event's details (its blurb) are left alone.
 update public.events set
   title = 'Speed Chess Tournament',
   day = '2026-12-12',
   access = 'open',
   price = 6, audience_price = 10,
   player_places = 24, audience_places = 3, capacity = 27,
-  apply_form = 'https://form.jotform.com/263227494603055',
-  details = 'Speed chess tournament, open to the public. Players £6 (covers hall hire only). Non-playing audience £10, and must come with an applicant. 24 players, 3 organisers and 3 audience (room capacity 30).' || E'\n\n'
-    || 'Everyone who is not a member applies first. The organiser checks each application before a ticket is issued. Approval usually takes a day: come back to the app after 24 hours, on the same phone, to see if you are approved, then pay by card and your QR ticket appears.' || E'\n\n'
-    || 'Bring your own portable chess set and a phone with a chess clock app if you can. The final between the 2 top rated players takes place at Dessert Hub, Penge. We rely on donations for a prize, so the winner may receive only accolade.' || E'\n\n'
-    || 'Under 16s must come with a parent or responsible adult (as a player or audience). Ages 16 to 18 need their parents'' consent.'
+  apply_form = 'https://form.jotform.com/263227494603055'
 where kind = 'event' and title ilike '%chess%';
 
 -- If there was no chess event yet, add one (time and place to be set in Admin).
