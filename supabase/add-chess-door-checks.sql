@@ -143,5 +143,6 @@ end $$;
 revoke execute on function public.purge_old_event_data() from public, anon, authenticated;
 grant execute on function public.purge_old_event_data() to service_role;
 
--- Tips: event payments offer Square's tip screen; any tip is kept on the booking for the event accounts.
-alter table public.bookings add column if not exists tip numeric(8,2) not null default 0;
+-- Extra contributions: when paying for an event, people can add an optional extra amount,
+-- kept on the booking for the event accounts.
+alter table public.bookings add column if not exists extra numeric(8,2) not null default 0;

@@ -721,7 +721,7 @@
         ${t.apply_form && ["pending", "booked", "waitlist"].includes(t.status) ? (t.applied ? '<p class="muted">✓ Application form received.</p>'
           : `<p class="note">${t.status === "pending" ? "<b>Step 2:</b> fill in our application form. The organiser checks it before approving you." : "Please fill in the tournament questions too."}</p>
             <a class="btn solid block" target="_blank" rel="noopener" href="${esc(applyFormUrl({ ...t, member: !!me, ...(state.applyInfo?.[t.code] || {}) }))}">Fill in the application form</a>`) : ""}
-        ${!t.paid && Number(t.amount) > 0 && t.status === "booked" ? `<p class="note">${money(t.amount)} still to pay.</p><button class="btn solid block" data-pay="${esc(t.code)}">Pay ${money(t.amount)} by card</button>` : ""}
+        ${!t.paid && Number(t.amount) > 0 && t.status === "booked" ? `<p class="note">${money(t.amount)} still to pay.</p><button class="btn solid block" data-pay="${esc(t.code)}" data-extra="1">Pay ${money(t.amount)} by card</button>` : ""}
         ${t.status === "pending" && t.apply_form ? `<p class="note">Approval usually takes a day. Come back after 24 hours: tap <b>Applied · Check if approved</b> on the event, on this phone. If you're approved, complete your application by paying ${money(t.amount)}, and your QR ticket appears here. If not, spaces may have been limited: after this preliminary speed chess tournament we will be organising a fuller version, or you can apply again to come as a spectator rather than a participant.</p>
             <p class="muted" style="font-size:14px">Keep your code <b>${esc(t.code)}</b> (a screenshot is fine) in case you change phone.</p>`
           : t.status === "pending" ? '<p class="note">Thanks, your request has been received. An organiser will check it, and your QR ticket appears here once it\'s approved. Open Schedule on this phone to check.</p>'
@@ -1211,7 +1211,7 @@
     const pics = photoOrder(lines);
     const appTickets = bks.filter((b) => b.paid && b.status === "booked").reduce((t, b) => t + Number(b.amount), 0);
     const cardFees = bks.reduce((t, b) => t + Number(b.card_fee || 0), 0);
-    const tips = Math.round(bks.reduce((t, b) => t + Number(b.tip || 0), 0) * 100) / 100; // added on Square's tip screen
+    const tips = Math.round(bks.reduce((t, b) => t + Number(b.extra || 0), 0) * 100) / 100; // extra contributions added when paying
     const has = (what) => lines.some((l) => l.what === what);
 
     const section = (k) => {
@@ -1265,7 +1265,7 @@
       ${KIND_ORDER.map(section).join("")}
       ${open ? `<h3>Add a receipt or cost</h3>
         ${appTickets && !has("Tickets paid in the app") ? `<button class="btn small" id="qTickets" style="margin:0 8px 8px 0">Add ${money(appTickets)} tickets paid in the app</button>` : ""}
-        ${tips && !has("Tips and top-ups paid in the app") ? `<button class="btn small" id="qTips" style="margin:0 8px 8px 0">Add ${money(tips)} tips and top-ups</button>` : ""}
+        ${tips && !has("Extra contributions paid in the app") ? `<button class="btn small" id="qTips" style="margin:0 8px 8px 0">Add ${money(tips)} extra contributions</button>` : ""}
         ${cardFees && !has("Card payment fees") ? `<button class="btn small" id="qFees" style="margin:0 0 8px">Add ${money(cardFees)} card fees</button>` : ""}
         <div class="grid2"><div><label>Type</label><select id="lKind"><option value="receipt">Receipt (money in)</option><option value="hiring">A. Hiring cost</option><option value="ancillary">B. Ancillary cost</option></select></div>
           <div><label>Amount £</label><input id="lAmt" type="number" step="0.01" min="0.01" inputmode="decimal"></div></div>
@@ -1284,7 +1284,7 @@
     if (!open) return;
     const addLine = async (row) => { try { await q(sb.from("event_account_lines").insert({ event_id: pick.id, created_by: me.id, ...row })); toast("Added"); refresh(); } catch (e) { fail(e); } };
     if ($("#qTickets", el)) $("#qTickets", el).onclick = () => addLine({ kind: "receipt", what: "Tickets paid in the app", amount: appTickets });
-    if ($("#qTips", el)) $("#qTips", el).onclick = () => addLine({ kind: "receipt", what: "Tips and top-ups paid in the app", amount: tips });
+    if ($("#qTips", el)) $("#qTips", el).onclick = () => addLine({ kind: "receipt", what: "Extra contributions paid in the app", amount: tips });
     if ($("#qFees", el)) $("#qFees", el).onclick = () => addLine({ kind: "ancillary", what: "Card payment fees", amount: Math.round(cardFees * 100) / 100 });
     let photo = null;
     $("#lPhoto", el).onchange = () => { const f = $("#lPhoto", el).files[0]; photo = null; if (!f) return;
@@ -3507,14 +3507,41 @@
   // Card payments: "Pay by card" opens Square's checkout, which sends people back here with ?paid=CODE.
   document.addEventListener("click", async (e) => {
     const b = e.target.closest("[data-pay]"); if (!b) return;
-    e.preventDefault(); b.disabled = true; const label = b.textContent; b.textContent = "Opening secure payment…";
+    e.preventDefault();
+    // Events: an optional extra contribution, added to the Square checkout as its own line.
+    let extra = 0;
+    if (b.dataset.extra) { extra = await askExtra(); if (extra === null) return; }
+    b.disabled = true; const label = b.textContent; b.textContent = "Opening secure payment…";
     try {
-      const r = await payApi({ code: b.dataset.pay, guest: b.dataset.guest === "1" });
+      const r = await payApi({ code: b.dataset.pay, guest: b.dataset.guest === "1", extra });
       if (r.url) { location.href = r.url; return; }
       if (r.paid) { toast("Already paid, thank you"); closeModal(); refresh(); }
     } catch (err) { fail(err); }
     b.disabled = false; b.textContent = label;
   });
+  function askExtra() {
+    return new Promise((done) => {
+      let pick = 0, settled = false;
+      const end = (v) => { if (settled) return; settled = true; done(v); };
+      modal(`<h2>Add an extra contribution?</h2>
+        <p class="muted" style="line-height:1.5">Optional. Anything extra goes towards future community events. Your place costs the same either way.</p>
+        <div class="pills" id="xc" style="margin:12px 0">${[0, 1, 2, 5, 10].map((v) => `<button class="tag${v ? "" : " gold"}" data-x="${v}" style="font-size:16px;padding:8px 14px;cursor:pointer">${v ? `£${v}` : "No thanks"}</button>`).join("")}</div>
+        <label>Or another amount (£)<input id="xo" type="number" min="0" max="100" step="1" inputmode="numeric" placeholder="0"></label>
+        <div class="form-actions"><button class="btn solid block" id="ok">Continue to payment</button></div>`, (m) => {
+        const chips = [...m.querySelectorAll("[data-x]")];
+        chips.forEach((c) => c.onclick = () => { pick = Number(c.dataset.x); $("#xo", m).value = ""; chips.forEach((o) => o.classList.toggle("gold", o === c)); });
+        $("#xo", m).oninput = () => chips.forEach((o) => o.classList.remove("gold"));
+        $("#ok", m).onclick = () => {
+          const typed = $("#xo", m).value.trim();
+          const v = typed ? Math.round(Number(typed)) : pick;
+          if (!(v >= 0 && v <= 100)) return toast("Enter an amount from £0 to £100");
+          closeModal(); end(v);
+        };
+        // Closed without choosing: no payment.
+        new MutationObserver((_, o) => { if ($("#modal").hidden) { o.disconnect(); end(null); } }).observe($("#modal"), { attributes: true, attributeFilter: ["hidden"] });
+      });
+    });
+  }
   async function payApi(body) {
     const res = await fetch("/.netlify/functions/pay", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const r = await res.json().catch(() => ({}));

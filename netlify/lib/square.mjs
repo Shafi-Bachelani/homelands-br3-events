@@ -68,9 +68,10 @@ export async function recordPayment(booking, payment) {
   }
   const update = { paid: true, method: "card" };
   if (fee > 0) update.card_fee = fee;
-  // A tip added on Square's checkout (events only): kept on the booking so the event accounts can show it.
-  const tip = Number(payment.tip_money?.amount || 0) / 100;
-  if (tip > 0) update.tip = tip;
+  // Events: anything paid over the ticket price is the extra contribution chosen in the app,
+  // kept on the booking so the event accounts can show it.
+  const extra = booking.events?.kind === "event" ? Math.round((Number(payment.amount_money?.amount || 0) / 100 - due(booking)) * 100) / 100 : 0;
+  if (extra > 0) update.extra = extra;
   if (booking.paid && booking.method === "card" && !(fee > 0)) return true;
   await db(`bookings?id=eq.${booking.id}`, { method: "PATCH", body: JSON.stringify(update) });
   return true;
