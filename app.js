@@ -38,8 +38,10 @@
       .then((r) => (r.data || []).filter((x) => x.events?.day && (x.events.weekly || supUntil(x.events) > new Date())), () => []);
   }
   // ---------- event supervisors ----------
-  // Shafi's call for supervisors, shown on each event advert that has applications open.
-  const SUP_BLURB = "Want to make this happen, we are looking for 3 2-man teams, 6 members to take this forwards. Our events are open to the public, so long as they book through our portal. One team will man the door, A second team will be concerned with crowd management and ensuring the attendees needs are seen to. The third team will run the event. You should apply singly with your preferences within the app about what you help with. We will form the team and encourage for you to float between roles. You will need to attend pre and post event meetings, the post-event meetings for a debrief.";
+  // Shafi's call for supervisors (20 Nov), shown on every advert that has applications open and no blurb of its own.
+  const SUP_BLURB = "Want to make this happen, we are looking for UP TO A MAXIMUM of three 2-man teams, 6 members to take this forward. For some events we just need one or two to step up, for others a little more, to know how many we need just click to apply and help make this a great memory for everyone.\n\nOur larger events will be open to the public, so long as they book through our portal, and are happy with who we all are, which you can see in About Us, and the Welcome & Our Agreement, to which they are each signposted.\n\nOne team will man the door and be charged with SECURITY. A second team will be concerned with crowd management and ensuring the attendees needs are seen to and are charged with SAFETY. The third team will run the event and will ensure it’s MEMORABLE. You should apply singly with your preferences within the app about what you help with. We will form the team and encourage for you, each, to float between roles.\n\nYou will need to attend pre and post event meetings, the post-event meetings for a debrief.";
+  // The standard call with About Us and Welcome & Our Agreement as links.
+  const supBlurbHtml = () => esc(SUP_BLURB).replace("About Us", '<a href="#about" data-close>About Us</a>').replace("Welcome &amp; Our Agreement", '<a href="#welcome" data-close>Welcome &amp; Our Agreement</a>');
   const SUP_ROLES = { door: "Door and entrance security", crowd: "Audience control: keeping order inside, for safety", run: "Running the show up front: making it memorable and fun" };
   // A supervisor's scanning access ends at 4am the morning after the event (the database checks this too).
   const supUntil = (ev) => at(ev.day, "04:00", 1);
@@ -457,7 +459,7 @@
     if (!supOpen(ev) || !supNeeded(ev)) return "";
     const app = myApps.find((a) => a.event_id === ev.id);
     return `<div class="sup-box"><b>🙋 Supervisor applications open</b>
-      ${ev.supervisor_blurb ? `<p style="white-space:pre-wrap">${escLinks(ev.supervisor_blurb)}</p>` : supStandard(ev) ? `<p>${esc(SUP_BLURB)}</p>` : ""}
+      ${ev.supervisor_blurb ? `<p style="white-space:pre-wrap">${escLinks(ev.supervisor_blurb)}</p>` : `<p style="white-space:pre-line">${supBlurbHtml()}</p>`}
       <p><b>${supNeededText(ev)}</b></p>${supRoleList(ev)}
       ${ev.supervisor_deadline ? `<p><b>Application deadline: ${supDeadline(ev)}</b></p>` : ""}
       ${app ? `<p class="note">You've applied ✓${app.prefs?.length ? ` You'd like to help with: ${app.prefs.map((k) => SUP_ROLES[k]).join(", ")}.` : ""}</p>` : ""}
@@ -2952,7 +2954,7 @@
         <label class="check"><input type="checkbox" data-s="open" ${e.supervisors_open ? "checked" : ""}> Supervisor applications open (shows on the advert and tells members)</label>
         ${perRole ? `<p style="margin:6px 0 2px"><b>Supervisors needed for each role</b></p>
           ${Object.entries(SUP_ROLES).map(([k, v]) => `<div class="sup-count"><span>${v}</span><select data-s="${k}">${[0, 1, 2].map((n) => `<option ${n === supCount(e, k) ? "selected" : ""}>${n}</option>`).join("")}</select></div>`).join("")}
-          <label>Blurb and tasks for this event (shown on the advert)</label><textarea data-s="blurb" rows="5" maxlength="3000" placeholder="${e.kind === "event" && !e.weekly ? "Leave empty to use the standard call for 3 teams of 2" : "What we need help with, and what supervisors will do"}">${esc(e.supervisor_blurb || "")}</textarea>`
+          <label>Blurb and tasks for this event (shown on the advert)</label><textarea data-s="blurb" rows="5" maxlength="3000" placeholder="Leave empty to use the standard call for supervisors">${esc(e.supervisor_blurb || "")}</textarea>`
           : '<p class="muted" style="font-size:14px"><b>Run add-supervisors-any-event.sql in Supabase to set the numbers for each role and your own blurb.</b></p>'}
         <label>Application deadline (optional)</label><input data-s="deadline" type="date" value="${e.supervisor_deadline || ""}">
         <button class="btn small" data-sup-save="${e.id}" style="margin-top:8px">Save supervisor settings</button></div>`;
