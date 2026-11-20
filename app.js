@@ -1189,7 +1189,7 @@
     const posted = postedOf(pick);
     const [lines, bks] = await Promise.all([
       q(sb.from("event_account_lines").select("*").eq("event_id", pick.id).order("created_at")),
-      isAdmin() && !posted ? q(sb.from("bookings").select("amount,paid,status,card_fee").eq("event_id", pick.id).neq("status", "cancelled")) : [],
+      isAdmin() && !posted ? q(sb.from("bookings").select("*").eq("event_id", pick.id).neq("status", "cancelled")) : [],
     ]);
     if (!alive()) return;
     const total = (k) => Math.round(lines.filter((l) => l.kind === k).reduce((t, l) => t + Number(l.amount), 0) * 100) / 100;
@@ -1211,6 +1211,7 @@
     const pics = photoOrder(lines);
     const appTickets = bks.filter((b) => b.paid && b.status === "booked").reduce((t, b) => t + Number(b.amount), 0);
     const cardFees = bks.reduce((t, b) => t + Number(b.card_fee || 0), 0);
+    const tips = Math.round(bks.reduce((t, b) => t + Number(b.tip || 0), 0) * 100) / 100; // added on Square's tip screen
     const has = (what) => lines.some((l) => l.what === what);
 
     const section = (k) => {
@@ -1264,6 +1265,7 @@
       ${KIND_ORDER.map(section).join("")}
       ${open ? `<h3>Add a receipt or cost</h3>
         ${appTickets && !has("Tickets paid in the app") ? `<button class="btn small" id="qTickets" style="margin:0 8px 8px 0">Add ${money(appTickets)} tickets paid in the app</button>` : ""}
+        ${tips && !has("Tips and top-ups paid in the app") ? `<button class="btn small" id="qTips" style="margin:0 8px 8px 0">Add ${money(tips)} tips and top-ups</button>` : ""}
         ${cardFees && !has("Card payment fees") ? `<button class="btn small" id="qFees" style="margin:0 0 8px">Add ${money(cardFees)} card fees</button>` : ""}
         <div class="grid2"><div><label>Type</label><select id="lKind"><option value="receipt">Receipt (money in)</option><option value="hiring">A. Hiring cost</option><option value="ancillary">B. Ancillary cost</option></select></div>
           <div><label>Amount £</label><input id="lAmt" type="number" step="0.01" min="0.01" inputmode="decimal"></div></div>
@@ -1282,6 +1284,7 @@
     if (!open) return;
     const addLine = async (row) => { try { await q(sb.from("event_account_lines").insert({ event_id: pick.id, created_by: me.id, ...row })); toast("Added"); refresh(); } catch (e) { fail(e); } };
     if ($("#qTickets", el)) $("#qTickets", el).onclick = () => addLine({ kind: "receipt", what: "Tickets paid in the app", amount: appTickets });
+    if ($("#qTips", el)) $("#qTips", el).onclick = () => addLine({ kind: "receipt", what: "Tips and top-ups paid in the app", amount: tips });
     if ($("#qFees", el)) $("#qFees", el).onclick = () => addLine({ kind: "ancillary", what: "Card payment fees", amount: Math.round(cardFees * 100) / 100 });
     let photo = null;
     $("#lPhoto", el).onchange = () => { const f = $("#lPhoto", el).files[0]; photo = null; if (!f) return;

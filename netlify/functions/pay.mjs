@@ -51,6 +51,8 @@ export default async (req) => {
         checkout_options: {
           redirect_url: `${origin}/?paid=${encodeURIComponent(booking.code)}#${back}`,
           accepted_payment_methods: { apple_pay: true, google_pay: true },
+          // Events (not football) offer Square's tip screen, so people can top up their contribution.
+          ...(ev.kind === "event" ? { allow_tipping: true } : {}),
         },
         payment_note: `${who || booking.display_name} · ${ev.kind === "football" ? `Football ${when} · ` : ""}booking ${booking.code}`,
       }),
